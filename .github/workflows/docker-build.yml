@@ -77,6 +77,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+      - name: Verify Docker Hub secrets
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "::error::未配置 secret DOCKERHUB_USERNAME（GitHub 仓库 Settings -> Secrets and variables -> Actions -> Secrets）"
+            exit 1
+          fi
+          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "::error::未配置 secret DOCKERHUB_TOKEN（Docker Hub 个人访问令牌, 权限需 Read & Write）"
+            exit 1
+          fi
+          echo "Docker Hub 账号已从 secret 读取"
+
       - name: Log in to Docker Hub
         uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
         with:
