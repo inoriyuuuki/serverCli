@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag name to build (e.g., v0.1.0)'
-        required: true
+        description: '要构建的 tag（可选，留空则直接构建当前分支，TAG=分支名）'
+        required: false
         type: string
       platforms:
         description: 'Target platforms (comma separated)'
@@ -47,6 +47,9 @@ jobs:
               echo "::error::Tag '$TAG' does not exist"
               exit 1
             fi
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # 手动触发且未指定 tag：直接构建当前分支，TAG 取分支名
+            TAG="${GITHUB_REF_NAME}"
           else
             TAG=${GITHUB_REF#refs/tags/}
           fi
