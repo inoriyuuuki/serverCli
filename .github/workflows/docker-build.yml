@@ -17,10 +17,9 @@ on:
         default: 'linux/amd64,linux/arm64'
         type: string
 
-env:
-  # 镜像名优先级: 仓库变量 DOCKER_IMAGE > github.repository(自动转小写)
-  # 例如在 GitHub 仓库 Settings -> Secrets and variables -> Actions -> Variables
-  # 添加 DOCKER_IMAGE=inoriyuuki/servercli 可固定推送到自己的 Docker Hub 账号
+# 镜像名优先级: 仓库变量 DOCKER_IMAGE > github.repository(自动转小写)
+# 例如在 GitHub 仓库 Settings -> Secrets and variables -> Actions -> Variables
+# 添加 DOCKER_IMAGE=inoriyuuki/servercli 可固定推送到自己的 Docker Hub 账号
 
 jobs:
   build:
