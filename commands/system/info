@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# system.info —— 只读：输出主机名 / 内核版本 / 运行时间（无参数）
+# macOS 与 Linux 均可运行。
+#
+set -u
+
+host="$(hostname 2>/dev/null || hostnamectl --static 2>/dev/null || uname -n 2>/dev/null || echo unknown)"
+kernel="$(uname -sr 2>/dev/null || echo unknown)"
+
+printf 'hostname: %s\n' "$host"
+printf 'kernel:   %s\n' "$kernel"
+printf 'uptime:   '
+if command -v uptime >/dev/null 2>&1; then
+  uptime
+else
+  echo "unavailable"
+fi

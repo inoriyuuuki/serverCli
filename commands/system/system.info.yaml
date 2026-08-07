@@ -1,0 +1,20 @@
+apiVersion: servercli/v1
+kind: Command
+metadata:
+  id: system.info
+  version: 1.0.0
+  category: system
+  title: 系统信息
+  description: 输出主机名、内核版本与运行时间（只读，无参数）
+spec:
+  # 相对 COMMANDS_DIR 的可执行文件路径
+  executable: ./system/info
+  permissionProfile: read-only
+  timeoutSeconds: 15
+  maxOutputBytes: 262144
+  concurrency: 4
+  parameters:
+    type: object
+    additionalProperties: false
+    required: []
+    properties: {}

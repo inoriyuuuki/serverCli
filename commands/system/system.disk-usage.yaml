@@ -1,0 +1,22 @@
+apiVersion: servercli/v1
+kind: Command
+metadata:
+  id: system.disk-usage
+  version: 1.0.0
+  category: system
+  title: 磁盘使用情况
+  description: 查看指定挂载点的磁盘使用率（只读）
+spec:
+  executable: ./system/disk-usage
+  permissionProfile: read-only
+  timeoutSeconds: 15
+  maxOutputBytes: 262144
+  concurrency: 2
+  parameters:
+    type: object
+    additionalProperties: false
+    required: [mount]
+    properties:
+      mount:
+        type: string
+        enum: ["/", "/data"]

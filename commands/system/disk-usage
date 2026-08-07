@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#
+# system.disk-usage —— 只读：输出指定挂载点的 df
+# 用法: disk-usage <mount>；mount 仅允许 "/" 或 "/data"（与 manifest enum 一致）
+#
+set -euo pipefail
+
+mount="${1:-}"
+case "$mount" in
+  /|/data) ;;
+  *)
+    printf 'invalid mount: %s（仅允许 / 或 /data）\n' "$mount" >&2
+    exit 2
+    ;;
+esac
+
+if command -v df >/dev/null 2>&1; then
+  df -h "$mount"
+else
+  printf 'df 命令不可用\n' >&2
+  exit 1
+fi

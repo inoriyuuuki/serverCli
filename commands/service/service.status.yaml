@@ -1,0 +1,23 @@
+apiVersion: servercli/v1
+kind: Command
+metadata:
+  id: service.status
+  version: 1.0.0
+  category: service
+  title: 服务状态
+  description: 查看指定系统服务/进程的状态（只读；无 systemd 环境使用 ps 兜底）
+spec:
+  executable: ./service/status
+  permissionProfile: read-only
+  timeoutSeconds: 20
+  maxOutputBytes: 262144
+  concurrency: 4
+  parameters:
+    type: object
+    additionalProperties: false
+    required: [service]
+    properties:
+      service:
+        type: string
+        minLength: 1
+        maxLength: 128

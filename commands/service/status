@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#
+# service.status —— 只读：查看指定系统服务/进程状态
+# 优先 systemctl status；无 systemd（如 macOS 测试环境）时用 ps 兜底。
+# 用法: status <service>
+#
+set -u
+
+service="${1:-}"
+if [ -z "$service" ]; then
+  printf 'usage: status <service>\n' >&2
+  exit 2
+fi
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  # systemd 环境
+  if systemctl --no-pager --lines 20 status "$service" 2>/dev/null; then
+    exit 0
+  else
+    # 服务不存在或未启动也返回可读摘要
+    printf 'service=%s status=not-found-or-inactive\n' "$service"
+    systemctl --no-pager --no-legend list-units --all 2>/dev/null | grep -i -- "$service" || true
+    exit 0
+  fi
+fi
+
+# 无 systemd 兜底（macOS 等）：按进程名匹配
+if pgrep -x "$service" >/dev/null 2>&1; then
+  printf 'service=%s status=running\n' "$service"
+  pgrep -lf "$service" 2>/dev/null || true
+else
+  printf 'service=%s status=not-running\n' "$service"
+  ps aux 2>/dev/null | grep -i -- "$service" | grep -v grep || true
+fi
+exit 0

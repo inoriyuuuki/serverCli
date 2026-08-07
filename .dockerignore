@@ -1,0 +1,26 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# 本地状态/运行产物(不进镜像)
+.state
+state/
+logs/
+run/
+bin/
+.env
+.env.*
+!.env.example
+
+# 前后端依赖缓存与构建缓存
+**/node_modules
+frontend/dist
+**/dist
+**/*.tsbuildinfo
+
+# 系统/编辑器
+.DS_Store
+*.swp
+.idea
+.vscode

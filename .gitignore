@@ -1,0 +1,77 @@
+# ============ ServerCLI 运行时数据 ============
+state/
+logs/
+run/
+
+# ============ 构建产物 ============
+bin/
+node_modules/
+dist/
+
+# ============ 数据库 ============
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ============ Secret 与本地配置（严禁入库） ============
+.env
+*.env
+.secrets.env
+*.secrets.env
+# 但 .example 模板需要入库
+!*.env.example
+!*.secrets.env.example
+
+# ============ 系统 / 编辑器 / 日志 ============
+.DS_Store
+*.log
+Thumbs.db
+
+# ============ 敏感文件（私钥 / 证书 / 凭证，严禁入库） ============
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+authorized_keys
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# ============ IDE / 编辑器 ============
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ============ Go 测试与覆盖率 ============
+coverage.out
+coverage.html
+*.cover
+*.prof
+*.test
+
+# ============ 前端 / Node 调试产物 ============
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+frontend/.vite/
+
+# ============ 临时 / 备份文件 ============
+*.bak
+*.tmp
+*.orig
+*.rej
+*.pid
+.envrc

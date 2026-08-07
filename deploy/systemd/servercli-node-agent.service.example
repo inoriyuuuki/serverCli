@@ -1,0 +1,54 @@
+# =============================================================================
+# ServerCLI Node Agent systemd 模板
+# 占位符：<ENV>（test/production）、<INSTANCE>（如 test-primary / test-child-1）
+# 安装步骤（以 root 为例）：
+#   install -m 0644 deploy/systemd/servercli-node-agent.service.example \
+#       /etc/systemd/system/servercli-node-agent@<ENV>-<INSTANCE>.service
+#   systemctl daemon-reload
+#   systemctl enable --now servercli-node-agent@<ENV>-<INSTANCE>.service
+# 说明：子节点通常只运行 node-agent；主节点与 control-plane 同机部署。
+# =============================================================================
+[Unit]
+Description=ServerCLI Node Agent (<ENV>/<INSTANCE>)
+Documentation=https://github.com/your-org/servercli
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=servercli
+Group=servercli
+WorkingDirectory=/opt/servercli
+
+EnvironmentFile=/opt/servercli/deploy/environments/<ENV>/<INSTANCE>.env
+EnvironmentFile=/opt/servercli/deploy/environments/<ENV>/<INSTANCE>.secrets.env
+
+ExecStart=/opt/servercli/bin/servercli-node-agent
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+# 或使用文件：StandardOutput=append:/var/log/servercli/<ENV>/<INSTANCE>/node-agent.log
+
+# ---- 安全加固 ----
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/var/lib/servercli/<ENV>/<INSTANCE> /var/log/servercli/<ENV>/<INSTANCE> /opt/servercli/run/<INSTANCE>
+# AI Lease 需要安装临时公钥到 AuthorizedKeysFile（位于 ReadWritePaths 内）
+# 如需执行受控 sudo 命令，为 servercli 用户配置精确 sudoers 白名单，不保存 sudo 密码
+
+[Install]
+WantedBy=multi-user.target

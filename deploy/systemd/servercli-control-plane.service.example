@@ -1,0 +1,61 @@
+# =============================================================================
+# ServerCLI Control Plane systemd 模板
+# 占位符：<ENV>（test/production）、<INSTANCE>（如 test-primary / production-primary）
+# 安装步骤（以 root 为例）：
+#   install -m 0644 deploy/systemd/servercli-control-plane.service.example \
+#       /etc/systemd/system/servercli-control-plane@<ENV>-<INSTANCE>.service
+#   # 准备二进制、前端构建产物与 0600 secrets 文件后：
+#   systemctl daemon-reload
+#   systemctl enable --now servercli-control-plane@<ENV>-<INSTANCE>.service
+# 说明：正式环境必须使用受信任 TLS（反向代理或证书），禁止 HTTP_INSECURE_SKIP_VERIFY=true。
+# =============================================================================
+[Unit]
+Description=ServerCLI Control Plane (<ENV>/<INSTANCE>)
+Documentation=https://github.com/your-org/servercli
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=servercli
+Group=servercli
+WorkingDirectory=/opt/servercli
+
+# 配置（非 Secret）与 Secret（0600，仅部署机）分开加载
+EnvironmentFile=/opt/servercli/deploy/environments/<ENV>/<INSTANCE>.env
+EnvironmentFile=/opt/servercli/deploy/environments/<ENV>/<INSTANCE>.secrets.env
+
+ExecStart=/opt/servercli/bin/servercli-control-plane
+# 若以子命令形式执行迁移：ExecStart=/opt/servercli/bin/servercli-control-plane serve
+# （与 scripts/migrate.sh 的 MIGRATE_FLAG 保持一致）
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# 日志（systemd journal 或重定向到实例日志目录，二选一；以下为 journal 默认）
+StandardOutput=journal
+StandardError=journal
+# 或使用文件：StandardOutput=append:/var/log/servercli/<ENV>/<INSTANCE>/control-plane.log
+
+# ---- 安全加固 ----
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# 只读挂载仓库源码与构建产物；state/run/logs 单独可写
+ReadWritePaths=/var/lib/servercli/<ENV>/<INSTANCE> /var/log/servercli/<ENV>/<INSTANCE> /opt/servercli/run/<INSTANCE>
+# 如需要绑定低端口/能力再取消注释（本项目端口 >1024，通常不需要）：
+# AmbientCapabilities=
+# CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
