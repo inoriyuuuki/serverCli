@@ -17,9 +17,10 @@ on:
         default: 'linux/amd64'
         type: string
 
-# 镜像名优先级: 仓库变量 DOCKER_IMAGE > github.repository(自动转小写)
+# 镜像名优先级: 仓库变量 DOCKER_IMAGE > DOCKERHUB_USERNAME/servercli > github.repository(自动转小写)
 # 例如在 GitHub 仓库 Settings -> Secrets and variables -> Actions -> Variables
-# 添加 DOCKER_IMAGE=inoriyuuki/servercli 可固定推送到自己的 Docker Hub 账号
+# 添加 DOCKER_IMAGE=<dockerhub用户名>/servercli 可固定推送到自己的 Docker Hub 账号
+# 不设 DOCKER_IMAGE 时, 自动用 DOCKERHUB_USERNAME 作为命名空间, 与登录账号保持一致
 
 jobs:
   build:
@@ -62,6 +63,8 @@ jobs:
         run: |
           if [ -n "${{ vars.DOCKER_IMAGE }}" ]; then
             IMAGE="${{ vars.DOCKER_IMAGE }}"
+          elif [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/servercli"
           else
             IMAGE="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           fi
