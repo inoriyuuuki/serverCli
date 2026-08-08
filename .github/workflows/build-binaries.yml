@@ -1,0 +1,261 @@
+# =============================================================================
+# ServerCLI 二进制构建工作流（面向物理主机部署，不依赖 Docker）
+#
+# 触发方式：
+#   1) 推送 tag（如 v1.0.0）-> 构建全部目标平台并自动发布 GitHub Release
+#   2) 手动触发 workflow_dispatch -> 可选指定 tag 与目标平台，仅上传 Actions Artifact
+#
+# 产物（每个平台一个自包含 tar.gz 包）：
+#   - bin/servercli-control-plane、bin/servercli-node-agent（纯 Go，CGO_ENABLED=0）
+#   - frontend/dist（前端静态资源，由控制面托管）
+#   - commands/（命令 manifest 与可执行文件）
+#   - deploy/（环境示例 + systemd 模板 + lease shell）、scripts/、VERSION、INSTALL.md
+#
+# 旧的 Docker 镜像构建工作流已停用，见 .github/workflows/docker-build.yml.disabled
+# =============================================================================
+name: Build ServerCLI Binaries
+
+on:
+  push:
+    tags:
+      - '*'
+      - '!nightly*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要构建的 tag（可选，留空则构建当前分支，TAG=分支名）'
+        required: false
+        type: string
+      platforms:
+        description: '目标平台（逗号分隔 os/arch），默认 linux/amd64,linux/arm64'
+        required: false
+        default: 'linux/amd64,linux/arm64'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 解析版本号与目标平台矩阵
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Resolve version & platforms
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      platforms: ${{ steps.resolve.outputs.platforms }}
+      is_release: ${{ steps.resolve.outputs.is_release }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve tag & platforms
+        id: resolve
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_PLATFORMS: ${{ github.event.inputs.platforms }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          # ---- 版本号 ----
+          if [ -n "${INPUT_TAG}" ]; then
+            TAG="${INPUT_TAG}"
+            if ! git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "::error::Tag '${TAG}' does not exist"
+              exit 1
+            fi
+          elif [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Building tag: ${TAG}"
+
+          # ---- 目标平台（os/arch，逗号分隔）----
+          PLATFORMS="${INPUT_PLATFORMS:-linux/amd64,linux/arm64}"
+          MATRIX="["
+          FIRST=1
+          IFS=',' read -r -a ARR <<< "${PLATFORMS}"
+          for p in "${ARR[@]}"; do
+            p="$(printf '%s' "${p}" | tr -d '[:space:]')"
+            [ -z "${p}" ] && continue
+            OS="${p%/*}"
+            ARCH="${p#*/}"
+            case "${OS}" in
+              linux|darwin|windows|freebsd|openbsd|netbsd|dragonfly|solaris|illumos) ;;
+              *) echo "::error::Unsupported OS: ${OS}"; exit 1 ;;
+            esac
+            case "${ARCH}" in
+              amd64|arm64|386|arm|riscv64|ppc64le|s390x) ;;
+              *) echo "::error::Unsupported ARCH: ${ARCH}"; exit 1 ;;
+            esac
+            if [ "${FIRST}" -eq 1 ]; then FIRST=0; else MATRIX+=","; fi
+            MATRIX+="{\"os\":\"${OS}\",\"arch\":\"${ARCH}\"}"
+          done
+          if [ "${FIRST}" -eq 1 ]; then
+            echo "::error::platforms is empty"
+            exit 1
+          fi
+          MATRIX+="]"
+          echo "platforms=${MATRIX}" >> "$GITHUB_OUTPUT"
+          echo "Platforms: ${MATRIX}"
+
+          # ---- 是否发布 GitHub Release（仅 tag 推送触发）----
+          if [ "${EVENT_NAME}" = "push" ]; then
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # 构建前端静态资源（所有平台共用一份 dist）
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: Build frontend (dist)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # 交叉编译 Go 后端并打包（每个平台一个自包含 bundle）
+  # ---------------------------------------------------------------------------
+  binaries:
+    name: Build ${{ matrix.os }}/${{ matrix.arch }}
+    needs: [prepare, frontend]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.platforms) }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.tag }}
+      GOOS: ${{ matrix.os }}
+      GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: "0"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Build backend binaries
+        run: |
+          cd backend
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.build=github-actions -X main.commit=${GITHUB_SHA}" \
+            -o ../bin/servercli-control-plane ./cmd/control-plane
+          go build -trimpath -ldflags "-s -w" \
+            -o ../bin/servercli-node-agent ./cmd/node-agent
+
+      - name: Package release bundle
+        run: |
+          set -euo pipefail
+          SAFE_VERSION="$(printf '%s' "${VERSION}" | tr '/' '-')"
+          ROOT="servercli-${SAFE_VERSION}-${GOOS}-${GOARCH}"
+          ARCHIVE="${ROOT}.tar.gz"
+
+          mkdir -p "${ROOT}/bin" "${ROOT}/frontend" "${ROOT}/deploy"
+          cp bin/servercli-control-plane bin/servercli-node-agent "${ROOT}/bin/"
+          cp -R frontend/dist "${ROOT}/frontend/dist"
+          cp -R commands "${ROOT}/commands"
+          cp -R scripts "${ROOT}/scripts"
+          cp -R deploy/environments deploy/systemd "${ROOT}/deploy/"
+          cp deploy/servercli-lease-shell.sh "${ROOT}/deploy/"
+          cp start.sh check.sh README.md "${ROOT}/"
+          printf '%s\n' "${VERSION}" > "${ROOT}/VERSION"
+
+          cp deploy/INSTALL.md "${ROOT}/INSTALL.md"
+
+          find "${ROOT}" -name '.DS_Store' -delete
+          chmod +x "${ROOT}/bin/"* "${ROOT}/scripts/"*.sh "${ROOT}/start.sh" "${ROOT}/check.sh" "${ROOT}/deploy/servercli-lease-shell.sh"
+          tar -czf "${ARCHIVE}" "${ROOT}"
+          sha256sum "${ARCHIVE}" > sha256sums.txt
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+          echo "Bundle: ${ARCHIVE}"
+          ls -lh "${ARCHIVE}"
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: |
+            *.tar.gz
+            sha256sums.txt
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # tag 推送时发布 GitHub Release 并附加全部 bundle
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, binaries]
+    if: needs.prepare.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Stage release assets
+        run: |
+          set -euo pipefail
+          cd dist
+          find . -maxdepth 2 -type f -name '*.tar.gz' -exec mv -f {} . \;
+          find . -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+          sha256sum *.tar.gz > sha256sums.txt
+          ls -la
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          cd dist
+          gh release create "${TAG}" *.tar.gz sha256sums.txt \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "ServerCLI ${TAG}" \
+            --generate-notes

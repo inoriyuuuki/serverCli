@@ -23,7 +23,7 @@ ServerCLI 是「一台固定主服务器 + 多台节点服务器」的轻量级�
 | 后端 | Go（两个二进制：`servercli-control-plane` + `servercli-node-agent`） |
 | 前端 | React + TypeScript + Vite（构建产物 `frontend/dist` 由控制面托管） |
 | 数据库 | 正式 PostgreSQL / 测试 SQLite（WAL），共享迁移 |
-| 运维 | 一键构建/迁移/启动/健康检查脚本、systemd 单元、Docker 镜像 |
+| 运维 | GitHub Actions 二进制构建（物理主机直接部署）、systemd 单元、一键运维脚本，**不依赖 Docker** |
 | 通信 | HTTPS REST + 节点长轮询任务通道 |
 
 ## 仓库结构
@@ -34,14 +34,17 @@ serverCli/
 ├── frontend/            # React + Vite 管理界面
 ├── commands/            # 命令 manifest（YAML）+ 可执行文件样例
 ├── db/migrations/       # SQL 迁移参考目录（权威迁移嵌入 backend）
+├── .github/workflows/
+│   ├── build-binaries.yml        # 二进制构建 + GitHub Release（主用）
+│   └── docker-build.yml.disabled # 旧 Docker 镜像构建（已停用）
 ├── deploy/
 │   ├── environments/    # 各环境/实例 .env.example 与 .secrets.env.example
 │   ├── systemd/         # control-plane / node-agent systemd 模板
-│   └── docker/          # Docker Compose 与容器入口
+│   └── docker/          # 遗留 Docker Compose 模板（已停用，仅作参考）
 ├── scripts/             # start/stop/restart/status/logs/migrate/bootstrap-admin/smoke-test
 ├── doc/                 # 需求/架构/契约文档（权威）
-├── Makefile             # 构建 / 测试 / 冒烟入口
-├── Dockerfile           # 多阶段镜像（前端 + Go 后端 + 精简运行时）
+├── Makefile             # 本地构建 / 测试 / 冒烟入口
+├── Dockerfile           # 遗留多阶段镜像（已停用，仅作参考）
 └── start.sh             # 生产实例启动器（兼容 init 仓库调用模式）
 ```
 
@@ -101,31 +104,53 @@ serverCli/
 4. systemd 模板见 `deploy/systemd/`，占位符 `<ENV>/<INSTANCE>`；
 5. 若由 init 仓库托管，使用根目录 `start.sh`（读取 `.instance` 判定本机实例并启动，node-agent 以 `servercli-ai` 用户运行）。
 
-## Docker 部署
+## 二进制发布（GitHub Actions）
 
-构建并推送镜像（或直接使用 `inoriyuuuki/servercli`）：
+本项目需要直接管理物理主机，**不采用 Docker**。编译产物由 GitHub Actions
+（`.github/workflows/build-binaries.yml`）自动构建，产出纯 Go 静态二进制
+（`CGO_ENABLED=0`，无需在目标机安装 Go/Node）。
 
-```bash
-docker build -t servercli:latest .
+### 触发方式
+
+- **推送 tag**（如 `v1.0.0`，`nightly*` 除外）：自动交叉编译默认平台
+  `linux/amd64,linux/arm64`，并把每个平台的 tar.gz 包附加到 GitHub Release；
+- **手动触发**（Actions 页面 `workflow_dispatch`）：可指定 `tag` 与 `platforms`
+  （逗号分隔的 `os/arch`，如 `linux/amd64,linux/arm64,darwin/arm64`），
+  产物仅上传为 Actions Artifact，不发布 Release。
+
+### 产物内容（每平台一个 `servercli-<TAG>-<os>-<arch>.tar.gz`）
+
+```text
+servercli-<TAG>-<os>-<arch>/
+├── bin/                  # servercli-control-plane + servercli-node-agent（静态二进制）
+├── frontend/dist/        # 前端静态资源（由控制面托管）
+├── commands/             # 命令 manifest 与可执行文件
+├── deploy/
+│   ├── environments/     # 各环境 .env.example / .secrets.env.example
+│   ├── systemd/          # systemd 服务模板
+│   └── servercli-lease-shell.sh
+├── scripts/              # start/stop/status/migrate/bootstrap-admin 等运维脚本
+├── start.sh / check.sh
+├── VERSION
+└── INSTALL.md            # 物理主机安装步骤（解压到 /opt/servercli + systemd）
 ```
 
-使用 Docker Compose（`deploy/docker/docker-compose.yml`），主/子节点通过 profile 互斥：
+### 物理主机安装（概要）
 
 ```bash
-# 主节点（含 PostgreSQL）
-docker compose --profile primary up -d
+# 1) 从 GitHub Release 下载对应平台的 tar.gz 并解压
+sudo mkdir -p /opt/servercli
+sudo tar -xzf servercli-<TAG>-linux-amd64.tar.gz -C /opt/servercli --strip-components=1
 
-# 子节点（仅 node-agent，主动外连主控）
-PRIMARY_BACKEND_URL=http://<primary-server-ip>:9045 \
-  docker compose --profile child up -d
+# 2) 按 deploy/environments/ 示例准备实例配置（Secret 文件权限 0600）
 
-# 停止
-docker compose --profile primary down
+# 3) 按 deploy/systemd/ 模板安装并启动服务
+sudo systemctl enable --now servercli-control-plane@production-production-primary.service
+sudo systemctl enable --now servercli-node-agent@production-production-primary.service
 ```
 
-- 数据库密码等敏感值放入 `deploy/docker/.env` 并取消 `env_file` 注释；
-- 镜像默认 `inoriyuuuki/servercli:latest`，可用 `DOCKER_IMAGE` / `TAG` 环境变量覆盖；
-- 子节点容器不需要映射端口，也不依赖数据库。
+> 旧 Docker 镜像构建工作流已停用（`.github/workflows/docker-build.yml.disabled`），
+> `Dockerfile` 与 `deploy/docker/` 仅作历史参考，不再作为部署方式。
 
 ## 脚本清单
 
