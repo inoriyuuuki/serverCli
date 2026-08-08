@@ -355,6 +355,12 @@ build_backend() {
 }
 
 build_frontend() {
+  if [ "$NO_BUILD" -eq 1 ]; then
+    [ -f "$FRONTEND_DIST_DIR/index.html" ] \
+      || die "阶段失败: 缺少前端静态资源且指定了 --no-build: $FRONTEND_DIST_DIR"
+    info "阶段: 使用已存在前端静态资源（--no-build）"
+    return 0
+  fi
   info "阶段: 构建前端静态资源到 $FRONTEND_DIST_DIR"
   if [ ! -f "$REPO_ROOT/frontend/package.json" ]; then
     if [ "$ENV" = "production" ]; then

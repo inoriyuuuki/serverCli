@@ -49,11 +49,15 @@ info "阶段 1/9: 参数与依赖检查"
 case "$ENV/$ROLE" in
   production/child) die "暂不支持 production child 一键启动（正式子节点请单独部署 node-agent）" ;;
 esac
-require_cmd go
-if command -v node >/dev/null 2>&1 || command -v npm >/dev/null 2>&1; then
-  :
+if [ "$NO_BUILD" -eq 0 ]; then
+  require_cmd go
+  if command -v node >/dev/null 2>&1 || command -v npm >/dev/null 2>&1; then
+    :
+  else
+    die "依赖检查失败: 缺少 node/npm（构建前端需要）"
+  fi
 else
-  die "依赖检查失败: 缺少 node/npm（构建前端需要）"
+  info "--no-build：跳过 Go/Node 依赖检查，使用已存在产物"
 fi
 command -v curl >/dev/null 2>&1 || warn "缺少 curl，健康检查将受限（建议安装）"
 BACKEND_PORT="$(addr_port "$BACKEND_ADDR" 9045)"
