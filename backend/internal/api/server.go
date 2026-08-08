@@ -36,6 +36,7 @@ type Server struct {
 	build      string
 	commit     string
 	childScope atomic.Value // string node_id when NODE_ROLE=child
+	childProxy *childProxy  // forwards child self-view requests to the primary
 }
 
 // scope returns the bound node_id for child control planes ("" for primary).
@@ -49,6 +50,39 @@ func (s *Server) scope() string {
 // SetChildScope updates the node scope for a child control plane (thread-safe).
 // The scope may appear after startup once the local agent claims its identity.
 func (s *Server) SetChildScope(id string) { s.childScope.Store(id) }
+
+// SetChildProxy configures the child proxy with the local node credential so
+// self-view requests can be forwarded to the primary. Safe to call repeatedly;
+// it is a no-op until both nodeID and credential are non-empty.
+func (s *Server) SetChildProxy(nodeID, credential string) {
+	if s.childProxy != nil {
+		s.childProxy.set(nodeID, credential)
+	}
+}
+
+// childProxyWrap routes matched self-view paths through the child proxy. The
+// proxied paths are admin routes, so they require the child's own admin
+// session (and CSRF for writes) exactly like the local admin handlers, and
+// return 503 until the local agent has claimed its identity.
+func (s *Server) childProxyWrap(next http.Handler) http.Handler {
+	if s.childProxy == nil || s.cfg.NodeRole != "child" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target, ok := s.childProxy.matchPath(r)
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !s.childProxy.ready() {
+			writeError(w, r, s.log, http.StatusServiceUnavailable, "UNAVAILABLE", "child identity not claimed yet; retry shortly", nil)
+			return
+		}
+		s.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+			s.childProxy.forward(w, r, target)
+		})(w, r)
+	})
+}
 
 // Options for Server construction.
 type Options struct {
@@ -100,6 +134,7 @@ func New(opts Options) (*Server, error) {
 	if opts.ChildNodeID != "" {
 		srv.childScope.Store(opts.ChildNodeID)
 	}
+	srv.childProxy = newChildProxy(opts.Log, opts.Config.PrimaryBackendURL, opts.Config.HTTPInsecureSkipVerify)
 	return srv, nil
 }
 
@@ -154,6 +189,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/events", s.agentAuth(s.handleAgentTaskEvent))
 	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/result", s.agentAuth(s.handleAgentTaskResult))
 	mux.HandleFunc("POST /api/v1/agent/leases/{id}/events", s.agentAuth(s.handleAgentLeaseEvent))
+	// Agent self-service (scoped to the calling node): lets a child control
+	// plane mirror its own commands/tasks/leases/audit from the primary.
+	mux.HandleFunc("GET /api/v1/agent/commands", s.agentAuth(s.handleAgentListCommands))
+	mux.HandleFunc("GET /api/v1/agent/tasks", s.agentAuth(s.handleAgentListTasks))
+	mux.HandleFunc("GET /api/v1/agent/tasks/{id}", s.agentAuth(s.handleAgentGetTask))
+	mux.HandleFunc("POST /api/v1/agent/tasks", s.agentAuth(s.handleAgentCreateTask))
+	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/cancel", s.agentAuth(s.handleAgentCancelTask))
+	mux.HandleFunc("GET /api/v1/agent/leases", s.agentAuth(s.handleAgentListLeases))
+	mux.HandleFunc("GET /api/v1/agent/lease-requests", s.agentAuth(s.handleAgentListLeaseRequests))
+	mux.HandleFunc("GET /api/v1/agent/audit-events", s.agentAuth(s.handleAgentListAuditEvents))
 
 	// Commands discovery.
 	mux.HandleFunc("GET /api/v1/commands", s.requireAdmin(s.handleListCommands))
@@ -188,8 +233,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/cleanup/run", s.requireAdmin(s.handleCleanupRun))
 	mux.HandleFunc("GET /api/v1/cleanup/runs", s.requireAdmin(s.handleCleanupRuns))
 
-	// Static frontend + SPA fallback.
-	return s.wrap(s.withFrontend(mux))
+	// Static frontend + SPA fallback. On child control planes the scoped
+	// self-view requests are proxied to the primary before reaching the mux.
+	return s.wrap(s.withFrontend(s.childProxyWrap(mux)))
 }
 
 // wrap applies global middleware around the handler.
@@ -259,7 +305,9 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 }
 
 // withFrontend serves the static frontend when present, with SPA fallback.
-func (s *Server) withFrontend(mux *http.ServeMux) http.Handler {
+// The handler may be a wrapped mux (e.g. the child proxy) so API paths still
+// reach it before falling through to the SPA.
+func (s *Server) withFrontend(mux http.Handler) http.Handler {
 	dist := s.cfg.FrontendDistDir
 	info, err := os.Stat(dist)
 	if err != nil || !info.IsDir() {

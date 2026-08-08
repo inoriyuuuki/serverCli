@@ -340,6 +340,55 @@ func (s *Store) CreateHeartbeat(ctx context.Context, hb *model.NodeHeartbeat) er
 	return err
 }
 
+// LatestHeartbeat returns the most recent heartbeat for a node, or nil when
+// the node has no heartbeats yet.
+func (s *Store) LatestHeartbeat(ctx context.Context, nodeID string) (*model.NodeHeartbeat, error) {
+	hbs, err := s.RecentHeartbeats(ctx, nodeID, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(hbs) == 0 {
+		return nil, nil
+	}
+	return hbs[0], nil
+}
+
+// LatestHeartbeats returns the most recent heartbeat for each of the given
+// nodes in one query (avoids N+1 round trips for the node list). Nodes without
+// heartbeats are simply absent from the map.
+func (s *Store) LatestHeartbeats(ctx context.Context, nodeIDs []string) (map[string]*model.NodeHeartbeat, error) {
+	out := map[string]*model.NodeHeartbeat{}
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, 0, len(nodeIDs))
+	ph := make([]string, 0, len(nodeIDs))
+	for i, id := range nodeIDs {
+		args = append(args, id)
+		ph = append(ph, "$"+strconv.Itoa(i+1))
+	}
+	q := `SELECT h.id, h.node_id, h.recorded_at, h.cpu_usage_percent, h.memory_total_bytes, h.memory_used_bytes,
+		h.disk_total_bytes, h.disk_used_bytes, h.load_1, h.load_5, h.load_15, h.uptime_seconds, h.time_offset_ms,
+		h.summary_json, h.is_protected, h.protected_at
+		FROM node_heartbeat h
+		JOIN (SELECT node_id, MAX(recorded_at) AS m FROM node_heartbeat
+			WHERE node_id IN (` + strings.Join(ph, ",") + `) GROUP BY node_id) lat
+			ON h.node_id = lat.node_id AND h.recorded_at = lat.m`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		hb, err := scanHeartbeat(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[hb.NodeID] = hb
+	}
+	return out, rows.Err()
+}
+
 // RecentHeartbeats returns the most recent heartbeats for a node.
 func (s *Store) RecentHeartbeats(ctx context.Context, nodeID string, limit int) ([]*model.NodeHeartbeat, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, node_id, recorded_at, cpu_usage_percent, memory_total_bytes, memory_used_bytes,

@@ -157,7 +157,7 @@ sudo systemctl enable --now servercli-node-agent@production-production-primary.s
 | 脚本 | 说明 |
 | --- | --- |
 | `scripts/start.sh` | 一键启动：构建 → 迁移 → 管理员初始化 → 启动 → 健康检查 |
-| `scripts/stop.sh` | 优雅停止（SIGTERM → 等待 → SIGKILL 兜底），清理 PID 文件 |
+| `scripts/stop.sh` | 优雅停止（SIGTERM → 等待 → SIGKILL 兜底），清理 PID 文件；无参数即停止全部实例 |
 | `scripts/restart.sh` | 停止 + 启动 |
 | `scripts/status.sh` | 实例 PID / 健康 / 端口 / 数据库类型；`--all` 列出全部 |
 | `scripts/logs.sh` | 查看实例日志；`--follow` 持续跟踪，`--lines N` 控制行数 |
@@ -197,6 +197,9 @@ make test-child     # 等价于 start.sh --env test --role child --instance test
 ```bash
 ./scripts/status.sh --env test --all                                  # 查看测试主+子状态
 ./scripts/logs.sh --env test --role child --instance test-child-1 --follow
+./scripts/stop.sh                                                     # 停止全部已启动实例
+./scripts/stop.sh --env production --confirm-production               # 停止全部（含正式环境，需确认）
+./scripts/stop.sh --env test --role child --instance test-child-1     # 只停指定实例
 ./scripts/restart.sh --env test --role primary
 ./scripts/migrate.sh --env test --role child --instance test-child-1
 ./scripts/bootstrap-admin.sh --env test --role primary --non-interactive

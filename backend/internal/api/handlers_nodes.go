@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -19,7 +20,45 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes})
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	hbs, _ := s.store.LatestHeartbeats(r.Context(), ids)
+	out := make([]map[string]any, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, nodeWithHeartbeat(n, hbs[n.ID]))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nodes": out})
+}
+
+// nodeWithHeartbeat renders a node with its latest heartbeat attached so the
+// UI can show the resource summary without an extra round trip.
+func nodeWithHeartbeat(n *model.Node, hb *model.NodeHeartbeat) map[string]any {
+	raw, err := json.Marshal(n)
+	if err != nil {
+		return map[string]any{"id": n.ID, "instance_name": n.InstanceName, "status": n.Status}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return map[string]any{"id": n.ID, "instance_name": n.InstanceName, "status": n.Status}
+	}
+	if hb != nil {
+		m["heartbeat"] = map[string]any{
+			"cpu_usage_percent":  hb.CPUUsagePercent,
+			"memory_total_bytes": hb.MemoryTotalBytes,
+			"memory_used_bytes":  hb.MemoryUsedBytes,
+			"disk_total_bytes":   hb.DiskTotalBytes,
+			"disk_used_bytes":    hb.DiskUsedBytes,
+			"load_1":             hb.Load1,
+			"load_5":             hb.Load5,
+			"load_15":            hb.Load15,
+			"uptime_seconds":     hb.UptimeSeconds,
+			"time_offset_ms":     hb.TimeOffsetMS,
+			"recorded_at":        hb.RecordedAt,
+		}
+	}
+	return m
 }
 
 func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +68,8 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	addrs, _ := s.store.NodeAddresses(r.Context(), n.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"node": n, "addresses": addrs})
+	hb, _ := s.store.LatestHeartbeat(r.Context(), n.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"node": nodeWithHeartbeat(n, hb), "addresses": addrs})
 }
 
 func (s *Server) handlePatchNode(w http.ResponseWriter, r *http.Request) {

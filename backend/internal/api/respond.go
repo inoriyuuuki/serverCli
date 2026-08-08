@@ -61,6 +61,8 @@ func writeServiceError(w http.ResponseWriter, r *http.Request, log *slog.Logger,
 		status, code = http.StatusForbidden, "FORBIDDEN"
 	case errors.Is(err, service.ErrNotFound):
 		status, code = http.StatusNotFound, "NOT_FOUND"
+	case errors.Is(err, service.ErrBadRequest):
+		status, code = http.StatusBadRequest, "BAD_REQUEST"
 	case errors.Is(err, service.ErrConflict):
 		status, code = http.StatusConflict, "CONFLICT"
 	case errors.Is(err, service.ErrAmbiguous):

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"servercli/internal/model"
 	"servercli/internal/service"
 )
 
@@ -23,7 +24,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, http.StatusBadRequest, "BAD_REQUEST", "Idempotency-Key header required", nil)
 		return
 	}
-	t, err := s.tasks.CreateTask(r.Context(), nodeID, admin.ID, idem, in)
+	t, err := s.tasks.CreateTask(r.Context(), nodeID, admin.ID, model.ActorAdmin, idem, in)
 	if err != nil {
 		writeServiceError(w, r, s.log, err)
 		return
@@ -64,7 +65,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 	admin := adminFrom(r.Context())
-	t, err := s.tasks.CancelTask(r.Context(), s.scope(), r.PathValue("id"), admin.ID)
+	t, err := s.tasks.CancelTask(r.Context(), s.scope(), r.PathValue("id"), model.ActorAdmin, admin.ID)
 	if err != nil {
 		writeServiceError(w, r, s.log, err)
 		return

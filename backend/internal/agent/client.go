@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 )
@@ -37,11 +38,47 @@ func NewClient(baseURL string, insecureSkipVerify bool, timeout time.Duration) *
 // SetCredential updates the node credential used for signing.
 func (c *Client) SetCredential(cred string) { c.credential = cred }
 
+// SetTransport overrides the underlying HTTP transport (mainly for tests).
+func (c *Client) SetTransport(rt http.RoundTripper) {
+	c.http = &http.Client{Transport: rt, Timeout: c.timeout}
+}
+
 // Sign computes the agent request signature.
 func Sign(credential, ts, method, path, bodyHash string) string {
 	mac := hmac.New(sha256.New, []byte(credential))
 	mac.Write([]byte(ts + "|" + method + "|" + path + "|" + bodyHash))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// DoRaw performs a signed request and returns the raw response without
+// consuming its body. It is used by child control planes to proxy agent-scoped
+// requests to the primary (e.g. mirroring own commands/tasks/leases).
+// headers are forwarded verbatim (e.g. Idempotency-Key); agent auth headers
+// are always injected.
+func (c *Client) DoRaw(method, path string, query url.Values, body []byte, headers map[string]string) (*http.Response, error) {
+	sum := sha256.Sum256(body)
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := Sign(c.credential, ts, method, path, hex.EncodeToString(sum[:]))
+	target := c.baseURL + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	req, err := http.NewRequest(method, target, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	if c.credential != "" {
+		req.Header.Set("Authorization", "Bearer "+c.credential)
+	}
+	req.Header.Set("X-Agent-Timestamp", ts)
+	req.Header.Set("X-Agent-Signature", sig)
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+	return c.http.Do(req)
 }
 
 // Do performs a signed request. body may be nil. respBody is decoded into out

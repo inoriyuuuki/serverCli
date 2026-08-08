@@ -94,6 +94,14 @@ func (s *Server) agentAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, r, s.log, http.StatusUnauthorized, "UNAUTHENTICATED", "invalid node credential", nil)
 			return
 		}
+		if !node.Enabled {
+			s.auditor.Denied(r.Context(), service.AuditInput{
+				ActorType: model.ActorNode, ActorID: node.ID, Action: "agent.auth", SourceIP: remoteIP(r),
+				Summary: "agent authentication rejected (node disabled)", RiskLevel: service.RiskHigh,
+			})
+			writeError(w, r, s.log, http.StatusForbidden, "FORBIDDEN", "node disabled", nil)
+			return
+		}
 		// Signature: HMAC-SHA256(credential, "ts|method|path|sha256(body)").
 		tsHeader := r.Header.Get("X-Agent-Timestamp")
 		sigHeader := r.Header.Get("X-Agent-Signature")

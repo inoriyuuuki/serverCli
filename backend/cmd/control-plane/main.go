@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -132,8 +134,9 @@ func run() error {
 		go refreshChildScope(ctx, srv, cfg, st, log)
 	}
 
-	// Scheduler.
-	sched := scheduler.New(log, srv.NodeService(), srv.LeaseService(), srv.CleanupService(), srv.SettingsService())
+	// Scheduler. Child (scoped) control planes are not the authority on node
+	// liveness (heartbeats go to the primary), so offline detection is skipped.
+	sched := scheduler.New(log, srv.NodeService(), srv.LeaseService(), srv.CleanupService(), srv.SettingsService(), cfg.NodeRole == "child")
 	go sched.Run(ctx)
 
 	// The control plane serves both the browser frontend port and the API port
@@ -243,22 +246,23 @@ func bootstrapAdmin(ctx context.Context, cfg *config.Config, st *store.Store, lo
 	return nil
 }
 
-// childIdentityID reads the local agent identity file and returns the node_id.
-func childIdentityID(cfg *config.Config) string {
+// childIdentity reads the local agent identity file.
+func childIdentity(cfg *config.Config) (nodeID, credential, instanceName, instanceRole string) {
 	identityPath := filepath.Join(cfg.AgentStateDir, "identity.json")
 	data, err := os.ReadFile(identityPath)
 	if err != nil {
-		return ""
+		return "", "", "", ""
 	}
 	var ident struct {
-		NodeID       string `json:"node_id"`
-		InstanceName string `json:"instance_name"`
-		InstanceRole string `json:"instance_role"`
+		NodeID         string `json:"node_id"`
+		NodeCredential string `json:"node_credential"`
+		InstanceName   string `json:"instance_name"`
+		InstanceRole   string `json:"instance_role"`
 	}
 	if err := json.Unmarshal(data, &ident); err != nil || ident.NodeID == "" {
-		return ""
+		return "", "", "", ""
 	}
-	return ident.NodeID
+	return ident.NodeID, ident.NodeCredential, ident.InstanceName, ident.InstanceRole
 }
 
 // refreshChildScope periodically re-reads the local agent identity so a child
@@ -271,23 +275,7 @@ func refreshChildScope(ctx context.Context, srv *api.Server, cfg *config.Config,
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if id := childIdentityID(cfg); id != "" {
-				srv.SetChildScope(id)
-				// Ensure the local node record exists for the restricted API.
-				if _, err := st.NodeByID(ctx, id); err != nil {
-					node := &model.Node{
-						ID:            id,
-						EnvironmentID: cfg.InstanceName + "-env",
-						InstanceName:  cfg.InstanceName,
-						Role:          cfg.NodeRole,
-						Status:        model.NodeStatusOnline,
-						Enabled:       true,
-					}
-					if cerr := st.CreateNode(ctx, node); cerr != nil {
-						log.Warn("failed to create local node record", "node_id", id, "error", cerr)
-					}
-				}
-			}
+			refreshSelfNode(ctx, srv, cfg, st, log)
 		}
 	}
 }
@@ -295,40 +283,125 @@ func refreshChildScope(ctx context.Context, srv *api.Server, cfg *config.Config,
 // ensureChildNode makes the child's local DB aware of its own node identity so
 // the restricted API can serve it. Returns the node_id scope.
 func ensureChildNode(ctx context.Context, cfg *config.Config, st *store.Store, log *slog.Logger) string {
-	ident := childIdentityID(cfg)
-	if ident == "" {
+	return refreshSelfNode(ctx, nil, cfg, st, log)
+}
+
+// refreshSelfNode binds the child API scope to the local agent identity and
+// keeps a coherent local "self" node record: status Online with identity
+// fields populated. The primary is authoritative for real heartbeat status;
+// this only guarantees the child's restricted self-view is usable and is not
+// flipped to offline by the local (non-authoritative) scheduler.
+func refreshSelfNode(ctx context.Context, srv *api.Server, cfg *config.Config, st *store.Store, log *slog.Logger) string {
+	nodeID, credential, instanceName, instanceRole := childIdentity(cfg)
+	if nodeID == "" {
 		identityPath := filepath.Join(cfg.AgentStateDir, "identity.json")
 		log.Warn("no agent identity found; child API scope unavailable until agent claims", "path", identityPath)
 		return ""
 	}
-	var nodeID, instanceName, instanceRole string
-	nodeID = ident
-	data, _ := os.ReadFile(filepath.Join(cfg.AgentStateDir, "identity.json"))
-	var full struct {
-		NodeID       string `json:"node_id"`
-		InstanceName string `json:"instance_name"`
-		InstanceRole string `json:"instance_role"`
+	if credential == "" {
+		log.Warn("agent identity has no node credential; child proxy will stay disabled", "node_id", nodeID)
 	}
-	_ = json.Unmarshal(data, &full)
-	instanceName = full.InstanceName
-	instanceRole = full.InstanceRole
-	if _, err := st.NodeByID(ctx, nodeID); err != nil {
-		// Create a local representation of this node.
-		node := &model.Node{
-			ID:            nodeID,
-			EnvironmentID: cfg.InstanceName + "-env",
-			InstanceName:  instanceName,
-			Role:          "child",
-			Status:        model.NodeStatusOnline,
-			Enabled:       true,
+	if srv != nil {
+		srv.SetChildScope(nodeID)
+		srv.SetChildProxy(nodeID, credential)
+	}
+	hostname, _ := os.Hostname()
+	frontendPort := addrPort(cfg.FrontendAddr)
+	backendPort := addrPort(cfg.BackendAddr)
+	osName := runtime.GOOS
+	arch := runtime.GOARCH
+
+	n, err := st.NodeByID(ctx, nodeID)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			log.Warn("failed to load local self node record", "node_id", nodeID, "error", err)
+			return nodeID
+		}
+		now := time.Now().UTC()
+		n = &model.Node{
+			ID:              nodeID,
+			EnvironmentID:   cfg.InstanceName + "-env",
+			InstanceName:    instanceName,
+			Role:            "child",
+			Hostname:        hostname,
+			Status:          model.NodeStatusOnline,
+			Enabled:         true,
+			OSName:          osName,
+			OSVersion:       arch,
+			Arch:            arch,
+			FrontendPort:    frontendPort,
+			BackendPort:     backendPort,
+			LastHeartbeatAt: &now,
+			LastOnlineAt:    &now,
 		}
 		if instanceRole != "" {
-			node.Role = instanceRole
+			n.Role = instanceRole
 		}
-		if err := st.CreateNode(ctx, node); err != nil {
-			log.Warn("failed to create local node record", "error", err)
+		if err := st.CreateNode(ctx, n); err != nil {
+			log.Warn("failed to create local self node record", "node_id", nodeID, "error", err)
 			return ""
+		}
+		return nodeID
+	}
+
+	// Refresh only when something changed to avoid needless writes.
+	changed := false
+	if n.Status != model.NodeStatusOnline {
+		n.Status = model.NodeStatusOnline
+		changed = true
+	}
+	if instanceName != "" && n.InstanceName != instanceName {
+		n.InstanceName = instanceName
+		changed = true
+	}
+	if instanceRole != "" && n.Role != instanceRole {
+		n.Role = instanceRole
+		changed = true
+	}
+	if n.Hostname != hostname {
+		n.Hostname = hostname
+		changed = true
+	}
+	if n.FrontendPort != frontendPort {
+		n.FrontendPort = frontendPort
+		changed = true
+	}
+	if n.BackendPort != backendPort {
+		n.BackendPort = backendPort
+		changed = true
+	}
+	if n.OSName != osName {
+		n.OSName = osName
+		changed = true
+	}
+	if n.OSVersion != arch {
+		n.OSVersion = arch
+		changed = true
+	}
+	if n.Arch != arch {
+		n.Arch = arch
+		changed = true
+	}
+	if n.LastHeartbeatAt == nil {
+		now := time.Now().UTC()
+		n.LastHeartbeatAt = &now
+		n.LastOnlineAt = &now
+		changed = true
+	}
+	if changed {
+		if err := st.UpdateNode(ctx, n); err != nil {
+			log.Warn("failed to refresh local self node record", "node_id", nodeID, "error", err)
 		}
 	}
 	return nodeID
+}
+
+// addrPort extracts the port from a host:port address ("" or 0 when absent).
+func addrPort(addr string) int {
+	if i := strings.LastIndex(addr, ":"); i > 0 {
+		if p, err := strconv.Atoi(addr[i+1:]); err == nil && p > 0 && p < 65536 {
+			return p
+		}
+	}
+	return 0
 }

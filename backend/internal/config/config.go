@@ -167,6 +167,11 @@ func Load() (*Config, error) {
 	if cfg.DatabaseDriver != "sqlite" && cfg.DatabaseDriver != "postgres" {
 		return nil, fmt.Errorf("config: DATABASE_DRIVER must be sqlite or postgres, got %q", cfg.DatabaseDriver)
 	}
+	// Production must never skip TLS verification: the node credential and
+	// agent signatures travel to the primary over this connection.
+	if cfg.AppEnv == "production" && cfg.HTTPInsecureSkipVerify {
+		return nil, fmt.Errorf("config: HTTP_INSECURE_SKIP_VERIFY must be false in production")
+	}
 	return cfg, nil
 }
 

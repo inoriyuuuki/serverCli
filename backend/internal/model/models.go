@@ -214,7 +214,7 @@ type NodeCommand struct {
 	Category            string    `json:"category"`
 	Title               string    `json:"title"`
 	Description         string    `json:"description"`
-	ParameterSchemaJSON string    `json:"-"`
+	ParameterSchemaJSON string    `json:"parameter_schema_json,omitempty"`
 	PermissionProfile   string    `json:"permission_profile"`
 	TimeoutSeconds      int       `json:"timeout_seconds"`
 	MaxOutputBytes      int64     `json:"max_output_bytes"`

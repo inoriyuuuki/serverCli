@@ -325,15 +325,8 @@ func buildArgs(cmd CommandEntry, raw json.RawMessage) []string {
 	}
 	order := map[string]int{}
 	if cmd.ParameterSchemaJSON != "" && cmd.ParameterSchemaJSON != "{}" {
-		var schema struct {
-			Properties map[string]json.RawMessage `json:"properties"`
-		}
-		if err := json.Unmarshal([]byte(cmd.ParameterSchemaJSON), &schema); err == nil {
-			i := 0
-			for k := range schema.Properties {
-				order[k] = i
-				i++
-			}
+		if idx, ok := schemaPropertyOrder([]byte(cmd.ParameterSchemaJSON)); ok {
+			order = idx
 		}
 	}
 	type kv struct {
@@ -419,4 +412,92 @@ func (b *limitedBuffer) String() string { return b.buf.String() }
 func sha256SumBytes(b []byte) []byte {
 	sum := sha256.Sum256(b)
 	return sum[:]
+}
+
+// schemaPropertyOrder extracts the "properties" keys of a JSON schema in
+// declaration order. Argv for commands is positional, so the order must be
+// deterministic across runs (Go maps do not preserve JSON object order).
+func schemaPropertyOrder(data []byte) (map[string]int, bool) {
+	order := map[string]int{}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.Token(); err != nil { // opening '{'
+		return nil, false
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		ks, _ := key.(string)
+		if ks == "properties" {
+			if err := readSchemaProperties(dec, order); err != nil {
+				return nil, false
+			}
+			return order, len(order) > 0
+		}
+		if err := skipJSONValue(dec); err != nil {
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func readSchemaProperties(dec *json.Decoder, order map[string]int) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil // "properties" is not an object; ignore
+	}
+	i := 0
+	for dec.More() {
+		k, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if s, ok := k.(string); ok {
+			order[s] = i
+			i++
+		}
+		if err := skipJSONValue(dec); err != nil {
+			return err
+		}
+	}
+	_, err = dec.Token() // consume '}'
+	return err
+}
+
+// skipJSONValue consumes one complete JSON value from the decoder.
+func skipJSONValue(dec *json.Decoder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	d, ok := tok.(json.Delim)
+	if !ok {
+		return nil // scalar
+	}
+	switch d {
+	case '{':
+		for dec.More() {
+			if _, err := dec.Token(); err != nil { // key
+				return err
+			}
+			if err := skipJSONValue(dec); err != nil {
+				return err
+			}
+		}
+		_, err = dec.Token() // '}'
+		return err
+	case '[':
+		for dec.More() {
+			if err := skipJSONValue(dec); err != nil {
+				return err
+			}
+		}
+		_, err = dec.Token() // ']'
+		return err
+	}
+	return nil
 }

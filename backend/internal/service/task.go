@@ -49,8 +49,10 @@ type CreateTaskInput struct {
 	TimeoutSeconds int            `json:"timeout_seconds"`
 }
 
-// CreateTask validates and queues a task, returning it (idempotent).
-func (s *TaskService) CreateTask(ctx context.Context, nodeID, requestedBy, idempotencyKey string, in CreateTaskInput) (*model.Task, error) {
+// CreateTask validates and queues a task, returning it (idempotent). actorType
+// identifies the originator for audit purposes (model.ActorAdmin for the admin
+// API, model.ActorNode for node self-service).
+func (s *TaskService) CreateTask(ctx context.Context, nodeID, requestedBy, actorType, idempotencyKey string, in CreateTaskInput) (*model.Task, error) {
 	if in.CommandID == "" || in.CommandVersion == "" {
 		return nil, ErrBadRequest
 	}
@@ -112,7 +114,7 @@ func (s *TaskService) CreateTask(ctx context.Context, nodeID, requestedBy, idemp
 		return nil, err
 	}
 	s.auditor.OK(ctx, AuditInput{
-		ActorType: model.ActorAdmin, ActorID: requestedBy, NodeID: nodeID, Action: "task.create",
+		ActorType: actorType, ActorID: requestedBy, NodeID: nodeID, Action: "task.create",
 		ResourceType: "task", ResourceID: t.ID, TaskID: t.ID,
 		Summary: fmt.Sprintf("task created: %s %s", in.CommandID, in.CommandVersion),
 		Details: map[string]any{"command_id": in.CommandID, "command_version": in.CommandVersion},
@@ -149,8 +151,10 @@ func (s *TaskService) ListTasks(ctx context.Context, scopeNodeID, nodeID, status
 	return s.store.ListTasks(ctx, nodeID, status, limit, offset)
 }
 
-// CancelTask cancels a non-terminal task.
-func (s *TaskService) CancelTask(ctx context.Context, scopeNodeID, id, adminID string) (*model.Task, error) {
+// CancelTask cancels a non-terminal task. actorType identifies the originator
+// for audit purposes (model.ActorAdmin for the admin API, model.ActorNode for
+// node self-service).
+func (s *TaskService) CancelTask(ctx context.Context, scopeNodeID, id, actorType, actorID string) (*model.Task, error) {
 	t, err := s.store.TaskByID(ctx, id)
 	if err != nil {
 		return nil, ErrNotFound
@@ -167,12 +171,12 @@ func (s *TaskService) CancelTask(ctx context.Context, scopeNodeID, id, adminID s
 		return nil, err
 	}
 	ev := &model.TaskEvent{TaskID: t.ID, EventType: "cancelled", Status: model.TaskCancelled,
-		Message: "task cancelled by admin", Source: "control-plane"}
+		Message: "task cancelled", Source: "control-plane"}
 	if err := s.store.AppendTaskEventDedup(ctx, ev); err != nil {
 		s.log.Warn("append cancel event failed", "error", err)
 	}
 	s.auditor.OK(ctx, AuditInput{
-		ActorType: model.ActorAdmin, ActorID: adminID, NodeID: t.NodeID, Action: "task.cancel",
+		ActorType: actorType, ActorID: actorID, NodeID: t.NodeID, Action: "task.cancel",
 		ResourceType: "task", ResourceID: t.ID, TaskID: t.ID, Summary: "task cancelled",
 	})
 	return t, nil

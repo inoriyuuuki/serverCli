@@ -16,34 +16,11 @@
 name: servercli
 
 services:
-  db:
-    image: postgres:16-alpine
-    container_name: servercli-db
-    restart: unless-stopped
-    profiles: ["primary"]   # 只随主节点启动
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-servercli}
-      POSTGRES_USER: ${POSTGRES_USER:-servercli}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-servercli}   # 生产环境务必修改
-    volumes:
-      - servercli-db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-servercli} -d ${POSTGRES_DB:-servercli}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    # 如需从宿主机连库调试, 取消注释:
-    # ports:
-    #   - "127.0.0.1:5432:5432"
-
   primary:
     image: ${DOCKER_IMAGE:-inoriyuuuki/servercli}:${TAG:-latest}
     container_name: servercli-primary
     restart: unless-stopped
     profiles: ["primary"]
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
       # 角色与实例
       NODE_ROLE: primary
@@ -78,8 +55,8 @@ services:
       - "${PRIMARY_FRONTEND_PORT:-9044}:9044"   # 前端
       - "${PRIMARY_BACKEND_PORT:-9045}:9045"    # API
     volumes:
-      - servercli-state:/app/state
-      - servercli-logs:/app/logs
+      - ./data:/app/state
+      - ./logs:/app/logs
     # 可选: 从 .env 文件加载额外环境变量 (复制 .env.example 为 deploy/docker/.env 后取消注释)
     # env_file:
     #   - .env
@@ -98,12 +75,6 @@ services:
       LOG_DIR: /app/logs
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
-      - servercli-child-state:/app/state
-      - servercli-child-logs:/app/logs
+      - ./data:/app/state
+      - ./logs:/app/logs
 
-volumes:
-  servercli-db:
-  servercli-state:
-  servercli-logs:
-  servercli-child-state:
-  servercli-child-logs:

@@ -42,7 +42,18 @@ interface ParamSchema {
 }
 
 function parseSchema(raw: unknown): ParamSchema {
-  if (!raw || typeof raw !== 'object') return {};
+  if (!raw) return {};
+  // The API returns parameter_schema_json as a JSON string; accept both the
+  // serialized string and an already-decoded object.
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? (parsed as ParamSchema) : {};
+    } catch {
+      return {};
+    }
+  }
+  if (typeof raw !== 'object') return {};
   return raw as ParamSchema;
 }
 

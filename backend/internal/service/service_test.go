@@ -174,7 +174,7 @@ func TestTaskLifecycleAndIdempotency(t *testing.T) {
 
 	// Create task with idempotency key.
 	in := CreateTaskInput{CommandID: "system.echo", CommandVersion: "1.0.0", Arguments: map[string]any{"message": "hi"}}
-	t1, err := tasks.CreateTask(ctx, nodeID, "admin-1", "idem-1", in)
+	t1, err := tasks.CreateTask(ctx, nodeID, "admin-1", model.ActorAdmin, "idem-1", in)
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
@@ -182,12 +182,12 @@ func TestTaskLifecycleAndIdempotency(t *testing.T) {
 		t.Fatalf("expected queued, got %s", t1.Status)
 	}
 	// Same key returns the same task (no duplicate).
-	t2, err := tasks.CreateTask(ctx, nodeID, "admin-1", "idem-1", in)
+	t2, err := tasks.CreateTask(ctx, nodeID, "admin-1", model.ActorAdmin, "idem-1", in)
 	if err != nil || t2.ID != t1.ID {
 		t.Fatalf("idempotency failed: %v (ids %s != %s)", err, t2.ID, t1.ID)
 	}
 	// Different key creates a new task.
-	t3, err := tasks.CreateTask(ctx, nodeID, "admin-1", "idem-2", in)
+	t3, err := tasks.CreateTask(ctx, nodeID, "admin-1", model.ActorAdmin, "idem-2", in)
 	if err != nil || t3.ID == t1.ID {
 		t.Fatal("different idempotency key should create a new task")
 	}
@@ -251,11 +251,11 @@ func TestTaskLifecycleAndIdempotency(t *testing.T) {
 	}
 
 	// Cancel a queued task.
-	t4, err := tasks.CreateTask(ctx, nodeID, "admin-1", "idem-3", in)
+	t4, err := tasks.CreateTask(ctx, nodeID, "admin-1", model.ActorAdmin, "idem-3", in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancelled, err := tasks.CancelTask(ctx, "", t4.ID, "admin-1")
+	cancelled, err := tasks.CancelTask(ctx, "", t4.ID, model.ActorAdmin, "admin-1")
 	if err != nil || cancelled.Status != model.TaskCancelled {
 		t.Fatalf("cancel: %v %v", err, cancelled)
 	}

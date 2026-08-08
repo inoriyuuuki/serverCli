@@ -18,11 +18,17 @@ type Scheduler struct {
 	leases   *service.LeaseService
 	cleanup  *service.CleanupService
 	settings *service.SettingsService
+	// scoped marks a child (scoped) control plane. A scoped control plane is
+	// not the authority on node liveness (heartbeats go to the primary), so
+	// offline detection is skipped to keep the local self node from flipping
+	// to offline.
+	scoped bool
 }
 
-// New builds a scheduler.
-func New(log *slog.Logger, nodes *service.NodeService, leases *service.LeaseService, cleanup *service.CleanupService, settings *service.SettingsService) *Scheduler {
-	return &Scheduler{log: log, nodes: nodes, leases: leases, cleanup: cleanup, settings: settings}
+// New builds a scheduler. Pass scoped=true for child control planes whose API
+// is bound to the local node identity.
+func New(log *slog.Logger, nodes *service.NodeService, leases *service.LeaseService, cleanup *service.CleanupService, settings *service.SettingsService, scoped bool) *Scheduler {
+	return &Scheduler{log: log, nodes: nodes, leases: leases, cleanup: cleanup, settings: settings, scoped: scoped}
 }
 
 // Run executes maintenance ticks until ctx is cancelled.
@@ -48,8 +54,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 func (s *Scheduler) tick(ctx context.Context) {
-	if _, err := s.nodes.MarkOfflineNodes(ctx); err != nil {
-		s.log.Warn("offline detection failed", "error", err)
+	if !s.scoped {
+		if _, err := s.nodes.MarkOfflineNodes(ctx); err != nil {
+			s.log.Warn("offline detection failed", "error", err)
+		}
 	}
 	if _, err := s.leases.ExpireStaleLeases(ctx); err != nil {
 		s.log.Warn("lease expiry failed", "error", err)
