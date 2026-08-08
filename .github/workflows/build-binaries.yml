@@ -212,13 +212,14 @@ jobs:
           tar -czf "${ARCHIVE}" "${ROOT}"
           sha256sum "${ARCHIVE}" > sha256sums.txt
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+          echo "ARCHIVE_NAME=${ROOT}" >> "$GITHUB_ENV"
           echo "Bundle: ${ARCHIVE}"
           ls -lh "${ARCHIVE}"
 
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARCHIVE }}
+          name: ${{ env.ARCHIVE_NAME }}
           path: |
             *.tar.gz
             sha256sums.txt
