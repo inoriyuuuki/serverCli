@@ -250,13 +250,24 @@ jobs:
           sha256sum *.tar.gz > sha256sums.txt
           ls -la
 
-      - name: Create GitHub release
+      - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
+          set -euo pipefail
           cd dist
-          gh release create "${TAG}" *.tar.gz sha256sums.txt \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "ServerCLI ${TAG}" \
-            --generate-notes
+          # Idempotent publish: if a release for this tag already exists (e.g.
+          # re-running the workflow or re-pushing the same tag), upload the
+          # assets with --clobber instead of failing with "already exists".
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release '${TAG}' already exists; uploading/overwriting assets"
+            gh release upload "${TAG}" *.tar.gz sha256sums.txt \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${TAG}" *.tar.gz sha256sums.txt \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "ServerCLI ${TAG}" \
+              --generate-notes
+          fi
