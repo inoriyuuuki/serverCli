@@ -1,0 +1,109 @@
+# =============================================================================
+# ServerCLI Docker Compose 配置 (PostgreSQL + 主/子节点互斥)
+#
+# 主节点 或 子节点 一次只启动一个, 通过 profile 选择 (Compose v2):
+#   主节点:  docker compose --profile primary up -d
+#   子节点:  docker compose --profile child up -d
+#   停止:    docker compose --profile primary down   # 与启动时保持一致
+#
+# 说明:
+#   - postgres 数据库只随主节点(primary)启动; 子节点(node-agent)不依赖数据库
+#   - 镜像默认 inoriyuuuki/servercli:latest, 可用环境变量覆盖:
+#       DOCKER_IMAGE=myuser/servercli TAG=0.0.3 docker compose --profile primary up -d
+#   - 数据库密码等敏感值建议放 deploy/docker/.env 后取消下方 env_file 注释
+# =============================================================================
+
+name: servercli
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: servercli-db
+    restart: unless-stopped
+    profiles: ["primary"]   # 只随主节点启动
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-servercli}
+      POSTGRES_USER: ${POSTGRES_USER:-servercli}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-servercli}   # 生产环境务必修改
+    volumes:
+      - servercli-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-servercli} -d ${POSTGRES_DB:-servercli}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # 如需从宿主机连库调试, 取消注释:
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  primary:
+    image: ${DOCKER_IMAGE:-inoriyuuuki/servercli}:${TAG:-latest}
+    container_name: servercli-primary
+    restart: unless-stopped
+    profiles: ["primary"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # 角色与实例
+      NODE_ROLE: primary
+      APP_ENV: ${APP_ENV:-production}
+      INSTANCE_NAME: ${INSTANCE_NAME:-production-primary}
+      # 主控地址
+      PRIMARY_SERVER_IP: ${PRIMARY_SERVER_IP:-127.0.0.1}
+      PRIMARY_BACKEND_URL: ${PRIMARY_BACKEND_URL:-http://127.0.0.1:9045}
+      # 监听地址 (容器内固定, 端口映射在 ports 处调整)
+      FRONTEND_ADDR: 0.0.0.0:9044
+      BACKEND_ADDR: 0.0.0.0:9045
+      # PostgreSQL 数据库 (通过 compose 网络连接 db 服务)
+      DATABASE_DRIVER: postgres
+      DATABASE_URL: postgres://${POSTGRES_USER:-servercli}:${POSTGRES_PASSWORD:-servercli}@db:5432/${POSTGRES_DB:-servercli}?sslmode=disable
+      # 目录 (镜像内固定路径)
+      AGENT_STATE_DIR: /app/state
+      LOG_DIR: /app/logs
+      COMMANDS_DIR: /app/commands
+      FRONTEND_DIST_DIR: /app/frontend/dist
+      # SSH / Lease / 心跳
+      AUTHORIZED_KEYS_FILE: /app/state/authorized_keys
+      AI_LEASE_DEFAULT_MINUTES: ${AI_LEASE_DEFAULT_MINUTES:-60}
+      AI_LEASE_MAX_HOURS: ${AI_LEASE_MAX_HOURS:-24}
+      AI_LEASE_DISCONNECT_GRACE_SECONDS: ${AI_LEASE_DISCONNECT_GRACE_SECONDS:-60}
+      RETENTION_DAYS: ${RETENTION_DAYS:-7}
+      HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS:-30}
+      OFFLINE_THRESHOLD_SECONDS: ${OFFLINE_THRESHOLD_SECONDS:-90}
+      TASK_POLL_TIMEOUT_SECONDS: ${TASK_POLL_TIMEOUT_SECONDS:-25}
+      HTTP_INSECURE_SKIP_VERIFY: ${HTTP_INSECURE_SKIP_VERIFY:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${PRIMARY_FRONTEND_PORT:-9044}:9044"   # 前端
+      - "${PRIMARY_BACKEND_PORT:-9045}:9045"    # API
+    volumes:
+      - servercli-state:/app/state
+      - servercli-logs:/app/logs
+    # 可选: 从 .env 文件加载额外环境变量 (复制 .env.example 为 deploy/docker/.env 后取消注释)
+    # env_file:
+    #   - .env
+
+  # 子节点 (node-agent): 只启动 agent, 主动外连主控, 无需映射端口, 不依赖数据库
+  child:
+    image: ${DOCKER_IMAGE:-inoriyuuuki/servercli}:${TAG:-latest}
+    container_name: servercli-child
+    restart: unless-stopped
+    profiles: ["child"]
+    environment:
+      NODE_ROLE: child
+      INSTANCE_NAME: ${CHILD_INSTANCE_NAME:-test-child-1}
+      PRIMARY_BACKEND_URL: ${PRIMARY_BACKEND_URL:-http://<primary-server-ip>:9045}   # 改成主控实际 IP
+      AGENT_STATE_DIR: /app/state
+      LOG_DIR: /app/logs
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - servercli-child-state:/app/state
+      - servercli-child-logs:/app/logs
+
+volumes:
+  servercli-db:
+  servercli-state:
+  servercli-logs:
+  servercli-child-state:
+  servercli-child-logs:
