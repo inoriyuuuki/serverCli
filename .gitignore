@@ -5,6 +5,7 @@ run/
 
 # ============ 构建产物 ============
 bin/
+release/
 node_modules/
 dist/
 
