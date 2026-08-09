@@ -302,6 +302,15 @@ function RequestsTab({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  /** 审批/拒绝操作的错误提示：终态申请（已被他人处理）给出友好文案。 */
+  const actionErrorMessage = (err: unknown, fallback: string): string => {
+    if (err instanceof ApiError) {
+      if (err.code === 'TERMINAL_STATE') return '该申请已被处理，无需重复操作（列表已刷新）';
+      return err.message || fallback;
+    }
+    return fallback;
+  };
+
   const approve = async (r: AiLeaseRequest) => {
     setActionError(null);
     const result = await confirm({
@@ -329,7 +338,8 @@ function RequestsTab({
       await api.post(`/ai/lease-requests/${r.id}/approve`);
       state.reload();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : '审批失败，请重试');
+      setActionError(actionErrorMessage(err, '审批失败，请重试'));
+      state.reload(); // 刷新到最新状态，避免停留在已过期的 pending 视图
     } finally {
       setBusyId(null);
     }
@@ -362,7 +372,8 @@ function RequestsTab({
       await api.post(`/ai/lease-requests/${r.id}/reject`, { reason: result.reason });
       state.reload();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : '拒绝失败，请重试');
+      setActionError(actionErrorMessage(err, '拒绝失败，请重试'));
+      state.reload();
     } finally {
       setBusyId(null);
     }
