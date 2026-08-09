@@ -421,7 +421,7 @@ func (s *NodeService) Heartbeat(ctx context.Context, nodeID string, in Heartbeat
 		return nil, err
 	}
 	addrs := make([]*model.NodeAddress, 0, len(in.Addresses)+1)
-	for i, a := range in.Addresses {
+	for _, a := range in.Addresses {
 		atype := a.AddressType
 		if atype == "" {
 			atype = "reported"
@@ -430,19 +430,32 @@ func (s *NodeService) Heartbeat(ctx context.Context, nodeID string, in Heartbeat
 			Address:     a.Address,
 			AddressType: atype,
 			ServicePort: a.ServicePort,
-			IsPreferred: i == 0,
+			IsPreferred: false,
 		})
 	}
 	// 自动“穿透”：节点主动连到控制面，控制面把连接来源 IP 记为节点的可达
-	// SSH 地址（仅当节点未上报任何地址、且来源 IP 为公网 IP 时）。这样
-	// Lease 返回的 host 会自动指向节点真实地址，无需人工填写。
-	if len(addrs) == 0 && isPublicIP(sourceIP) {
-		addrs = append(addrs, &model.NodeAddress{
-			Address:     sourceIP,
-			AddressType: "source",
-			ServicePort: 22,
-			IsPreferred: true,
-		})
+	// SSH 地址。来源 IP 为公网时，优先作为 Lease 的 SSH 目标（覆盖节点上报
+	// 的私网/配置来源地址），保证自动指向节点真实地址，无需人工填写。
+	if isPublicIP(sourceIP) {
+		found := -1
+		for i, a := range addrs {
+			if a.Address == sourceIP {
+				found = i
+				break
+			}
+		}
+		if found >= 0 {
+			addrs[found].IsPreferred = true
+		} else {
+			addrs = append([]*model.NodeAddress{{
+				Address:     sourceIP,
+				AddressType: "source",
+				ServicePort: 22,
+				IsPreferred: true,
+			}}, addrs...)
+		}
+	} else if len(addrs) > 0 {
+		addrs[0].IsPreferred = true
 	}
 	if len(addrs) > 0 {
 		_ = s.store.ReplaceAddresses(ctx, node.ID, addrs)
