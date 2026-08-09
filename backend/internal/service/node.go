@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -419,7 +420,7 @@ func (s *NodeService) Heartbeat(ctx context.Context, nodeID string, in Heartbeat
 	if err := s.store.UpdateNode(ctx, node); err != nil {
 		return nil, err
 	}
-	addrs := make([]*model.NodeAddress, 0, len(in.Addresses))
+	addrs := make([]*model.NodeAddress, 0, len(in.Addresses)+1)
 	for i, a := range in.Addresses {
 		atype := a.AddressType
 		if atype == "" {
@@ -430,6 +431,17 @@ func (s *NodeService) Heartbeat(ctx context.Context, nodeID string, in Heartbeat
 			AddressType: atype,
 			ServicePort: a.ServicePort,
 			IsPreferred: i == 0,
+		})
+	}
+	// 自动“穿透”：节点主动连到控制面，控制面把连接来源 IP 记为节点的可达
+	// SSH 地址（仅当节点未上报任何地址、且来源 IP 为公网 IP 时）。这样
+	// Lease 返回的 host 会自动指向节点真实地址，无需人工填写。
+	if len(addrs) == 0 && isPublicIP(sourceIP) {
+		addrs = append(addrs, &model.NodeAddress{
+			Address:     sourceIP,
+			AddressType: "source",
+			ServicePort: 22,
+			IsPreferred: true,
 		})
 	}
 	if len(addrs) > 0 {
@@ -796,4 +808,15 @@ func (s *NodeService) DeleteNode(ctx context.Context, scopeNodeID, id, adminID, 
 		RiskLevel: RiskCritical,
 	})
 	return nil
+}
+
+// isPublicIP reports whether ip is a usable non-loopback, non-private,
+// non-link-local, non-multicast IP address (usable as an SSH target).
+func isPublicIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	return !parsed.IsLoopback() && !parsed.IsPrivate() && !parsed.IsUnspecified() &&
+		!parsed.IsLinkLocalUnicast() && !parsed.IsMulticast()
 }
