@@ -67,6 +67,10 @@ func testServices(t *testing.T) (context.Context, *store.Store, *config.Config, 
 }
 
 func mustEnrollAndClaim(t *testing.T, ctx context.Context, nodes *NodeService) (string, string, string) {
+	return mustEnrollAndClaimNamed(t, ctx, nodes, "1")
+}
+
+func mustEnrollAndClaimNamed(t *testing.T, ctx context.Context, nodes *NodeService, name string) (string, string, string) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -74,8 +78,8 @@ func mustEnrollAndClaim(t *testing.T, ctx context.Context, nodes *NodeService) (
 	}
 	pubB64 := base64.StdEncoding.EncodeToString(pub)
 	e, err := nodes.CreateEnrollment(ctx, EnrollmentInput{
-		InstanceRequestID: "inst-1",
-		Hostname:          "node-a",
+		InstanceRequestID: "inst-" + name,
+		Hostname:          "node-" + name,
 		RequestedRole:     "child",
 		AgentVersion:      "test",
 		ReportedAddresses: []AddressInput{{Address: "10.0.0.5", AddressType: "reported", ServicePort: 9047}},
@@ -673,5 +677,53 @@ func TestLeaseDisableRenewalProtectRevokeAll(t *testing.T) {
 	// Node-scoped revoke-all with unknown node errors.
 	if _, err := leases.RevokeAll(ctx, "missing-node", "admin-1", "x", true); err == nil {
 		t.Fatal("revoke all for unknown node should fail")
+	}
+}
+
+func TestHeartbeatRecordsPublicSourceIPAsNodeAddress(t *testing.T) {
+	ctx, st, _, _, nodes, _, _, _, _ := testServices(t)
+
+	// 节点未上报任何地址时，控制面把心跳连接的公网来源 IP 自动记为可达地址。
+	nodeID, _, _ := mustEnrollAndClaimNamed(t, ctx, nodes, "pub")
+	if _, err := nodes.Heartbeat(ctx, nodeID, HeartbeatInput{Hostname: "n"}, "43.142.9.9"); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	addrs, err := st.NodeAddresses(ctx, nodeID)
+	if err != nil || len(addrs) != 1 {
+		t.Fatalf("expected 1 auto-recorded address, got %d (err=%v)", len(addrs), err)
+	}
+	if addrs[0].Address != "43.142.9.9" || addrs[0].AddressType != "source" || !addrs[0].IsPreferred {
+		t.Fatalf("unexpected auto-recorded address: %+v", addrs[0])
+	}
+
+	// 私网/回环来源 IP 不应当被记录为 SSH 目标。
+	for _, src := range []string{"10.0.0.9", "192.168.1.5", "127.0.0.1"} {
+		id, _, _ := mustEnrollAndClaimNamed(t, ctx, nodes, "priv-"+strings.ReplaceAll(src, ".", "-"))
+		if _, err := nodes.Heartbeat(ctx, id, HeartbeatInput{Hostname: "n"}, src); err != nil {
+			t.Fatalf("heartbeat(%s): %v", src, err)
+		}
+		got, err := st.NodeAddresses(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("source IP %s should not be recorded, got %d addresses", src, len(got))
+		}
+	}
+
+	// 节点已上报地址时，来源 IP 不覆盖已上报地址。
+	id2, _, _ := mustEnrollAndClaimNamed(t, ctx, nodes, "reported")
+	if _, err := nodes.Heartbeat(ctx, id2, HeartbeatInput{
+		Hostname:  "n2",
+		Addresses: []AddressInput{{Address: "10.1.2.3", AddressType: "reported", ServicePort: 9047}},
+	}, "43.142.9.10"); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	got2, err := st.NodeAddresses(ctx, id2)
+	if err != nil || len(got2) != 1 {
+		t.Fatalf("expected reported address preserved, got %d (err=%v)", len(got2), err)
+	}
+	if got2[0].Address != "10.1.2.3" || got2[0].AddressType != "reported" {
+		t.Fatalf("reported address should not be replaced: %+v", got2[0])
 	}
 }
