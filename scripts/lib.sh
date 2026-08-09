@@ -314,7 +314,9 @@ port_in_use() { # port_in_use <port>
     ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|[.:])${port}\$" && return 0
   fi
   if command -v netstat >/dev/null 2>&1; then
-    netstat -an 2>/dev/null | awk '{print $4}' | grep -Eq "(^|[.:])${port}\$" && return 0
+    # 只匹配 LISTEN 状态的 TCP 监听；netstat -an 会列出 TIME_WAIT/ESTABLISHED
+    # 等非监听连接，端口残留旧连接时会误判为“端口被占用”。
+    netstat -ant 2>/dev/null | awk '$6 == "LISTEN" {print $4}' | grep -Eq "(^|[.:])${port}\$" && return 0
   fi
   return 1
 }
