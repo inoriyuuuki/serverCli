@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -84,11 +85,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	defer cancel()
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(5)
 	go func() { defer wg.Done(); a.heartbeatLoop(ctx) }()
 	go func() { defer wg.Done(); a.taskPollLoop(ctx) }()
 	go func() { defer wg.Done(); a.commandWatchLoop(ctx) }()
 	go func() { defer wg.Done(); a.leaseSweepLoop(ctx) }()
+	go func() { defer wg.Done(); a.eventStreamLoop(ctx) }()
 	wg.Wait()
 	return nil
 }
@@ -372,6 +374,49 @@ func (a *Agent) sendHeartbeat(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ---- lease key event stream (immediate refresh) ----
+
+// eventStreamLoop keeps an SSE connection to the control plane open and, on a
+// lease_keys_changed notification, refreshes lease keys right away instead of
+// waiting for the next heartbeat (up to HeartbeatIntervalSeconds).
+func (a *Agent) eventStreamLoop(ctx context.Context) {
+	backoff := 2 * time.Second
+	for {
+		if err := a.watchEvents(ctx); err != nil && ctx.Err() == nil {
+			a.log.Warn("lease event stream interrupted", "error", err, "reconnect_in", backoff)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+func (a *Agent) watchEvents(ctx context.Context) error {
+	resp, err := a.client.DoStream("/api/v1/agent/events")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("event stream returned %d", resp.StatusCode)
+	}
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		line := sc.Text()
+		if line == "event: lease_keys_changed" {
+			if err := a.sendHeartbeat(ctx); err != nil {
+				a.log.Warn("lease key refresh heartbeat failed", "error", err)
+			}
+		}
+	}
+	return sc.Err()
 }
 
 // reportLeaseEvent reports a lease lifecycle event to the control plane.

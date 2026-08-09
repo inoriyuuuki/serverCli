@@ -81,6 +81,28 @@ func (c *Client) DoRaw(method, path string, query url.Values, body []byte, heade
 	return c.http.Do(req)
 }
 
+// DoStream performs a signed GET on a long-lived connection (no client
+// timeout), used for the SSE lease-key event stream. The caller owns the
+// returned response body and must close it.
+func (c *Client) DoStream(path string) (*http.Response, error) {
+	sum := sha256.Sum256(nil)
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := Sign(c.credential, ts, "GET", path, hex.EncodeToString(sum[:]))
+	req, err := http.NewRequest("GET", c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.credential != "" {
+		req.Header.Set("Authorization", "Bearer "+c.credential)
+	}
+	req.Header.Set("X-Agent-Timestamp", ts)
+	req.Header.Set("X-Agent-Signature", sig)
+	req.Header.Set("Accept", "text/event-stream")
+	// Long-lived stream: no client-level timeout (the transport is shared).
+	sc := &http.Client{Transport: c.http.Transport}
+	return sc.Do(req)
+}
+
 // Do performs a signed request. body may be nil. respBody is decoded into out
 // when non-nil.
 func (c *Client) Do(method, path string, body any, out any) (*http.Response, error) {

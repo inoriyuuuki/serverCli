@@ -37,6 +37,8 @@ type Server struct {
 	commit     string
 	childScope atomic.Value // string node_id when NODE_ROLE=child
 	childProxy *childProxy  // forwards child self-view requests to the primary
+
+	events *eventBroker // SSE push channel for node agents (lease key refresh)
 }
 
 // scope returns the bound node_id for child control planes ("" for primary).
@@ -130,6 +132,7 @@ func New(opts Options) (*Server, error) {
 		version:  opts.Version,
 		build:    opts.Build,
 		commit:   opts.Commit,
+		events:   newEventBroker(),
 	}
 	if opts.ChildNodeID != "" {
 		srv.childScope.Store(opts.ChildNodeID)
@@ -193,6 +196,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/events", s.agentAuth(s.handleAgentTaskEvent))
 	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/result", s.agentAuth(s.handleAgentTaskResult))
 	mux.HandleFunc("POST /api/v1/agent/leases/{id}/events", s.agentAuth(s.handleAgentLeaseEvent))
+	mux.HandleFunc("GET /api/v1/agent/events", s.agentAuth(s.handleAgentEvents))
 	// Agent self-service (scoped to the calling node): lets a child control
 	// plane mirror its own commands/tasks/leases/audit from the primary.
 	mux.HandleFunc("GET /api/v1/agent/commands", s.agentAuth(s.handleAgentListCommands))
@@ -363,6 +367,14 @@ type statusWriter struct {
 func (sw *statusWriter) WriteHeader(code int) {
 	sw.status = code
 	sw.ResponseWriter.WriteHeader(code)
+}
+
+// Flush forwards to the underlying writer so SSE endpoints work through the
+// request-logging wrapper (statusWriter must implement http.Flusher).
+func (sw *statusWriter) Flush() {
+	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // context helpers
