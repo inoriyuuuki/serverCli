@@ -35,6 +35,7 @@ func (s *Server) handleCreateLeaseRequest(w http.ResponseWriter, r *http.Request
 	}
 	status := http.StatusCreated
 	out := map[string]any{"lease_request": res.LeaseRequest}
+	s.publishLeaseKeys(res.Lease)
 	if res.Lease != nil {
 		host, port := s.sshTarget(r, res.Lease.NodeID)
 		out["lease"] = res.Lease
@@ -75,6 +76,7 @@ func (s *Server) handleApproveLeaseRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	out := map[string]any{"lease_request": res.LeaseRequest}
+	s.publishLeaseKeys(res.Lease)
 	if res.Lease != nil {
 		out["lease"] = res.Lease
 	}
@@ -122,6 +124,7 @@ func (s *Server) handleLeaseDisconnect(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.publishLeaseKeys(lease)
 	writeJSON(w, http.StatusOK, map[string]any{"lease": lease})
 }
 
@@ -139,6 +142,7 @@ func (s *Server) handleLeaseRevoke(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.publishLeaseKeys(lease)
 	writeJSON(w, http.StatusOK, map[string]any{"lease": lease})
 }
 
@@ -176,6 +180,14 @@ func (s *Server) handleAIAccess(w http.ResponseWriter, r *http.Request) {
 }
 
 // sshTarget returns a suggested SSH target for a lease.
+// publishLeaseKeys notifies a node agent to refresh lease keys immediately
+// (SSE push) instead of waiting for the next heartbeat.
+func (s *Server) publishLeaseKeys(lease *model.AILease) {
+	if lease != nil {
+		s.events.publish(lease.NodeID, EventLeaseKeysChanged)
+	}
+}
+
 func (s *Server) sshTarget(r *http.Request, nodeID string) (string, int) {
 	addrs, err := s.store.NodeAddresses(r.Context(), nodeID)
 	if err == nil && len(addrs) > 0 {
@@ -296,6 +308,7 @@ func (s *Server) handleCreateAutoApproval(w http.ResponseWriter, r *http.Request
 		"auto_approval": res.AutoApproval,
 		"lease_request": res.LeaseRequest,
 	}
+	s.publishLeaseKeys(res.Lease)
 	if res.Lease != nil {
 		out["lease"] = res.Lease
 	}

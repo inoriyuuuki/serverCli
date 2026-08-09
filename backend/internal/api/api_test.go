@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -893,4 +894,101 @@ func (t statusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		Body:       io.NopCloser(bytes.NewReader([]byte(`{"error":{"code":"UNAUTHENTICATED","message":"upstream"}}`))),
 		Request:    req,
 	}, nil
+}
+
+
+// TestAgentEventsStreamDeliversLeaseKeysChanged verifies the SSE agent event
+// stream notifies the node of lease key changes (immediate refresh path).
+func TestAgentEventsStreamDeliversLeaseKeysChanged(t *testing.T) {
+	env := setupAPI(t)
+	ts := httptest.NewServer(env.handler)
+	defer ts.Close()
+
+	headers := env.agentHeaders("GET", "/api/v1/agent/events", nil)
+	req, err := http.NewRequest("GET", ts.URL+"/api/v1/agent/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("event stream status %d", resp.StatusCode)
+	}
+
+	lines := make(chan string, 64)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+
+	// Publish repeatedly so a subscriber that registers slightly late still
+	// receives the notification.
+	deadline := time.After(5 * time.Second)
+	pub := time.NewTicker(150 * time.Millisecond)
+	defer pub.Stop()
+	first := time.After(300 * time.Millisecond)
+	for {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				t.Fatal("event stream closed before receiving notification")
+			}
+			if line == "event: "+EventLeaseKeysChanged {
+				return
+			}
+		case <-first:
+			env.srv.events.publish(env.nodeID, EventLeaseKeysChanged)
+		case <-pub.C:
+			env.srv.events.publish(env.nodeID, EventLeaseKeysChanged)
+		case <-deadline:
+			t.Fatal("timed out waiting for lease_keys_changed event")
+		}
+	}
+}
+
+// TestEventBroker verifies publish/deliver/unsubscribe semantics.
+func TestEventBroker(t *testing.T) {
+	b := newEventBroker()
+	ch, unsubscribe := b.subscribe("node-1")
+	defer unsubscribe()
+
+	b.publish("node-1", EventLeaseKeysChanged)
+	select {
+	case ev := <-ch:
+		if ev != EventLeaseKeysChanged {
+			t.Fatalf("unexpected event %q", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("event not delivered")
+	}
+
+	// Other nodes must not receive the event.
+	ch2, unsubscribe2 := b.subscribe("node-2")
+	defer unsubscribe2()
+	b.publish("node-1", EventLeaseKeysChanged)
+	select {
+	case ev := <-ch2:
+		t.Fatalf("node-2 received node-1 event %q", ev)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// After unsubscribe the node has no subscribers left.
+	unsubscribe()
+	b.mu.Lock()
+	_, still := b.subs["node-1"]
+	b.mu.Unlock()
+	if still {
+		t.Fatal("node-1 still subscribed after unsubscribe")
+	}
 }
