@@ -264,10 +264,11 @@ func (s *Server) handleGetLeaseStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"lease": map[string]any{
-			"id":         lease.ID,
-			"status":     lease.Status,
-			"node_id":    lease.NodeID,
-			"expires_at": lease.ExpiresAt,
+			"id":                 lease.ID,
+			"status":             lease.Status,
+			"node_id":            lease.NodeID,
+			"permission_profile": lease.PermissionProfile,
+			"expires_at":         lease.ExpiresAt,
 		},
 	})
 }

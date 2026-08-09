@@ -195,22 +195,23 @@ UI 建议分开提供三个动作，避免语义模糊：
 
 ## 10. 权限配置
 
+权限档位与节点登录用户/提权方式一一对应（由 `servercli-lease-shell` 依据控制面 `/status` 返回的 `permission_profile` 执行）：
+
 ### `read-only`
 
-- 允许查看系统信息和受限日志。
-- 不允许修改文件、重启服务、安装软件或网络访问扩展。
-- 默认无 PTY 或只提供受控命令代理，安全性最高。
+- SSH 以 `servercli-ai` 普通用户登录，不执行任何提权。
+- 允许查看系统信息和受限日志；不允许修改文件、重启服务、安装软件或网络访问扩展。
 
 ### `operator`
 
-- 允许调用明确批准的维护 wrapper。
-- 可允许 PTY，但仍受命令、路径和 sudoers 限制。
-- 正式环境可要求人工批准。
+- SSH 以 `servercli-ai` 普通用户登录，不执行提权。
+- 允许调用明确批准的维护 wrapper；正式环境可要求人工批准。
 
 ### `admin`
 
-- 首版建议关闭。
-- 如必须启用：人工审批、极短时长、来源限制、会话录像、实时告警和强制终止能力缺一不可。
+- SSH 仍以 `servercli-ai` 登录，但 `servercli-lease-shell` 检测到 `permission_profile=admin` 后经 `sudo -n` 提权到 root 执行（交互会话为 root 登录 shell）。
+- 前置条件：节点需为 `servercli-ai` 配置 NOPASSWD sudoers（init 仓库 `restore_serverCli.sh` 自动写入 `/etc/sudoers.d/servercli-ai`）；未配置时 admin 会话报错退出，不会静默降权。
+- 必须人工审批、极短时长、来源限制、会话录像、实时告警和强制终止能力缺一不可。
 
 ## 11. 审计范围
 
