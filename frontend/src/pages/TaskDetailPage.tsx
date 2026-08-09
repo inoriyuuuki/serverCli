@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useSession } from '../auth/AuthContext';
 import { useApi, errorMessage } from '../lib/useApi';
@@ -31,8 +31,13 @@ export default function TaskDetailPage() {
   const confirm = useConfirm();
   const isProd = session?.environment === 'production';
 
-  const state = useApi<unknown>(taskId ? `/tasks/${taskId}` : null);
+  // 实时刷新：任务未结束时每 3s 轮询详情，结束后停止轮询（避免对已终态任务持续请求）。
+  const taskStatusRef = useRef<string | undefined>(undefined);
+  const pollMs =
+    !taskStatusRef.current || ['queued', 'dispatched', 'running'].includes(taskStatusRef.current) ? 3000 : 0;
+  const state = useApi<unknown>(taskId ? `/tasks/${taskId}` : null, { pollIntervalMs: pollMs });
   const task = useMemo(() => unwrapObject<TaskInfo>(state.data, ['task']), [state.data]);
+  taskStatusRef.current = task?.status;
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
 

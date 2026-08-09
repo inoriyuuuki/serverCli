@@ -17,9 +17,15 @@ export interface AsyncState<T> {
  */
 export function useApi<T = unknown>(
   path: string | null,
-  options?: { query?: RequestOptions['query']; deps?: unknown[]; enabled?: boolean },
+  options?: {
+    query?: RequestOptions['query'];
+    deps?: unknown[];
+    enabled?: boolean;
+    /** 轮询间隔（毫秒）；>0 时自动定时刷新，例如运行中任务的进度实时更新。 */
+    pollIntervalMs?: number;
+  },
 ): AsyncState<T> {
-  const { query, deps = [], enabled = true } = options ?? {};
+  const { query, deps = [], enabled = true, pollIntervalMs = 0 } = options ?? {};
   const [data, setDataState] = useState<T | null>(null);
   const [loading, setLoading] = useState<boolean>(Boolean(path) && enabled);
   const [error, setError] = useState<ApiError | null>(null);
@@ -46,30 +52,50 @@ export function useApi<T = unknown>(
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    if (dataRef.current !== null) setStale(true);
-    api
-      .get<T>(path, queryRef.current)
-      .then((result) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const load = () => {
+      // 首次加载显示 loading；轮询刷新时仅标记 stale，避免界面闪烁。
+      const first = dataRef.current === null;
+      if (first) setLoading(true);
+      else setStale(true);
+      setError(null);
+      api
+        .get<T>(path, queryRef.current)
+        .then((result) => {
+          if (cancelled) return;
+          setDataState(result);
+          setStale(false);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          if (err instanceof ApiError) setError(err);
+          else setError(new ApiError(0, 'UNKNOWN', '发生未知错误'));
+          setStale(false);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+
+    const scheduleNext = () => {
+      if (cancelled || pollIntervalMs <= 0) return;
+      timer = setTimeout(() => {
         if (cancelled) return;
-        setDataState(result);
-        setStale(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        if (err instanceof ApiError) setError(err);
-        else setError(new ApiError(0, 'UNKNOWN', '发生未知错误'));
-        setStale(false);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        load();
+        scheduleNext();
+      }, pollIntervalMs);
+    };
+
+    load();
+    if (pollIntervalMs > 0) scheduleNext();
+
     return () => {
       cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, queryKey, tick, enabled, ...deps]);
+  }, [path, queryKey, tick, enabled, pollIntervalMs, ...deps]);
 
   return { data, loading, error, stale, reload, setData };
 }

@@ -50,7 +50,7 @@ export default function TasksPage() {
     return q;
   }, [statusFilter, nodeFilter, search]);
 
-  const tasksState = useApi<unknown>('/tasks', { query });
+  const tasksState = useApi<unknown>('/tasks', { query, pollIntervalMs: 10000 });
   const tasks = useMemo(() => unwrapList<TaskInfo>(tasksState.data, ['tasks']), [tasksState.data]);
 
   return (
