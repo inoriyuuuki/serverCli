@@ -37,14 +37,20 @@ export default function TaskDetailPage() {
   const [cancelError, setCancelError] = useState<string | null>(null);
 
   const events = useMemo<TaskEvent[]>(() => {
+    // 任务详情接口返回 { task, events, output }：events 是 task 的顶层兄弟字段。
+    const d = state.data as Record<string, unknown> | null;
+    if (d && Array.isArray(d.events)) return d.events as TaskEvent[];
     if (Array.isArray(task?.events)) return task.events;
     if (task && typeof task === 'object' && Array.isArray((task as Record<string, unknown>).task_events)) {
       return (task as Record<string, unknown>).task_events as TaskEvent[];
     }
     return [];
-  }, [task]);
+  }, [state.data, task]);
 
   const output = useMemo(() => {
+    // 任务详情接口返回 { task, events, output }：优先取顶层的 output（兼容旧响应形态）。
+    const d = state.data as Record<string, unknown> | null;
+    if (d && d.output && typeof d.output === 'object') return d.output as TaskInfo['output'];
     const t = task as TaskInfo | null;
     const o = t?.output;
     if (o) return o;
@@ -57,7 +63,7 @@ export default function TaskDetailPage() {
       };
     }
     return null;
-  }, [task]);
+  }, [state.data, task]);
 
   const canCancel = task && ['queued', 'dispatched', 'running'].includes(task.status ?? '');
 
