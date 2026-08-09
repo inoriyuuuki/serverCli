@@ -227,7 +227,9 @@ func (e *Executor) Execute(ctx context.Context, payload *TaskPayload, cmd Comman
 	// Watch for control-plane cancellation signals. Exits when the process
 	// finishes so completion is not delayed until the timeout.
 	procDone := make(chan struct{})
-	defer close(procDone)
+	var procDoneOnce sync.Once
+	closeProcDone := func() { procDoneOnce.Do(func() { close(procDone) }) }
+	defer closeProcDone()
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
@@ -254,6 +256,9 @@ func (e *Executor) Execute(ctx context.Context, payload *TaskPayload, cmd Comman
 		return
 	}
 	waitErr := proc.Wait()
+	// 进程已结束：立即通知 watch 协程退出，否则 `<-watchDone` 会一直等到任务超时
+	// （runCtx.Done），导致每个任务都要跑满 timeout_seconds 才算完成。
+	closeProcDone()
 	<-sendDone
 	<-watchDone
 
