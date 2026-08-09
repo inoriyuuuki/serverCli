@@ -711,7 +711,8 @@ func TestHeartbeatRecordsPublicSourceIPAsNodeAddress(t *testing.T) {
 		}
 	}
 
-	// 节点已上报地址时，来源 IP 不覆盖已上报地址。
+	// 节点已上报地址且来源 IP 为公网时：公网来源 IP 作为首选 SSH 目标，
+	// 上报地址保留在其后（自动穿透优先）。
 	id2, _, _ := mustEnrollAndClaimNamed(t, ctx, nodes, "reported")
 	if _, err := nodes.Heartbeat(ctx, id2, HeartbeatInput{
 		Hostname:  "n2",
@@ -720,10 +721,29 @@ func TestHeartbeatRecordsPublicSourceIPAsNodeAddress(t *testing.T) {
 		t.Fatalf("heartbeat: %v", err)
 	}
 	got2, err := st.NodeAddresses(ctx, id2)
-	if err != nil || len(got2) != 1 {
-		t.Fatalf("expected reported address preserved, got %d (err=%v)", len(got2), err)
+	if err != nil || len(got2) != 2 {
+		t.Fatalf("expected public source + reported address, got %d (err=%v)", len(got2), err)
 	}
-	if got2[0].Address != "10.1.2.3" || got2[0].AddressType != "reported" {
-		t.Fatalf("reported address should not be replaced: %+v", got2[0])
+	if got2[0].Address != "43.142.9.10" || got2[0].AddressType != "source" || !got2[0].IsPreferred {
+		t.Fatalf("public source IP should be preferred SSH target: %+v", got2[0])
+	}
+	if got2[1].Address != "10.1.2.3" || got2[1].AddressType != "reported" {
+		t.Fatalf("reported address should be preserved after source: %+v", got2[1])
+	}
+
+	// 上报地址全为私网时，公网来源 IP 必须优先（真实云服务器场景）。
+	id3, _, _ := mustEnrollAndClaimNamed(t, ctx, nodes, "private-reported")
+	if _, err := nodes.Heartbeat(ctx, id3, HeartbeatInput{
+		Hostname:  "n3",
+		Addresses: []AddressInput{{Address: "172.17.0.1", AddressType: "reported", ServicePort: 9043}},
+	}, "218.244.159.177"); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	got3, err := st.NodeAddresses(ctx, id3)
+	if err != nil || len(got3) != 2 {
+		t.Fatalf("expected public source + private reported, got %d (err=%v)", len(got3), err)
+	}
+	if got3[0].Address != "218.244.159.177" || !got3[0].IsPreferred {
+		t.Fatalf("public source IP should be preferred over private reported: %+v", got3[0])
 	}
 }
