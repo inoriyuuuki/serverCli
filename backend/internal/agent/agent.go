@@ -416,11 +416,21 @@ func (a *Agent) watchEvents(ctx context.Context) error {
 			return err
 		}
 		var msg struct {
-			Event string `json:"event"`
+			Event string         `json:"event"`
+			Data  map[string]any `json:"data"`
 		}
-		if json.Unmarshal(data, &msg) == nil && msg.Event == "lease_keys_changed" {
+		if json.Unmarshal(data, &msg) != nil {
+			continue
+		}
+		switch msg.Event {
+		case "lease_keys_changed":
 			if err := a.sendHeartbeat(ctx); err != nil {
 				a.log.Warn("lease key refresh heartbeat failed", "error", err)
+			}
+		case "task_cancelled":
+			if id, ok := msg.Data["task_id"].(string); ok && id != "" {
+				a.executor.MarkCancelled(id)
+				a.log.Info("task cancelled via push", "task_id", id)
 			}
 		}
 	}

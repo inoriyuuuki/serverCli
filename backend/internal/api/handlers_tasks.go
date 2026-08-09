@@ -35,7 +35,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		"node_id":    t.NodeID,
 		"created_at": t.QueuedAt,
 	}})
-	s.events.publish("", EventTasksChanged)
+	s.events.publishEvent("", EventTasksChanged)
 }
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +71,9 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
-	s.events.publish("", EventTasksChanged)
+	s.events.publishEvent("", EventTasksChanged)
+	// 即时通知目标节点取消任务（agent 无需等下一轮长轮询）。
+	s.events.publish(t.NodeID, wsMessage{Event: EventTaskCancelled, Data: map[string]any{"task_id": t.ID}})
 	writeJSON(w, http.StatusOK, map[string]any{"task": t})
 }
 
