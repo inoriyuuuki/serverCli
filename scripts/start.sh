@@ -62,14 +62,18 @@ fi
 command -v curl >/dev/null 2>&1 || warn "缺少 curl，健康检查将受限（建议安装）"
 BACKEND_PORT="$(addr_port "$BACKEND_ADDR" 9045)"
 FRONTEND_PORT="$(addr_port "$FRONTEND_ADDR" 9044)"
-require_port_free "$BACKEND_PORT" "后端 backend"
-require_port_free "$FRONTEND_PORT" "前端 frontend"
 
-# 已运行则幂等退出（提示使用 restart）
+# 已运行则幂等退出（提示使用 restart）。需先于端口检查：运行中的实例必然占用端口，
+# 若先做端口检查会把“已在运行”误判为端口冲突而报错。
 if [ -f "$RUN_DIR/control-plane.pid" ] && pid_alive "$(read_pid "$RUN_DIR/control-plane.pid" || true)"; then
   info "实例 $INSTANCE 的控制面已在运行（pid $(read_pid "$RUN_DIR/control-plane.pid")），无需重复启动；如需重启请运行 ./scripts/restart.sh"
   exit 0
 fi
+
+# 端口需可绑定：刚 stop 的实例可能仍在优雅退出（读长轮询连接等），等待端口释放后再启动，
+# 避免 stop/start 时序竞争导致启动失败。
+wait_port_free "$BACKEND_PORT" "后端 backend"
+wait_port_free "$FRONTEND_PORT" "前端 frontend"
 
 # ---------------------------------------------------------------------------
 # 阶段 2：加载配置（Secret 只来自 0600 secrets 文件，不回显）

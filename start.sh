@@ -20,7 +20,12 @@ echo "启动 serverCli 实例: $INSTANCE"
 
 case "$INSTANCE" in
   production-primary)
-    ./scripts/start.sh --env production --role primary --instance "$INSTANCE" --confirm-production --non-interactive --no-build --skip-migrate
+    # 由 scripts/start.sh 启动控制面；START_NODE_AGENT=0 避免其再以 root 重复拉起
+    # node-agent（本包装器随后统一以 servercli-ai 启动，见下方）。
+    if ! START_NODE_AGENT=0 ./scripts/start.sh --env production --role primary --instance "$INSTANCE" --confirm-production --non-interactive --no-build --skip-migrate; then
+        echo "serverCli 控制面启动失败，跳过 node-agent（请查看 logs/$INSTANCE/control-plane.log）" >&2
+        return 1 2>/dev/null || exit 1
+    fi
     # node-agent 需以 servercli-ai 运行（sshd 才能读取其 authorized_keys）
     if id servercli-ai >/dev/null 2>&1; then
         [ -f .env ] || cp "deploy/environments/production/$INSTANCE.env" .env
@@ -31,6 +36,14 @@ case "$INSTANCE" in
         sudo -u servercli-ai nohup ./bin/servercli-node-agent >> "logs/$INSTANCE/node-agent.log" 2>&1 &
         echo $! > "run/$INSTANCE/node-agent.pid"
         sleep 2
+        if kill -0 "$(cat "run/$INSTANCE/node-agent.pid" 2>/dev/null)" 2>/dev/null; then
+            echo "node-agent 已启动 (pid $(cat "run/$INSTANCE/node-agent.pid"))"
+        else
+            echo "node-agent 启动失败，请查看 logs/$INSTANCE/node-agent.log" >&2
+            return 1 2>/dev/null || exit 1
+        fi
+    else
+        echo "警告: 未找到 servercli-ai 用户，node-agent 将无法被 sshd 读取 authorized_keys" >&2
     fi
     ;;
   production-*)

@@ -192,6 +192,7 @@ apply_defaults() {
   : "${ADMIN_USERNAME:=admin}"
   : "${HEALTH_TIMEOUT_SECONDS:=60}"
   : "${STOP_GRACE_SECONDS:=20}"
+  : "${PORT_RELEASE_TIMEOUT_SECONDS:=20}"
   if [ -z "${PRIMARY_BACKEND_URL:-}" ]; then
     PRIMARY_BACKEND_URL="http://127.0.0.1:$(addr_port "$BACKEND_ADDR" 9045)"
   fi
@@ -204,7 +205,8 @@ apply_defaults() {
          RETENTION_DAYS CLEANUP_SCHEDULE HEARTBEAT_INTERVAL_SECONDS \
          OFFLINE_THRESHOLD_SECONDS TASK_POLL_TIMEOUT_SECONDS \
          AUTHORIZED_KEYS_FILE LEASE_SHELL_BIN HTTP_INSECURE_SKIP_VERIFY \
-         LOG_LEVEL FRONTEND_DIST_DIR ADMIN_USERNAME HEALTH_TIMEOUT_SECONDS STOP_GRACE_SECONDS
+         LOG_LEVEL FRONTEND_DIST_DIR ADMIN_USERNAME HEALTH_TIMEOUT_SECONDS STOP_GRACE_SECONDS \
+         PORT_RELEASE_TIMEOUT_SECONDS
 }
 
 # 将相对路径按仓库根解析为绝对路径
@@ -321,6 +323,22 @@ require_port_free() { # require_port_free <port> <用途说明>
   local port="$1" what="$2"
   if [ -n "$port" ] && port_in_use "$port"; then
     die "端口检查失败: 端口 ${port}（${what}）已被占用，请先停止占用进程或调整配置"
+  fi
+}
+
+wait_port_free() { # wait_port_free <port> <用途说明> [超时秒]
+  local port="$1" what="$2" timeout="${3:-$PORT_RELEASE_TIMEOUT_SECONDS}"
+  local i=0
+  if [ -n "$port" ] && port_in_use "$port"; then
+    info "端口 ${port}（${what}）仍被占用，等待释放（最长 ${timeout}s）…"
+    while [ "$i" -lt "$timeout" ] && port_in_use "$port"; do
+      sleep 1
+      i=$((i+1))
+    done
+    if port_in_use "$port"; then
+      die "端口检查失败: 端口 ${port}（${what}）在 ${timeout}s 内仍未释放，请先停止占用进程或调整配置"
+    fi
+    info "端口 ${port}（${what}）已释放"
   fi
 }
 
