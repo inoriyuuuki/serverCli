@@ -1,10 +1,10 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"servercli/internal/config"
 )
@@ -378,9 +380,9 @@ func (a *Agent) sendHeartbeat(ctx context.Context) error {
 
 // ---- lease key event stream (immediate refresh) ----
 
-// eventStreamLoop keeps an SSE connection to the control plane open and, on a
-// lease_keys_changed notification, refreshes lease keys right away instead of
-// waiting for the next heartbeat (up to HeartbeatIntervalSeconds).
+// eventStreamLoop keeps a WebSocket connection to the control plane open and,
+// on a lease_keys_changed notification, refreshes lease keys right away
+// instead of waiting for the next heartbeat (up to HeartbeatIntervalSeconds).
 func (a *Agent) eventStreamLoop(ctx context.Context) {
 	backoff := 2 * time.Second
 	for {
@@ -399,24 +401,40 @@ func (a *Agent) eventStreamLoop(ctx context.Context) {
 }
 
 func (a *Agent) watchEvents(ctx context.Context) error {
-	resp, err := a.client.DoStream("/api/v1/agent/events")
+	headers := a.client.StreamHeaders("GET", "/api/v1/agent/ws")
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL(a.cfg.PrimaryBackendURL, "/api/v1/agent/ws"), headers)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
+	defer conn.Close()
+	if resp != nil && resp.StatusCode >= 300 {
 		return fmt.Errorf("event stream returned %d", resp.StatusCode)
 	}
-	sc := bufio.NewScanner(resp.Body)
-	for sc.Scan() {
-		line := sc.Text()
-		if line == "event: lease_keys_changed" {
+	for {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			return err
+		}
+		var msg struct {
+			Event string `json:"event"`
+		}
+		if json.Unmarshal(data, &msg) == nil && msg.Event == "lease_keys_changed" {
 			if err := a.sendHeartbeat(ctx); err != nil {
 				a.log.Warn("lease key refresh heartbeat failed", "error", err)
 			}
 		}
 	}
-	return sc.Err()
+}
+
+// wsURL converts a control-plane http(s) base URL into the matching ws(s) URL.
+func wsURL(base, path string) string {
+	switch {
+	case strings.HasPrefix(base, "https://"):
+		return "wss://" + strings.TrimPrefix(base, "https://") + path
+	case strings.HasPrefix(base, "http://"):
+		return "ws://" + strings.TrimPrefix(base, "http://") + path
+	}
+	return base + path
 }
 
 // reportLeaseEvent reports a lease lifecycle event to the control plane.

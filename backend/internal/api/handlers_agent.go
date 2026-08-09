@@ -87,6 +87,8 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	// 节点状态/地址变化实时推送给管理端。
+	s.events.publish("", EventNodesChanged)
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -144,6 +146,7 @@ func (s *Server) handleAgentTaskEvent(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.events.publish("", EventTasksChanged)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
@@ -158,6 +161,7 @@ func (s *Server) handleAgentTaskResult(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.events.publish("", EventTasksChanged)
 	writeJSON(w, http.StatusOK, map[string]any{"task": t})
 }
 

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -20,12 +19,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"servercli/internal/config"
 	"servercli/internal/db"
 	"servercli/internal/logger"
 	"servercli/internal/model"
 	"servercli/internal/security"
 	"servercli/internal/service"
+
 	"servercli/internal/store"
 )
 
@@ -896,57 +897,58 @@ func (t statusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-
-// TestAgentEventsStreamDeliversLeaseKeysChanged verifies the SSE agent event
+// TestAgentWSStreamDeliversLeaseKeysChanged verifies the agent WebSocket
 // stream notifies the node of lease key changes (immediate refresh path).
-func TestAgentEventsStreamDeliversLeaseKeysChanged(t *testing.T) {
+func TestAgentWSStreamDeliversLeaseKeysChanged(t *testing.T) {
 	env := setupAPI(t)
 	ts := httptest.NewServer(env.handler)
 	defer ts.Close()
 
-	headers := env.agentHeaders("GET", "/api/v1/agent/events", nil)
-	req, err := http.NewRequest("GET", ts.URL+"/api/v1/agent/events", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	headers := env.agentHeaders("GET", "/api/v1/agent/ws", nil)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/agent/ws"
+	hdr := http.Header{}
 	for k, v := range headers {
-		req.Header.Set(k, v)
+		hdr.Set(k, v)
 	}
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := http.DefaultClient.Do(req)
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, hdr)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("dial agent ws: %v", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("event stream status %d", resp.StatusCode)
+	defer conn.Close()
+	if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("agent ws status %d", resp.StatusCode)
 	}
 
-	lines := make(chan string, 64)
+	// Read messages in a goroutine; the main loop selects on events and the
+	// publish ticker (avoids re-reading after a websocket read error).
+	msgCh := make(chan string, 16)
+	readErr := make(chan error, 1)
 	go func() {
-		sc := bufio.NewScanner(resp.Body)
-		for sc.Scan() {
-			lines <- sc.Text()
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				readErr <- err
+				return
+			}
+			var m map[string]string
+			if json.Unmarshal(data, &m) == nil {
+				msgCh <- m["event"]
+			}
 		}
-		close(lines)
 	}()
 
-	// Publish repeatedly so a subscriber that registers slightly late still
-	// receives the notification.
 	deadline := time.After(5 * time.Second)
 	pub := time.NewTicker(150 * time.Millisecond)
 	defer pub.Stop()
 	first := time.After(300 * time.Millisecond)
 	for {
 		select {
-		case line, ok := <-lines:
-			if !ok {
-				t.Fatal("event stream closed before receiving notification")
-			}
-			if line == "event: "+EventLeaseKeysChanged {
+		case ev := <-msgCh:
+			if ev == EventLeaseKeysChanged {
 				return
 			}
+		case err := <-readErr:
+			t.Fatalf("ws read error: %v", err)
 		case <-first:
 			env.srv.events.publish(env.nodeID, EventLeaseKeysChanged)
 		case <-pub.C:

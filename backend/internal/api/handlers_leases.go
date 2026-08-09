@@ -181,11 +181,12 @@ func (s *Server) handleAIAccess(w http.ResponseWriter, r *http.Request) {
 
 // sshTarget returns a suggested SSH target for a lease.
 // publishLeaseKeys notifies a node agent to refresh lease keys immediately
-// (SSE push) instead of waiting for the next heartbeat.
+// (WebSocket push) and the admin UI that the lease list changed.
 func (s *Server) publishLeaseKeys(lease *model.AILease) {
 	if lease != nil {
 		s.events.publish(lease.NodeID, EventLeaseKeysChanged)
 	}
+	s.events.publish("", EventLeasesChanged)
 }
 
 func (s *Server) sshTarget(r *http.Request, nodeID string) (string, int) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useSession } from '../auth/AuthContext';
 import { useApi, errorMessage } from '../lib/useApi';
+import { useRealtime } from '../lib/realtime';
 import { api, unwrapList, unwrapObject, ApiError } from '../api/client';
 import type { AiAutoApproval, AiLease, AiLeaseRequest, NodeInfo } from '../api/types';
 import {
@@ -41,9 +42,16 @@ export default function AiCredentialsPage() {
   const isProd = session?.environment === 'production';
   const [tab, setTab] = useState<TabKey>('active');
 
-  const leasesState = useApi<unknown>('/ai/leases', { query: { limit: 100 }, pollIntervalMs: 10000 });
-  const requestsState = useApi<unknown>('/ai/lease-requests', { query: { limit: 100 }, pollIntervalMs: 10000 });
-  const autoApprovalsState = useApi<unknown>(isPrimary ? '/ai/auto-approvals' : null, { query: { limit: 100 }, pollIntervalMs: 10000 });
+  // 凭证/申请/免审批变更由 WebSocket 实时推送，轮询仅作兜底。
+  useRealtime(['leases_changed'], () => {
+    leasesState.reload();
+    requestsState.reload();
+    autoApprovalsState.reload();
+  });
+
+  const leasesState = useApi<unknown>('/ai/leases', { query: { limit: 100 }, pollIntervalMs: 30000 });
+  const requestsState = useApi<unknown>('/ai/lease-requests', { query: { limit: 100 }, pollIntervalMs: 30000 });
+  const autoApprovalsState = useApi<unknown>(isPrimary ? '/ai/auto-approvals' : null, { query: { limit: 100 }, pollIntervalMs: 30000 });
   const settingsState = useApi<unknown>('/settings');
   const nodesState = useApi<unknown>(isPrimary ? '/nodes' : null, { pollIntervalMs: 60000 });
 

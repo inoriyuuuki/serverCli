@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession } from '../auth/AuthContext';
 import { useApi, errorMessage } from '../lib/useApi';
+import { useRealtime } from '../lib/realtime';
 import { unwrapList } from '../api/client';
 import type { NodeInfo, TaskInfo } from '../api/types';
 import {
@@ -50,7 +51,9 @@ export default function TasksPage() {
     return q;
   }, [statusFilter, nodeFilter, search]);
 
-  const tasksState = useApi<unknown>('/tasks', { query, pollIntervalMs: 10000 });
+  const tasksState = useApi<unknown>('/tasks', { query, pollIntervalMs: 30000 });
+  // 任务创建/事件/结果由 WebSocket 实时推送，轮询仅作兜底。
+  useRealtime(['tasks_changed'], () => tasksState.reload());
   const tasks = useMemo(() => unwrapList<TaskInfo>(tasksState.data, ['tasks']), [tasksState.data]);
 
   return (

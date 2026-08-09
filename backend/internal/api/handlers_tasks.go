@@ -35,6 +35,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		"node_id":    t.NodeID,
 		"created_at": t.QueuedAt,
 	}})
+	s.events.publish("", EventTasksChanged)
 }
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +71,7 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.events.publish("", EventTasksChanged)
 	writeJSON(w, http.StatusOK, map[string]any{"task": t})
 }
 
