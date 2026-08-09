@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useSession } from '../auth/AuthContext';
 import { useApi, errorMessage } from '../lib/useApi';
 import { api, unwrapList, unwrapObject, ApiError } from '../api/client';
@@ -24,6 +24,16 @@ import { cn, remainingText, shortId } from '../lib/format';
 
 type TabKey = 'active' | 'requests' | 'auto' | 'policy';
 
+/** 秒级时钟：驱动“剩余时间”倒计时与到期状态实时更新。 */
+function useNow(intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 export default function AiCredentialsPage() {
   const session = useSession();
   const confirm = useConfirm();
@@ -31,11 +41,11 @@ export default function AiCredentialsPage() {
   const isProd = session?.environment === 'production';
   const [tab, setTab] = useState<TabKey>('active');
 
-  const leasesState = useApi<unknown>('/ai/leases', { query: { limit: 100 } });
-  const requestsState = useApi<unknown>('/ai/lease-requests', { query: { limit: 100 } });
-  const autoApprovalsState = useApi<unknown>(isPrimary ? '/ai/auto-approvals' : null, { query: { limit: 100 } });
+  const leasesState = useApi<unknown>('/ai/leases', { query: { limit: 100 }, pollIntervalMs: 10000 });
+  const requestsState = useApi<unknown>('/ai/lease-requests', { query: { limit: 100 }, pollIntervalMs: 10000 });
+  const autoApprovalsState = useApi<unknown>(isPrimary ? '/ai/auto-approvals' : null, { query: { limit: 100 }, pollIntervalMs: 10000 });
   const settingsState = useApi<unknown>('/settings');
-  const nodesState = useApi<unknown>(isPrimary ? '/nodes' : null);
+  const nodesState = useApi<unknown>(isPrimary ? '/nodes' : null, { pollIntervalMs: 60000 });
 
   const leases = useMemo(() => unwrapList<AiLease>(leasesState.data, ['leases']), [leasesState.data]);
   const requests = useMemo(() => unwrapList<AiLeaseRequest>(requestsState.data, ['requests', 'lease_requests']), [requestsState.data]);
@@ -365,6 +375,7 @@ function ActiveLeases({
   onDisableRenewal: (l: AiLease) => void;
   onProtect: (l: AiLease) => void;
 }) {
+  const now = useNow();
   if (state.loading && state.data === null) return <Card><LoadingState label="加载凭证中…" /></Card>;
   if (state.error) return <Card><ErrorState message={errorMessage(state.error)} onRetry={state.reload} /></Card>;
   if (leases.length === 0) return <Card><EmptyState title="暂无 Lease 记录" /></Card>;
@@ -389,7 +400,7 @@ function ActiveLeases({
           </thead>
           <tbody>
             {leases.map((l) => {
-              const rem = remainingText(l.expires_at);
+              const rem = remainingText(l.expires_at, now);
               return (
                 <tr key={l.id}>
                   <td className="mono-cell" title={l.id}>
@@ -620,6 +631,7 @@ function AutoApprovalsTab({
   isProd?: boolean;
   onExtend: (r: AiAutoApproval) => void;
 }) {
+  const now = useNow();
   if (state.loading && state.data === null) return <Card><LoadingState label="加载自动免审批…" /></Card>;
   if (state.error) return <Card><ErrorState message={errorMessage(state.error)} onRetry={state.reload} /></Card>;
   if (rules.length === 0) {
@@ -656,7 +668,7 @@ function AutoApprovalsTab({
           </thead>
           <tbody>
             {rules.map((r) => {
-              const rem = remainingText(r.expires_at);
+              const rem = remainingText(r.expires_at, now);
               const active = rem.kind !== 'over';
               return (
                 <tr key={r.id}>
