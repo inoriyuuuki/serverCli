@@ -102,7 +102,9 @@ func loadManifest(root, path string) (*CommandEntry, error) {
 	exe := m.Spec.Executable
 	if !filepath.IsAbs(exe) {
 		// Relative paths are resolved against COMMANDS_DIR first, then the
-		// manifest's own directory (for nested command trees).
+		// manifest's own directory (for nested command trees). The result is
+		// made absolute so the executor can run it regardless of its working
+		// directory (it chdirs into the command's directory before exec).
 		candidates := []string{filepath.Join(root, exe), filepath.Join(filepath.Dir(path), exe)}
 		for _, cand := range candidates {
 			if _, statErr := os.Stat(cand); statErr == nil {
@@ -110,6 +112,9 @@ func loadManifest(root, path string) (*CommandEntry, error) {
 				break
 			}
 		}
+	}
+	if abs, err := filepath.Abs(exe); err == nil {
+		exe = abs
 	}
 	info, err := os.Stat(exe)
 	if err != nil {

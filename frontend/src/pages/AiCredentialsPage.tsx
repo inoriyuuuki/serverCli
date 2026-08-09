@@ -134,7 +134,7 @@ export default function AiCredentialsPage() {
       )}
 
       {tab === 'requests' && (
-        <RequestsTab requests={requests} state={requestsState} />
+        <RequestsTab requests={requests} state={requestsState} isProd={isProd} />
       )}
 
       {tab === 'policy' && (
@@ -289,12 +289,92 @@ function ActiveLeases({
 
 /* ------------------------------ 申请记录 ------------------------------ */
 
-function RequestsTab({ requests, state }: { requests: AiLeaseRequest[]; state: { loading: boolean; error: ApiError | null; reload: () => void; data: unknown } }) {
+function RequestsTab({
+  requests,
+  state,
+  isProd,
+}: {
+  requests: AiLeaseRequest[];
+  state: { loading: boolean; error: ApiError | null; reload: () => void; data: unknown };
+  isProd?: boolean;
+}) {
+  const confirm = useConfirm();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const approve = async (r: AiLeaseRequest) => {
+    setActionError(null);
+    const result = await confirm({
+      title: '批准 Lease 申请',
+      message: (
+        <div className="kv">
+          <dt>申请</dt>
+          <dd className="mono">{r.id}</dd>
+          <dt>AI</dt>
+          <dd>{r.ai_agent_name || r.ai_agent_id || '—'}</dd>
+          <dt>节点</dt>
+          <dd>{r.node_name || r.node_id || '—'}</dd>
+          <dt>权限</dt>
+          <dd><ProfileBadge profile={r.requested_profile ?? r.permission_profile} /></dd>
+          <dt>时长</dt>
+          <dd className="mono">{r.requested_duration_seconds ? `${Math.round(r.requested_duration_seconds / 60)} 分钟` : '—'}</dd>
+        </div>
+      ),
+      confirmLabel: '确认批准',
+      production: isProd,
+    });
+    if (!result.ok) return;
+    setBusyId(r.id);
+    try {
+      await api.post(`/ai/lease-requests/${r.id}/approve`);
+      state.reload();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : '审批失败，请重试');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reject = async (r: AiLeaseRequest) => {
+    setActionError(null);
+    const result = await confirm({
+      title: '拒绝 Lease 申请',
+      message: (
+        <div className="kv">
+          <dt>申请</dt>
+          <dd className="mono">{r.id}</dd>
+          <dt>AI</dt>
+          <dd>{r.ai_agent_name || r.ai_agent_id || '—'}</dd>
+          <dt>节点</dt>
+          <dd>{r.node_name || r.node_id || '—'}</dd>
+        </div>
+      ),
+      confirmLabel: '确认拒绝',
+      danger: true,
+      production: isProd,
+      requireReason: true,
+      reasonLabel: '拒绝原因',
+      reasonPlaceholder: '请填写拒绝原因（将写入审计）',
+    });
+    if (!result.ok) return;
+    setBusyId(r.id);
+    try {
+      await api.post(`/ai/lease-requests/${r.id}/reject`, { reason: result.reason });
+      state.reload();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : '拒绝失败，请重试');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (state.loading && state.data === null) return <Card><LoadingState label="加载申请记录中…" /></Card>;
   if (state.error) return <Card><ErrorState message={errorMessage(state.error)} onRetry={state.reload} /></Card>;
   if (requests.length === 0) return <Card><EmptyState title="暂无申请记录" /></Card>;
+  const pending = requests.filter((r) => r.status === 'pending');
   return (
     <Card title="申请记录" actions={<button className="btn btn-ghost btn-sm" onClick={state.reload}>刷新</button>}>
+      {actionError && <div className="alert alert-danger">{actionError}</div>}
       <div className="table-wrap">
         <table className="table">
           <thead>
@@ -308,6 +388,7 @@ function RequestsTab({ requests, state }: { requests: AiLeaseRequest[]; state: {
               <th>状态</th>
               <th>审批结果 / 原因</th>
               <th>申请时间</th>
+              {pending.length > 0 && <th>操作</th>}
             </tr>
           </thead>
           <tbody>
@@ -325,6 +406,24 @@ function RequestsTab({ requests, state }: { requests: AiLeaseRequest[]; state: {
                 <td><StatusBadge status={r.status} /></td>
                 <td className="muted">{r.decision_reason || '—'}</td>
                 <td><TimeCell value={r.created_at} /></td>
+                {pending.length > 0 && (
+                  <td>
+                    <div className="btn-row">
+                      {r.status === 'pending' ? (
+                        <>
+                          <button className="btn btn-sm btn-primary" disabled={busyId === r.id} onClick={() => approve(r)}>
+                            {busyId === r.id ? '处理中…' : '批准'}
+                          </button>
+                          <button className="btn btn-sm btn-danger" disabled={busyId === r.id} onClick={() => reject(r)}>
+                            拒绝
+                          </button>
+                        </>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

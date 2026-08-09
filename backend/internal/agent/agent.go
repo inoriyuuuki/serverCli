@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -35,15 +36,29 @@ type Agent struct {
 	doneCache   map[string]time.Time
 }
 
+// absConfigPath resolves a possibly-relative config path against the process
+// working directory (used for authorized_keys and lease-shell paths).
+func absConfigPath(p string) string {
+	if p == "" {
+		return p
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
 // NewAgent builds the agent.
 func NewAgent(cfg *config.Config, log *slog.Logger) *Agent {
 	client := NewClient(cfg.PrimaryBackendURL, cfg.HTTPInsecureSkipVerify, time.Duration(cfg.TaskPollTimeoutSeconds+20)*time.Second)
 	return &Agent{
-		cfg:       cfg,
-		log:       log,
-		client:    client,
-		executor:  NewExecutor(client, log),
-		keys:      NewLeaseKeyManager(cfg.AuthorizedKeysFile, cfg.LeaseShellBin, log),
+		cfg:      cfg,
+		log:      log,
+		client:   client,
+		executor: NewExecutor(client, log),
+		// Resolve config paths to absolute values so SSH forced-command and
+		// authorized_keys entries work no matter the process working directory.
+		keys:      NewLeaseKeyManager(absConfigPath(cfg.AuthorizedKeysFile), absConfigPath(cfg.LeaseShellBin), log),
 		doneCache: map[string]time.Time{},
 	}
 }
