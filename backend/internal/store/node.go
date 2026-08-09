@@ -610,3 +610,46 @@ func (s *Store) SearchCommands(ctx context.Context, nodeID, category, keyword st
 	}
 	return out, rows.Err()
 }
+
+// DeleteNodeCascade permanently removes a node and all associated rows in one
+// transaction. Order matters: child rows that reference a node or its tasks /
+// leases are removed before their parents (several tables have no ON DELETE
+// CASCADE in the schema).
+func (s *Store) DeleteNodeCascade(ctx context.Context, nodeID string) error {
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		tsx := s.Tx(tx)
+		steps := []string{
+			`DELETE FROM ai_ssh_session WHERE node_id=$1`,
+			`DELETE FROM ai_lease_event WHERE lease_id IN (SELECT id FROM ai_lease WHERE node_id=$1)`,
+			`DELETE FROM ai_lease WHERE node_id=$1`,
+			`DELETE FROM ai_auto_approval WHERE node_id=$1`,
+			`DELETE FROM ai_lease_request WHERE node_id=$1`,
+			`DELETE FROM task_output WHERE task_id IN (SELECT id FROM task WHERE node_id=$1)`,
+			`DELETE FROM task_event WHERE task_id IN (SELECT id FROM task WHERE node_id=$1)`,
+			`DELETE FROM task_parameter_history WHERE node_id=$1`,
+			`DELETE FROM task WHERE node_id=$1`,
+			`DELETE FROM node_command WHERE node_id=$1`,
+			`DELETE FROM node_heartbeat WHERE node_id=$1`,
+			`DELETE FROM node_address WHERE node_id=$1`,
+			`DELETE FROM audit_event WHERE node_id=$1`,
+			`DELETE FROM node_enrollment WHERE node_id=$1`,
+			`DELETE FROM node WHERE id=$1`,
+		}
+		for i, q := range steps {
+			res, err := tsx.exec(ctx, q, nodeID)
+			if err != nil {
+				return err
+			}
+			// Atomic guard: the node must still be offline/disabled and a
+			// child when it is removed, so a concurrent heartbeat or role
+			// change cannot slip past the service-level pre-checks.
+			if i == len(steps)-1 {
+				n, _ := res.RowsAffected()
+				if n == 0 {
+					return ErrStateTransition
+				}
+			}
+		}
+		return nil
+	})
+}

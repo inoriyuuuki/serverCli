@@ -137,3 +137,25 @@ func (s *Server) handleAgentListAuditEvents(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"audit_events": events})
 }
+
+func (s *Server) handleAgentListTaskParameterHistories(w http.ResponseWriter, r *http.Request) {
+	node := nodeFrom(r.Context())
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	histories, err := s.tasks.ListParameterHistories(r.Context(), node.ID, nil, q.Get("command_id"), q.Get("command_version"), limit, offset)
+	if err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"histories": histories})
+}
+
+func (s *Server) handleAgentDeleteTaskParameterHistory(w http.ResponseWriter, r *http.Request) {
+	node := nodeFrom(r.Context())
+	if err := s.tasks.DeleteParameterHistory(r.Context(), node.ID, r.PathValue("id"), node.ID); err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -25,6 +25,7 @@ const (
 	KeyCleanupSchedule     = "cleanup_schedule"
 	KeyRetentionDays       = "retention_days"
 	KeyTaskPollTimeout     = "task_poll_timeout_seconds"
+	KeyTaskParamBackfilled = "task_parameter_history_backfilled"
 )
 
 // SettingsService reads and updates dynamic system settings.

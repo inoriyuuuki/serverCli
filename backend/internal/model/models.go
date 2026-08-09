@@ -404,3 +404,34 @@ type CleanupRun struct {
 	IsProtected           bool       `json:"is_protected"`
 	ProtectedAt           *time.Time `json:"protected_at"`
 }
+
+// AIAutoApproval mirrors ai_auto_approval: a device (ai_agent_id) is exempt
+// from manual approval for a specific node until expires_at.
+type AIAutoApproval struct {
+	ID              string    `json:"id"`
+	EnvironmentID   string    `json:"-"`
+	AIAgentID       string    `json:"ai_agent_id"`
+	AIAgentName     string    `json:"ai_agent_name"`
+	NodeID          string    `json:"node_id"`
+	SourceRequestID string    `json:"source_request_id"`
+	CreatedBy       string    `json:"created_by"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	ExpiresAt       time.Time `json:"expires_at"`
+}
+
+// TaskParameterHistory mirrors task_parameter_history: a reusable set of
+// arguments previously used for a command on a specific node.
+type TaskParameterHistory struct {
+	ID             string         `json:"id"`
+	NodeID         string         `json:"node_id"`
+	CommandID      string         `json:"command_id"`
+	CommandVersion string         `json:"command_version"`
+	ArgumentsJSON  string         `json:"-"`
+	Arguments      map[string]any `json:"arguments"`
+	ArgumentsHash  string         `json:"-"`
+	LastTaskID     string         `json:"last_task_id"`
+	FirstUsedAt    time.Time      `json:"first_used_at"`
+	LastUsedAt     time.Time      `json:"last_used_at"`
+	UseCount       int            `json:"use_count"`
+}

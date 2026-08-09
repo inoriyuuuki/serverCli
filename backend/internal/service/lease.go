@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -18,6 +19,9 @@ import (
 )
 
 // LeaseService manages AI SSH lease requests and leases.
+//
+// Auto-approval rules let an admin exempt a device (ai_agent_id) from manual
+// approval for a specific node for up to MaxAutoApprovalDays.
 type LeaseService struct {
 	store    *store.Store
 	cfg      *config.Config
@@ -27,6 +31,9 @@ type LeaseService struct {
 	settings *SettingsService
 	envID    string
 }
+
+// MaxAutoApprovalDays is the ceiling for device-node auto-approval rules.
+const MaxAutoApprovalDays = 15
 
 // NewLeaseService builds the service.
 func NewLeaseService(st *store.Store, cfg *config.Config, log *slog.Logger, auditor *Auditor, nodes *NodeService, settings *SettingsService) *LeaseService {
@@ -140,7 +147,6 @@ func (s *LeaseService) finishRequest(ctx context.Context, req *model.AILeaseRequ
 	reason := ""
 	switch mode {
 	case "disabled":
-		req.Status = model.LeaseRequestRejected
 		reason = "lease requests disabled"
 	case "policy":
 		if req.RequestedProfile == model.ProfileReadOnly && req.Status == model.LeaseRequestPending {
@@ -157,8 +163,36 @@ func (s *LeaseService) finishRequest(ctx context.Context, req *model.AILeaseRequ
 			reason = "requires manual approval"
 		}
 	}
+	// Device+node auto-approval rule overrides manual/policy approval, but
+	// never bypasses the global "disabled" gate handled above.
+	byRule := false
+	if !approved && mode != "disabled" && req.Status == model.LeaseRequestPending {
+		if rule, err := s.store.AutoApprovalByAgentNode(ctx, s.envID, req.AIAgentID, req.NodeID); err == nil && rule != nil && rule.ExpiresAt.After(time.Now().UTC()) {
+			approved = true
+			byRule = true
+			reason = "auto-approved by device-node rule"
+		}
+	}
 	if req.Status != model.LeaseRequestPending {
-		// Idempotent replay: reflect existing decision.
+		// Idempotent replay: reflect existing decision. The disabled branch
+		// below already persisted a rejection for brand-new requests.
+		return s.resultForRequest(ctx, req, sourceIP)
+	}
+	if mode == "disabled" {
+		// Persist the rejection before returning so the request cannot be
+		// revived later (e.g. by a new rule or a manual approve).
+		now := time.Now().UTC()
+		req.Status = model.LeaseRequestRejected
+		req.DecisionReason = reason
+		req.DecidedAt = &now
+		if err := s.store.UpdateLeaseRequest(ctx, req); err != nil {
+			return nil, err
+		}
+		s.auditor.Denied(ctx, AuditInput{
+			ActorType: model.ActorAI, NodeID: req.NodeID, Action: "ai.lease_denied",
+			ResourceType: "ai_lease_request", ResourceID: req.ID, SourceIP: sourceIP,
+			Summary: reason, RiskLevel: RiskMedium,
+		})
 		return s.resultForRequest(ctx, req, sourceIP)
 	}
 	if approved {
@@ -166,22 +200,22 @@ func (s *LeaseService) finishRequest(ctx context.Context, req *model.AILeaseRequ
 		req.Status = model.LeaseRequestApproved
 		req.DecisionReason = reason
 		req.DecidedAt = &now
-		if err := s.store.UpdateLeaseRequest(ctx, req); err != nil {
+		if err := s.store.ApproveLeaseRequestIfPending(ctx, req); err != nil {
+			if errors.Is(err, store.ErrStateTransition) {
+				return nil, ErrTerminal
+			}
 			return nil, err
 		}
+		if byRule {
+			s.auditor.OK(ctx, AuditInput{
+				ActorType: model.ActorSystem, ActorID: "auto-approval", NodeID: req.NodeID,
+				Action: "ai.lease_auto_approved", ResourceType: "ai_lease_request", ResourceID: req.ID,
+				SourceIP: sourceIP, Summary: "lease request auto-approved by device-node rule",
+				Details:   map[string]any{"ai_agent_id": req.AIAgentID, "node_id": req.NodeID},
+				RiskLevel: riskForProfile(req.RequestedProfile),
+			})
+		}
 		return s.issueLease(ctx, req, sourceIP, model.ActorSystem, "system")
-	}
-	if mode == "disabled" {
-		now := time.Now().UTC()
-		req.Status = model.LeaseRequestRejected
-		req.DecisionReason = reason
-		req.DecidedAt = &now
-		_ = s.store.UpdateLeaseRequest(ctx, req)
-		s.auditor.Denied(ctx, AuditInput{
-			ActorType: model.ActorAI, NodeID: req.NodeID, Action: "ai.lease_denied",
-			ResourceType: "ai_lease_request", ResourceID: req.ID, SourceIP: sourceIP,
-			Summary: reason, RiskLevel: RiskMedium,
-		})
 	}
 	return s.resultForRequest(ctx, req, sourceIP)
 }
@@ -206,13 +240,14 @@ func (s *LeaseService) leaseForRequest(ctx context.Context, requestID string) st
 	return l.ID
 }
 
-// issueLease creates an active lease and its renewal token.
-func (s *LeaseService) issueLease(ctx context.Context, req *model.AILeaseRequest, sourceIP, actorType, actorID string) (*LeaseRequestResult, error) {
+// newLease builds an active lease and its renewal token for an approved
+// request without persisting anything.
+func (s *LeaseService) newLease(ctx context.Context, req *model.AILeaseRequest) (*model.AILease, string, error) {
 	maxHours := s.settings.Int(ctx, KeyLeaseMaxHours, s.cfg.AILeaseMaxHours)
 	now := time.Now().UTC()
 	renewalToken, err := security.NewToken(32)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	absolute := now.Add(time.Duration(maxHours) * time.Hour)
 	expires := now.Add(time.Duration(req.RequestedDurationSeconds) * time.Second)
@@ -233,6 +268,14 @@ func (s *LeaseService) issueLease(ctx context.Context, req *model.AILeaseRequest
 		Status:               model.LeaseActive,
 		RenewalTokenHash:     security.HashToken(renewalToken),
 		RenewalTokenPrefix:   security.Prefix(renewalToken, 8),
+	}
+	return lease, renewalToken, nil
+}
+
+func (s *LeaseService) issueLease(ctx context.Context, req *model.AILeaseRequest, sourceIP, actorType, actorID string) (*LeaseRequestResult, error) {
+	lease, renewalToken, err := s.newLease(ctx, req)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.store.CreateLease(ctx, lease); err != nil {
 		return nil, err
@@ -293,7 +336,10 @@ func (s *LeaseService) ApproveLeaseRequest(ctx context.Context, id, adminID stri
 	req.Status = model.LeaseRequestApproved
 	req.DecisionReason = "approved by admin"
 	req.DecidedAt = &now
-	if err := s.store.UpdateLeaseRequest(ctx, req); err != nil {
+	if err := s.store.ApproveLeaseRequestIfPending(ctx, req); err != nil {
+		if errors.Is(err, store.ErrStateTransition) {
+			return nil, ErrTerminal
+		}
 		return nil, err
 	}
 	s.auditor.OK(ctx, AuditInput{
@@ -765,4 +811,149 @@ func (s *LeaseService) RevokeAll(ctx context.Context, nodeID, adminID, reason st
 		}
 	}
 	return count, nil
+}
+
+// AutoApprovalResult is returned when an admin approves a request and creates
+// a device-node auto-approval rule at the same time.
+type AutoApprovalResult struct {
+	AutoApproval *model.AIAutoApproval `json:"auto_approval"`
+	LeaseRequest *model.AILeaseRequest `json:"lease_request"`
+	Lease        *model.AILease        `json:"lease,omitempty"`
+}
+
+// validateAutoApprovalDays normalizes duration_days into a duration capped at
+// MaxAutoApprovalDays.
+func validateAutoApprovalDays(days int) (time.Duration, error) {
+	if days < 1 || days > MaxAutoApprovalDays {
+		return 0, fmt.Errorf("%w: duration_days must be between 1 and %d", ErrBadRequest, MaxAutoApprovalDays)
+	}
+	return time.Duration(days) * 24 * time.Hour, nil
+}
+
+// AutoApproveWithDuration approves a pending request and creates (or extends)
+// the device-node auto-approval rule atomically.
+func (s *LeaseService) AutoApproveWithDuration(ctx context.Context, requestID, adminID string, durationDays int) (*AutoApprovalResult, error) {
+	dur, err := validateAutoApprovalDays(durationDays)
+	if err != nil {
+		return nil, err
+	}
+	req, err := s.store.LeaseRequestByID(ctx, requestID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	if req.Status != model.LeaseRequestPending {
+		return nil, ErrTerminal
+	}
+	now := time.Now().UTC()
+	rule := &model.AIAutoApproval{
+		EnvironmentID:   s.envID,
+		AIAgentID:       req.AIAgentID,
+		AIAgentName:     req.AIAgentName,
+		NodeID:          req.NodeID,
+		SourceRequestID: req.ID,
+		CreatedBy:       adminID,
+		ExpiresAt:       now.Add(dur),
+	}
+	// Never silently shorten an existing exemption: extend from the later of
+	// now and the current expiry, still capped at now + MaxAutoApprovalDays.
+	if existing, err := s.store.AutoApprovalByAgentNode(ctx, s.envID, req.AIAgentID, req.NodeID); err == nil && existing != nil {
+		base := existing.ExpiresAt
+		if base.Before(now) {
+			base = now
+		}
+		capped := now.Add(time.Duration(MaxAutoApprovalDays) * 24 * time.Hour)
+		rule.ExpiresAt = base.Add(dur)
+		if rule.ExpiresAt.After(capped) {
+			rule.ExpiresAt = capped
+		}
+	}
+	req.Status = model.LeaseRequestApproved
+	req.DecisionReason = "auto-approved by admin with device-node rule"
+	req.DecidedAt = &now
+	lease, _, err := s.newLease(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.ApproveRequestWithAutoApproval(ctx, rule, req, lease); err != nil {
+		if errors.Is(err, store.ErrStateTransition) {
+			return nil, ErrTerminal
+		}
+		return nil, err
+	}
+	// Re-read so the response carries accurate timestamps for updates too.
+	if refreshed, err := s.store.AutoApprovalByID(ctx, rule.ID); err == nil && refreshed != nil {
+		rule = refreshed
+	}
+	_ = s.store.AppendLeaseEvent(ctx, &model.AILeaseEvent{
+		LeaseID: lease.ID, EventType: "issued", ActorType: model.ActorAdmin, ActorID: adminID,
+		DetailsJSON: `{"duration_seconds":` + itoa(req.RequestedDurationSeconds) + `,"expires_at":"` + lease.ExpiresAt.Format(time.RFC3339) + `","absolute_expires_at":"` + lease.AbsoluteExpiresAt.Format(time.RFC3339) + `"}`,
+	})
+	s.auditor.OK(ctx, AuditInput{
+		ActorType: model.ActorAdmin, ActorID: adminID, NodeID: req.NodeID, Action: "ai.lease_auto_approval_create",
+		ResourceType: "ai_auto_approval", ResourceID: rule.ID,
+		Summary: "device-node auto-approval rule created and request approved",
+		Details: map[string]any{"ai_agent_id": req.AIAgentID, "node_id": req.NodeID,
+			"duration_days": durationDays, "expires_at": rule.ExpiresAt,
+			"request_id": req.ID, "lease_id": lease.ID},
+		RiskLevel: RiskHigh,
+	})
+	s.auditor.OK(ctx, AuditInput{
+		ActorType: model.ActorSystem, NodeID: lease.NodeID, Action: "ai.lease_issued",
+		ResourceType: "ai_lease", ResourceID: lease.ID, LeaseID: lease.ID,
+		Summary: "AI lease issued (auto-approval rule)",
+		Details: map[string]any{"profile": lease.PermissionProfile, "expires_at": lease.ExpiresAt,
+			"absolute_expires_at": lease.AbsoluteExpiresAt, "public_key_fingerprint": lease.PublicKeyFingerprint,
+			"renewal_token_prefix": lease.RenewalTokenPrefix},
+		RiskLevel: riskForProfile(lease.PermissionProfile),
+	})
+	return &AutoApprovalResult{AutoApproval: rule, LeaseRequest: req, Lease: lease}, nil
+}
+
+// ListAutoApprovals lists device-node auto-approval rules.
+func (s *LeaseService) ListAutoApprovals(ctx context.Context, scopeNodeID, nodeID, status string, limit, offset int) ([]*model.AIAutoApproval, error) {
+	if scopeNodeID != "" {
+		return nil, ErrForbidden
+	}
+	return s.store.ListAutoApprovals(ctx, nodeID, status, limit, offset)
+}
+
+// ExtendAutoApproval extends an existing rule by durationDays, accumulating
+// from the current expiry but never beyond now + MaxAutoApprovalDays.
+func (s *LeaseService) ExtendAutoApproval(ctx context.Context, id, adminID string, durationDays int) (*model.AIAutoApproval, error) {
+	dur, err := validateAutoApprovalDays(durationDays)
+	if err != nil {
+		return nil, err
+	}
+	rule, err := s.store.AutoApprovalByID(ctx, id)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	oldExpiry := rule.ExpiresAt
+	now := time.Now().UTC()
+	base := oldExpiry
+	if base.Before(now) {
+		base = now
+	}
+	capped := now.Add(time.Duration(MaxAutoApprovalDays) * 24 * time.Hour)
+	newExpiry := base.Add(dur)
+	if newExpiry.After(capped) {
+		newExpiry = capped
+	}
+	if !newExpiry.After(oldExpiry) {
+		return nil, fmt.Errorf("%w: extension yields no additional time", ErrBadRequest)
+	}
+	rule.ExpiresAt = newExpiry
+	updated, err := s.store.UpsertAutoApproval(ctx, rule)
+	if err != nil {
+		return nil, err
+	}
+	s.auditor.OK(ctx, AuditInput{
+		ActorType: model.ActorAdmin, ActorID: adminID, NodeID: rule.NodeID, Action: "ai.auto_approval_extend",
+		ResourceType: "ai_auto_approval", ResourceID: rule.ID,
+		Summary: "device-node auto-approval rule extended",
+		Details: map[string]any{"ai_agent_id": rule.AIAgentID, "node_id": rule.NodeID,
+			"duration_days": durationDays, "old_expires_at": oldExpiry, "new_expires_at": newExpiry},
+		RiskLevel: RiskMedium,
+	})
+	return updated, nil
 }

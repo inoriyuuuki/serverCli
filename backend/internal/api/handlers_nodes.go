@@ -189,3 +189,18 @@ func parseOptionalBool(v string) *bool {
 }
 
 var _ = model.NodeStatusOnline
+
+func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ConfirmInstanceName string `json:"confirm_instance_name"`
+	}
+	if !decodeJSON(w, r, s.log, &req) {
+		return
+	}
+	admin := adminFrom(r.Context())
+	if err := s.nodes.DeleteNode(r.Context(), s.scope(), r.PathValue("id"), admin.ID, req.ConfirmInstanceName); err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

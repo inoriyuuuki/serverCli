@@ -153,6 +153,9 @@ func (s *Server) LeaseService() *service.LeaseService { return s.leases }
 // Store exposes the DB for the scheduler.
 func (s *Server) Store() *store.Store { return s.store }
 
+// TaskService exposes task operations for startup maintenance.
+func (s *Server) TaskService() *service.TaskService { return s.tasks }
+
 // Handler builds the full HTTP handler (API + static hosting).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -173,6 +176,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/nodes", s.requireAdmin(s.handleListNodes))
 	mux.HandleFunc("GET /api/v1/nodes/{id}", s.requireAdmin(s.handleGetNode))
 	mux.HandleFunc("PATCH /api/v1/nodes/{id}", s.requireAdmin(s.handlePatchNode))
+	mux.HandleFunc("DELETE /api/v1/nodes/{id}", s.requireAdmin(s.handleDeleteNode))
 	mux.HandleFunc("GET /api/v1/node-enrollments", s.requireAdmin(s.handleListEnrollments))
 	mux.HandleFunc("POST /api/v1/node-enrollments/{id}/approve", s.requireAdmin(s.handleApproveEnrollment))
 	mux.HandleFunc("POST /api/v1/node-enrollments/{id}/reject", s.requireAdmin(s.handleRejectEnrollment))
@@ -199,6 +203,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/agent/leases", s.agentAuth(s.handleAgentListLeases))
 	mux.HandleFunc("GET /api/v1/agent/lease-requests", s.agentAuth(s.handleAgentListLeaseRequests))
 	mux.HandleFunc("GET /api/v1/agent/audit-events", s.agentAuth(s.handleAgentListAuditEvents))
+	mux.HandleFunc("GET /api/v1/agent/task-parameter-histories", s.agentAuth(s.handleAgentListTaskParameterHistories))
+	mux.HandleFunc("DELETE /api/v1/agent/task-parameter-histories/{id}", s.agentAuth(s.handleAgentDeleteTaskParameterHistory))
 
 	// Commands discovery.
 	mux.HandleFunc("GET /api/v1/commands", s.requireAdmin(s.handleListCommands))
@@ -208,6 +214,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/tasks", s.requireAdmin(s.handleListTasks))
 	mux.HandleFunc("GET /api/v1/tasks/{id}", s.requireAdmin(s.handleGetTask))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/cancel", s.requireAdmin(s.handleCancelTask))
+	mux.HandleFunc("GET /api/v1/task-parameter-histories", s.requireAdmin(s.handleListTaskParameterHistories))
+	mux.HandleFunc("DELETE /api/v1/task-parameter-histories/{id}", s.requireAdmin(s.handleDeleteTaskParameterHistory))
 
 	// AI leases.
 	mux.HandleFunc("POST /api/v1/ai/lease-requests", s.handleCreateLeaseRequest)
@@ -215,6 +223,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/ai/leases/{id}/status", s.handleGetLeaseStatus)
 	mux.HandleFunc("GET /api/v1/ai/lease-requests", s.requireAdmin(s.handleListLeaseRequests))
 	mux.HandleFunc("POST /api/v1/ai/lease-requests/{id}/approve", s.requireAdmin(s.handleApproveLeaseRequest))
+	mux.HandleFunc("POST /api/v1/ai/lease-requests/{id}/auto-approval", s.requireAdmin(s.handleCreateAutoApproval))
+	mux.HandleFunc("GET /api/v1/ai/auto-approvals", s.requireAdmin(s.handleListAutoApprovals))
+	mux.HandleFunc("POST /api/v1/ai/auto-approvals/{id}/extend", s.requireAdmin(s.handleExtendAutoApproval))
 	mux.HandleFunc("POST /api/v1/ai/lease-requests/{id}/reject", s.requireAdmin(s.handleRejectLeaseRequest))
 	mux.HandleFunc("POST /api/v1/ai/leases/{id}/renew", s.handleLeaseRenew)
 	mux.HandleFunc("POST /api/v1/ai/leases/{id}/heartbeat", s.handleLeaseHeartbeat)

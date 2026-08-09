@@ -183,6 +183,9 @@ Agent 必须校验目标节点、签名、时间窗、命令版本和是否已�
 | `POST` | `/ai/leases/{id}/revoke` | 管理员撤销 |
 | `GET` | `/ai/leases` | 管理员/本机范围列表 |
 | `GET` | `/ai/lease-requests` | 申请历史 |
+| `POST` | `/ai/lease-requests/{id}/auto-approval` | 批准申请并创建/更新设备+节点免审批规则 `{duration_days:1..15}` |
+| `GET` | `/ai/auto-approvals` | 免审批规则列表（主） |
+| `POST` | `/ai/auto-approvals/{id}/extend` | 延长免审批 `{duration_days:1..15}` |
 | `PATCH` | `/settings/ai-access` | 全局/节点申请与续期开关 |
 
 申请示例：
@@ -216,3 +219,25 @@ Profile 映射到命令、sudoers、文件路径和网络访问白名单，而�
 - 节点凭证失败达到阈值后产生高风险审计，不自动永久封禁合法节点。
 - 所有错误响应不泄露节点密钥、用户存在性、内部路径和原始数据库错误。
 - 正式 API 可增加来源 IP 白名单、VPN 或零信任网关。
+
+## 12. 节点删除与历史参数 API
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `DELETE` | `/nodes/{id}` | 永久删除离线/停用的子节点 `{confirm_instance_name}`；主节点与在线节点拒绝 |
+| `GET` | `/task-parameter-histories` | 可复用参数历史（`node_id` 可重复、`command_id`、`command_version`、分页） |
+| `DELETE` | `/task-parameter-histories/{id}` | 删除一套可选参数记录（不影响原任务） |
+
+节点删除语义：
+
+- 仅主节点可执行；目标必须是 `role=child` 且状态为 `offline` 或 `disabled`。
+- 确认文本必须与节点不可变 `instance_name` 完全一致。
+- 单事务级联删除任务、Lease、SSH 会话、免审批规则、参数历史、命令、心跳、地址、注册申请及该节点审计；删除动作本身写入一条不绑定 `node_id` 的审计。
+- 删除后原节点凭证立即失效，重新上线需重新注册审批。
+
+参数历史语义：
+
+- 按 `节点 + command_id + command_version + 规范化参数哈希` 去重，重复执行累加 `use_count`。
+- 完整保存参数（含密码、Token 等敏感字段），仅管理员 API 可读取。
+- 删除只移除“一键回填”选项，不删除任务及其详情中的原始参数。
+- 子节点控制面通过 `childProxy` 将本机的参数历史 GET/DELETE 转发到主节点的 agent 自服务端点，读取主节点权威数据。

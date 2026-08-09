@@ -120,6 +120,15 @@ func (p *childProxy) matchPath(r *http.Request) (string, bool) {
 	if r.Method == http.MethodGet && len(rest) == 1 && rest[0] == "audit-events" {
 		return "/api/v1/agent/audit-events", true
 	}
+	if len(rest) >= 1 && rest[0] == "task-parameter-histories" {
+		switch {
+		case r.Method == http.MethodGet && len(rest) == 1:
+			return "/api/v1/agent/task-parameter-histories", true
+		case r.Method == http.MethodDelete && len(rest) == 2:
+			return "/api/v1/agent/task-parameter-histories/" + rest[1], true
+		}
+		return "", false
+	}
 	if r.Method == http.MethodPost && len(rest) == 3 && rest[0] == "nodes" && rest[2] == "tasks" {
 		// Only proxy self-execution for this child's own node id. A foreign id
 		// falls through so the local scoped handler returns 404.

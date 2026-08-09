@@ -106,6 +106,7 @@ SQLite 默认 `DATABASE_URL=file:<AGENT_STATE_DIR>/servercli.db`；PostgreSQL �
 | POST | `/api/v1/node-enrollments/{id}/reject` | 拒绝 `{review_note}` |
 | GET | `/api/v1/nodes/{node_id}/metrics` | 最近心跳/趋势 |
 | GET | `/api/v1/nodes/{node_id}/commands` | 命令清单 |
+| DELETE | `/api/v1/nodes/{node_id}` | 删除离线/停用子节点 `{confirm_instance_name}`（主 403/在线 409） |
 
 ### 4.4 Agent
 | 方法 | 路径 | 说明 |
@@ -119,6 +120,8 @@ SQLite 默认 `DATABASE_URL=file:<AGENT_STATE_DIR>/servercli.db`；PostgreSQL �
 | POST | `/api/v1/agent/tasks/{id}/events` | 上报任务事件 |
 | POST | `/api/v1/agent/tasks/{id}/result` | 上报最终结果 |
 | POST | `/api/v1/agent/leases/{id}/events` | 上报 Lease/SSH 会话事件 |
+| GET | `/api/v1/agent/task-parameter-histories` | 本机可复用参数历史（主节点权威数据） |
+| DELETE | `/api/v1/agent/task-parameter-histories/{id}` | 删除本机一条参数历史 |
 
 注册申请体：`{instance_request_id, hostname, requested_role, agent_version, os_name, os_version, arch, reported_addresses:[{address,address_type,service_port}], frontend_port, backend_port}`。
 Claim 体：`{enrollment_id, proof_signature, proof_timestamp, public_key}`；成功返回 `{node_id, node_credential, instance_name}`。
@@ -136,6 +139,8 @@ Heartbeat 体：`{hostname, agent_version, os_name, os_version, arch, addresses:
 | GET | `/api/v1/tasks` | 列表（主全局/子本机） |
 | GET | `/api/v1/tasks/{task_id}` | 详情+事件+输出 |
 | POST | `/api/v1/tasks/{task_id}/cancel` | 取消 |
+| GET | `/api/v1/task-parameter-histories` | 可复用参数历史（`node_id` 可重复 + `command_id`/`command_version`） |
+| DELETE | `/api/v1/task-parameter-histories/{id}` | 删除一套可选参数（不影响原任务） |
 
 创建体：`{command_id, command_version, arguments, timeout_seconds}`；响应 `{task:{id,status,node_id,created_at}}`。
 
@@ -158,6 +163,9 @@ Result 体：`{status:"succeeded|failed|timed_out|cancelled|result_unknown", std
 | POST | `/api/v1/ai/leases/{id}/revoke` | 管理员撤销 `{reason, terminate_sessions}` |
 | GET | `/api/v1/ai/leases` | 列表 |
 | GET | `/api/v1/ai/lease-requests` | 申请历史 |
+| POST | `/api/v1/ai/lease-requests/{id}/auto-approval` | 批准并创建/更新设备+节点免审批 `{duration_days:1..15}` |
+| GET | `/api/v1/ai/auto-approvals` | 免审批规则列表（主） |
+| POST | `/api/v1/ai/auto-approvals/{id}/extend` | 延长免审批 `{duration_days:1..15}`（累计上限 15 天） |
 | PATCH | `/api/v1/settings/ai-access` | 开关 `{new_requests_enabled, renewals_enabled, scope:"global"|node_id}` |
 
 申请体：`{node_selector, public_key, permission_profile:"read-only|operator|admin", requested_duration_seconds, purpose, client_request_id}`。

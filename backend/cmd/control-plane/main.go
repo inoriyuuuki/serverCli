@@ -128,6 +128,14 @@ func run() error {
 		return fmt.Errorf("build server: %w", err)
 	}
 
+	// One-time backfill of reusable task parameter history from existing task
+	// records (primary only; child planes proxy self-view to the primary).
+	if cfg.NodeRole == "primary" {
+		if err := srv.TaskService().BackfillParameterHistories(ctx); err != nil {
+			log.Warn("task parameter history backfill failed", "error", err)
+		}
+	}
+
 	// Child control planes re-read the local agent identity so the restricted
 	// API scope appears once the agent claims a node_id (no restart needed).
 	if cfg.NodeRole == "child" {

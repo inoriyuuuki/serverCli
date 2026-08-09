@@ -72,3 +72,33 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"task": t})
 }
+
+func (s *Server) handleListTaskParameterHistories(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	nodeIDs := q["node_id"]
+	if s.scope() != "" {
+		for _, id := range nodeIDs {
+			if id != "" && id != s.scope() {
+				writeError(w, r, s.log, http.StatusNotFound, "NOT_FOUND", "node not found", nil)
+				return
+			}
+		}
+	}
+	histories, err := s.tasks.ListParameterHistories(r.Context(), s.scope(), nodeIDs, q.Get("command_id"), q.Get("command_version"), limit, offset)
+	if err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"histories": histories})
+}
+
+func (s *Server) handleDeleteTaskParameterHistory(w http.ResponseWriter, r *http.Request) {
+	admin := adminFrom(r.Context())
+	if err := s.tasks.DeleteParameterHistory(r.Context(), s.scope(), r.PathValue("id"), admin.ID); err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

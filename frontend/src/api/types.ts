@@ -186,6 +186,36 @@ export interface AiLease {
   [key: string]: unknown;
 }
 
+export interface AiAutoApproval {
+  id: string;
+  ai_agent_id?: string;
+  ai_agent_name?: string | null;
+  node_id?: string;
+  node?: { id?: string; name?: string; alias?: string; instance_name?: string; hostname?: string } | null;
+  node_name?: string;
+  source_request_id?: string | null;
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  expires_at?: string;
+  [key: string]: unknown;
+}
+
+export interface TaskParameterHistory {
+  id: string;
+  node_id?: string;
+  node?: { id?: string; name?: string; alias?: string; instance_name?: string; hostname?: string } | null;
+  node_name?: string;
+  command_id?: string;
+  command_version?: string;
+  arguments?: Record<string, unknown>;
+  last_task_id?: string | null;
+  first_used_at?: string;
+  last_used_at?: string;
+  use_count?: number;
+  [key: string]: unknown;
+}
+
 export interface AiLeaseRequest {
   id: string;
   client_request_id?: string;

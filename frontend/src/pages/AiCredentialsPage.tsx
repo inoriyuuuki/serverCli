@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { useSession } from '../auth/AuthContext';
 import { useApi, errorMessage } from '../lib/useApi';
 import { api, unwrapList, unwrapObject, ApiError } from '../api/client';
-import type { AiLease, AiLeaseRequest, NodeInfo } from '../api/types';
+import type { AiAutoApproval, AiLease, AiLeaseRequest, NodeInfo } from '../api/types';
 import {
   Badge,
   Card,
@@ -22,7 +22,7 @@ import {
 import { nodeName } from '../components/NodeInfo';
 import { cn, remainingText, shortId } from '../lib/format';
 
-type TabKey = 'active' | 'requests' | 'policy';
+type TabKey = 'active' | 'requests' | 'auto' | 'policy';
 
 export default function AiCredentialsPage() {
   const session = useSession();
@@ -33,11 +33,13 @@ export default function AiCredentialsPage() {
 
   const leasesState = useApi<unknown>('/ai/leases', { query: { limit: 100 } });
   const requestsState = useApi<unknown>('/ai/lease-requests', { query: { limit: 100 } });
+  const autoApprovalsState = useApi<unknown>(isPrimary ? '/ai/auto-approvals' : null, { query: { limit: 100 } });
   const settingsState = useApi<unknown>('/settings');
   const nodesState = useApi<unknown>(isPrimary ? '/nodes' : null);
 
   const leases = useMemo(() => unwrapList<AiLease>(leasesState.data, ['leases']), [leasesState.data]);
   const requests = useMemo(() => unwrapList<AiLeaseRequest>(requestsState.data, ['requests', 'lease_requests']), [requestsState.data]);
+  const autoApprovals = useMemo(() => unwrapList<AiAutoApproval>(autoApprovalsState.data, ['auto_approvals']), [autoApprovalsState.data]);
   const settings = useMemo(() => unwrapObject<Record<string, unknown>>(settingsState.data, ['settings']), [settingsState.data]);
   const nodes = useMemo(() => unwrapList<NodeInfo>(nodesState.data, ['nodes']), [nodesState.data]);
 
@@ -48,6 +50,65 @@ export default function AiCredentialsPage() {
   const [revokeError, setRevokeError] = useState<string | null>(null);
 
   const [opError, setOpError] = useState<string | null>(null);
+
+  const [autoTarget, setAutoTarget] = useState<AiLeaseRequest | null>(null);
+  const [autoDays, setAutoDays] = useState(1);
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [autoError, setAutoError] = useState<string | null>(null);
+
+  const [extendTarget, setExtendTarget] = useState<AiAutoApproval | null>(null);
+  const [extendDays, setExtendDays] = useState(1);
+  const [extendBusy, setExtendBusy] = useState(false);
+  const [extendError, setExtendError] = useState<string | null>(null);
+
+  const openAutoApproval = (r: AiLeaseRequest) => {
+    setAutoTarget(r);
+    setAutoDays(1);
+    setAutoError(null);
+  };
+
+  const submitAutoApproval = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!autoTarget) return;
+    setAutoBusy(true);
+    setAutoError(null);
+    try {
+      await api.post(`/ai/lease-requests/${autoTarget.id}/auto-approval`, { duration_days: autoDays });
+      setAutoTarget(null);
+      requestsState.reload();
+      autoApprovalsState.reload();
+      leasesState.reload(); // 该操作会同时签发新 Lease
+    } catch (err) {
+      setAutoError(err instanceof ApiError && err.code === 'TERMINAL_STATE' ? '该申请已被处理，无需重复操作（列表已刷新）' : err instanceof ApiError ? err.message : '操作失败，请重试');
+      requestsState.reload();
+      autoApprovalsState.reload();
+    } finally {
+      setAutoBusy(false);
+    }
+  };
+
+  const openExtend = (r: AiAutoApproval) => {
+    setExtendTarget(r);
+    setExtendDays(1);
+    setExtendError(null);
+  };
+
+  const submitExtend = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!extendTarget) return;
+    setExtendBusy(true);
+    setExtendError(null);
+    try {
+      await api.post(`/ai/auto-approvals/${extendTarget.id}/extend`, { duration_days: extendDays });
+      setExtendTarget(null);
+      autoApprovalsState.reload();
+    } catch (err) {
+      setExtendError(err instanceof ApiError ? err.message : '操作失败，请重试');
+      autoApprovalsState.reload();
+    } finally {
+      setExtendBusy(false);
+    }
+  };
 
   const openRevoke = (lease: AiLease) => {
     setRevokeTarget(lease);
@@ -104,8 +165,9 @@ export default function AiCredentialsPage() {
     () => ({
       active: leases.filter((l) => l.status === 'active').length,
       requests: requests.length,
+      auto: autoApprovals.filter((r) => new Date(r.expires_at ?? '').getTime() > Date.now()).length,
     }),
-    [leases, requests],
+    [leases, requests, autoApprovals],
   );
 
   return (
@@ -117,6 +179,7 @@ export default function AiCredentialsPage() {
         tabs={[
           { key: 'active', label: '活动凭证', count: tabCounts.active },
           { key: 'requests', label: '申请记录', count: tabCounts.requests },
+          ...(isPrimary ? [{ key: 'auto' as TabKey, label: '自动免审批', count: tabCounts.auto }] : []),
           { key: 'policy', label: '控制策略' },
         ]}
         active={tab}
@@ -134,7 +197,11 @@ export default function AiCredentialsPage() {
       )}
 
       {tab === 'requests' && (
-        <RequestsTab requests={requests} state={requestsState} isProd={isProd} />
+        <RequestsTab requests={requests} state={requestsState} isProd={isProd} isPrimary={isPrimary} onAutoApproval={openAutoApproval} />
+      )}
+
+      {tab === 'auto' && isPrimary && (
+        <AutoApprovalsTab rules={autoApprovals} state={autoApprovalsState} nodes={nodes} isProd={isProd} onExtend={openExtend} />
       )}
 
       {tab === 'policy' && (
@@ -189,6 +256,91 @@ export default function AiCredentialsPage() {
               </button>
               <button type="submit" className="btn btn-danger" disabled={revokeBusy || !revokeReason.trim()}>
                 {revokeBusy ? '提交中…' : '确认撤销'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      <Modal open={autoTarget !== null} title="批准并设置自动免审批" onClose={() => setAutoTarget(null)} width={520}>
+        {autoTarget && (
+          <form onSubmit={submitAutoApproval}>
+            <div className="kv" style={{ marginBottom: 14 }}>
+              <dt>申请</dt>
+              <dd className="mono">{autoTarget.id}</dd>
+              <dt>AI</dt>
+              <dd>{autoTarget.ai_agent_name || autoTarget.ai_agent_id || '—'}</dd>
+              <dt>节点</dt>
+              <dd>{autoTarget.node_name || autoTarget.node_id || '—'}</dd>
+              <dt>权限</dt>
+              <dd><ProfileBadge profile={autoTarget.requested_profile ?? autoTarget.permission_profile} /></dd>
+            </div>
+            <label className="field">
+              <span className="field-label">免审批天数 <em className="req">*</em></span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={15}
+                value={autoDays}
+                onChange={(e) => setAutoDays(Number(e.target.value))}
+                required
+              />
+              <span className="field-hint">
+                1–15 天。该设备（{autoTarget.ai_agent_id}）访问此节点的所有权限申请（包括 admin）将自动批准，最长不超过操作时刻后的 15 天。
+              </span>
+            </label>
+            {isProd && (
+              <div className="alert alert-danger" role="alert">
+                ⚠️ <strong>正式环境</strong>：规则立即生效并写入正式环境审计。
+              </div>
+            )}
+            {autoError && <div className="alert alert-danger">{autoError}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={() => setAutoTarget(null)} disabled={autoBusy}>
+                取消
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={autoBusy || autoDays < 1 || autoDays > 15}>
+                {autoBusy ? '提交中…' : '确认批准并免审批'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      <Modal open={extendTarget !== null} title="延长自动免审批" onClose={() => setExtendTarget(null)} width={520}>
+        {extendTarget && (
+          <form onSubmit={submitExtend}>
+            <div className="kv" style={{ marginBottom: 14 }}>
+              <dt>设备</dt>
+              <dd>{extendTarget.ai_agent_name || extendTarget.ai_agent_id || '—'}</dd>
+              <dt>节点</dt>
+              <dd>{nodeName(nodes.find((n) => (n.id ?? n.node_id) === extendTarget.node_id) ?? null)}</dd>
+              <dt>当前到期</dt>
+              <dd><TimeCell value={extendTarget.expires_at} /></dd>
+            </div>
+            <label className="field">
+              <span className="field-label">延长天数 <em className="req">*</em></span>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={15}
+                value={extendDays}
+                onChange={(e) => setExtendDays(Number(e.target.value))}
+                required
+              />
+              <span className="field-hint">
+                从当前到期时间累加，最终不超过操作时刻后的 15 天；已过期的规则将从当前时间重新起算。
+              </span>
+            </label>
+            {extendError && <div className="alert alert-danger">{extendError}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={() => setExtendTarget(null)} disabled={extendBusy}>
+                取消
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={extendBusy || extendDays < 1 || extendDays > 15}>
+                {extendBusy ? '提交中…' : '确认延长'}
               </button>
             </div>
           </form>
@@ -293,10 +445,14 @@ function RequestsTab({
   requests,
   state,
   isProd,
+  isPrimary,
+  onAutoApproval,
 }: {
   requests: AiLeaseRequest[];
   state: { loading: boolean; error: ApiError | null; reload: () => void; data: unknown };
   isProd?: boolean;
+  isPrimary?: boolean;
+  onAutoApproval: (r: AiLeaseRequest) => void;
 }) {
   const confirm = useConfirm();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -422,6 +578,11 @@ function RequestsTab({
                     <div className="btn-row">
                       {r.status === 'pending' ? (
                         <>
+                          {isPrimary && (
+                            <button className="btn btn-sm btn-ghost" disabled={busyId === r.id} onClick={() => onAutoApproval(r)}>
+                              批准并免审批
+                            </button>
+                          )}
                           <button className="btn btn-sm btn-primary" disabled={busyId === r.id} onClick={() => approve(r)}>
                             {busyId === r.id ? '处理中…' : '批准'}
                           </button>
@@ -437,6 +598,93 @@ function RequestsTab({
                 )}
               </tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+/* ------------------------------ 自动免审批 ------------------------------ */
+
+function AutoApprovalsTab({
+  rules,
+  state,
+  nodes,
+  isProd,
+  onExtend,
+}: {
+  rules: AiAutoApproval[];
+  state: { loading: boolean; error: ApiError | null; reload: () => void; data: unknown };
+  nodes: NodeInfo[];
+  isProd?: boolean;
+  onExtend: (r: AiAutoApproval) => void;
+}) {
+  if (state.loading && state.data === null) return <Card><LoadingState label="加载自动免审批…" /></Card>;
+  if (state.error) return <Card><ErrorState message={errorMessage(state.error)} onRetry={state.reload} /></Card>;
+  if (rules.length === 0) {
+    return (
+      <Card title="自动免审批" actions={<button className="btn btn-ghost btn-sm" onClick={state.reload}>刷新</button>}>
+        <EmptyState
+          title="暂无自动免审批规则"
+          hint="在「申请记录」中对待审批申请执行“批准并免审批”，即可为设备+节点创建免审批规则。"
+        />
+      </Card>
+    );
+  }
+  return (
+    <Card title="自动免审批" actions={<button className="btn btn-ghost btn-sm" onClick={state.reload}>刷新</button>}>
+      {isProd && (
+        <div className="alert alert-warn" role="alert">
+          命中规则的申请（包括 admin 权限）将自动批准并写入正式环境审计。
+        </div>
+      )}
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>设备</th>
+              <th>节点</th>
+              <th>来源申请</th>
+              <th>创建人</th>
+              <th>创建时间</th>
+              <th>到期时间</th>
+              <th>剩余</th>
+              <th>状态</th>
+              <th style={{ width: 80 }}>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rules.map((r) => {
+              const rem = remainingText(r.expires_at);
+              const active = rem.kind !== 'over';
+              return (
+                <tr key={r.id}>
+                  <td>
+                    {r.ai_agent_name || '—'}
+                    <div className="muted mono" style={{ fontSize: 12 }}>{r.ai_agent_id || ''}</div>
+                  </td>
+                  <td>{nodeName(nodes.find((n) => (n.id ?? n.node_id) === r.node_id) ?? null) || r.node_id || '—'}</td>
+                  <td className="mono-cell" title={r.source_request_id || ''}>
+                    {r.source_request_id ? shortId(r.source_request_id) : '—'}
+                  </td>
+                  <td>{r.created_by || '—'}</td>
+                  <td><TimeCell value={r.created_at} /></td>
+                  <td><TimeCell value={r.expires_at} /></td>
+                  <td>
+                    <span className={rem.kind === 'warn' ? 'text-danger' : rem.kind === 'ok' ? 'text-success' : undefined}>
+                      {rem.text}
+                    </span>
+                  </td>
+                  <td>{active ? <Badge tone="teal">有效</Badge> : <Badge tone="gray">已过期</Badge>}</td>
+                  <td>
+                    <button className="btn btn-ghost btn-sm" onClick={() => onExtend(r)}>
+                      延长
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

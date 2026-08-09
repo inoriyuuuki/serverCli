@@ -91,6 +91,23 @@ func (s *Store) UpdateLeaseRequest(ctx context.Context, r *model.AILeaseRequest)
 	return err
 }
 
+// ApproveLeaseRequestIfPending persists an approval only while the request is
+// still pending; it returns ErrStateTransition otherwise. This guards against
+// concurrent double-approval issuing two leases for one request.
+func (s *Store) ApproveLeaseRequestIfPending(ctx context.Context, r *model.AILeaseRequest) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE ai_lease_request SET
+		status=$1, decision_reason=$2, decided_at=$3 WHERE id=$4 AND status=$5`,
+		r.Status, r.DecisionReason, nullTime(r.DecidedAt), r.ID, model.LeaseRequestPending)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrStateTransition
+	}
+	return nil
+}
+
 // ListLeaseRequests returns requests with filters, newest first.
 func (s *Store) ListLeaseRequests(ctx context.Context, nodeID, status string, limit, offset int) ([]*model.AILeaseRequest, error) {
 	q := `SELECT ` + leaseRequestColumns + ` FROM ai_lease_request`
@@ -440,4 +457,63 @@ func scanSSHSession(row interface{ Scan(...any) error }) (*model.AISSHSession, e
 		return nil, err
 	}
 	return &s, nil
+}
+
+// ApproveRequestWithAutoApproval atomically upserts an auto-approval rule,
+// marks the lease request approved (guarded on pending), and creates the
+// lease in a single transaction so a partial failure cannot leave
+// rule/request/lease out of sync, and a concurrent double-approval cannot
+// issue two leases for one request. The caller fills in IDs and timestamps;
+// created timestamps are set here for the rule and lease.
+func (s *Store) ApproveRequestWithAutoApproval(ctx context.Context, a *model.AIAutoApproval, req *model.AILeaseRequest, lease *model.AILease) error {
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		tsx := s.Tx(tx)
+		nowT := now()
+
+		// Upsert auto-approval rule (keep existing id on update).
+		if _, err := tsx.exec(ctx, `INSERT INTO ai_auto_approval
+			(id, environment_id, ai_agent_id, ai_agent_name, node_id, source_request_id,
+			 created_by, created_at, updated_at, expires_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			ON CONFLICT(environment_id, ai_agent_id, node_id) DO UPDATE SET
+				ai_agent_name=$4, source_request_id=$6, updated_at=$9, expires_at=$10`,
+			model.NewUUID(), a.EnvironmentID, a.AIAgentID, a.AIAgentName, a.NodeID, a.SourceRequestID,
+			a.CreatedBy, ts(nowT), ts(nowT), ts(a.ExpiresAt)); err != nil {
+			return err
+		}
+		if err := tsx.queryRow(ctx, `SELECT id FROM ai_auto_approval
+			WHERE environment_id=$1 AND ai_agent_id=$2 AND node_id=$3`,
+			a.EnvironmentID, a.AIAgentID, a.NodeID).Scan(&a.ID); err != nil {
+			return err
+		}
+
+		// Approve the request, only while it is still pending. A concurrent
+		// approval (admin or AI replay) loses the race and rolls back.
+		res, err := tsx.exec(ctx, `UPDATE ai_lease_request SET
+			status=$1, decision_reason=$2, decided_at=$3 WHERE id=$4 AND status=$5`,
+			req.Status, req.DecisionReason, nullTime(req.DecidedAt), req.ID, model.LeaseRequestPending)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return ErrStateTransition
+		}
+
+		// Create the lease.
+		lease.ID = model.NewUUID()
+		lease.IssuedAt = nowT
+		lease.Status = model.LeaseActive
+		_, err = tsx.exec(ctx, `INSERT INTO ai_lease
+			(id, request_id, node_id, ai_agent_id, permission_profile, public_key, public_key_fingerprint,
+			 issued_at, expires_at, absolute_expires_at, last_renewed_at, renew_count, status, revoked_at, revoke_reason,
+			 renewal_disabled, renewal_token_hash, renewal_token_prefix, active_session_count, last_heartbeat_at,
+			 key_installed, key_installed_at, is_protected, protected_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+			lease.ID, lease.RequestID, lease.NodeID, lease.AIAgentID, lease.PermissionProfile, lease.PublicKey, lease.PublicKeyFingerprint,
+			ts(lease.IssuedAt), ts(lease.ExpiresAt), ts(lease.AbsoluteExpiresAt), nullTime(lease.LastRenewedAt), lease.RenewCount, lease.Status, nullTime(lease.RevokedAt), lease.RevokeReason,
+			boolInt(lease.RenewalDisabled), lease.RenewalTokenHash, lease.RenewalTokenPrefix, lease.ActiveSessionCount, nullTime(lease.LastHeartbeatAt),
+			boolInt(lease.KeyInstalled), nullTime(lease.KeyInstalledAt), boolInt(lease.IsProtected), nullTime(lease.ProtectedAt))
+		return err
+	})
 }

@@ -113,6 +113,11 @@ func (s *TaskService) CreateTask(ctx context.Context, nodeID, requestedBy, actor
 	if err := s.store.CreateTask(ctx, t); err != nil {
 		return nil, err
 	}
+	if err := s.store.RecordTaskParameterUsage(ctx, t.NodeID, t.CommandID, t.CommandVersion, t.ArgumentsJSON, "", t.ID); err != nil {
+		// History is a convenience feature; a recording failure must not
+		// block task creation.
+		s.log.Warn("record task parameter history failed", "task_id", t.ID, "error", err)
+	}
 	s.auditor.OK(ctx, AuditInput{
 		ActorType: actorType, ActorID: requestedBy, NodeID: nodeID, Action: "task.create",
 		ResourceType: "task", ResourceID: t.ID, TaskID: t.ID,
@@ -474,4 +479,53 @@ func (d *Dispatcher) Wait(nodeID string, timeout time.Duration) {
 	case <-ch:
 	case <-timer.C:
 	}
+}
+
+// ListParameterHistories lists reusable parameter sets for commands within
+// scope. nodeIDs may be empty (all nodes) on the primary.
+func (s *TaskService) ListParameterHistories(ctx context.Context, scopeNodeID string, nodeIDs []string, commandID, commandVersion string, limit, offset int) ([]*model.TaskParameterHistory, error) {
+	if scopeNodeID != "" {
+		nodeIDs = []string{scopeNodeID}
+	}
+	return s.store.ListTaskParameterHistories(ctx, nodeIDs, commandID, commandVersion, limit, offset)
+}
+
+// DeleteParameterHistory removes one reusable parameter set. The original
+// task records are untouched.
+func (s *TaskService) DeleteParameterHistory(ctx context.Context, scopeNodeID, id, adminID string) error {
+	p, err := s.store.TaskParameterHistoryByID(ctx, id)
+	if err != nil {
+		return ErrNotFound
+	}
+	if scopeNodeID != "" && scopeNodeID != p.NodeID {
+		return ErrNotFound
+	}
+	if err := s.store.DeleteTaskParameterHistory(ctx, id); err != nil {
+		return err
+	}
+	s.auditor.OK(ctx, AuditInput{
+		ActorType: model.ActorAdmin, ActorID: adminID, NodeID: p.NodeID, Action: "task.parameter_history_delete",
+		ResourceType: "task_parameter_history", ResourceID: p.ID, Summary: "task parameter history deleted",
+		Details: map[string]any{"command_id": p.CommandID, "command_version": p.CommandVersion},
+	})
+	return nil
+}
+
+// BackfillParameterHistories computes parameter history from existing tasks
+// once, then records a marker so the one-time scan does not repeat on every
+// startup. It is safe to call concurrently; the marker makes it a no-op after
+// the first successful run.
+func (s *TaskService) BackfillParameterHistories(ctx context.Context) error {
+	if v, err := s.store.Setting(ctx, KeyTaskParamBackfilled); err == nil && v == "1" {
+		return nil
+	}
+	n, err := s.store.BackfillTaskParameterHistories(ctx)
+	if err != nil {
+		return err
+	}
+	if err := s.store.SetSetting(ctx, KeyTaskParamBackfilled, "1"); err != nil {
+		return err
+	}
+	s.log.Info("task parameter history backfill complete", "entries", n)
+	return nil
 }

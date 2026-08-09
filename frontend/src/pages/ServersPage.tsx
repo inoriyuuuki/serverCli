@@ -41,6 +41,44 @@ export default function ServersPage() {
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
+  const [deleteTarget, setDeleteTarget] = useState<NodeInfo | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const openDelete = (n: NodeInfo) => {
+    setDeleteTarget(n);
+    setDeleteConfirm('');
+    setDeleteError(null);
+  };
+
+  const submitDelete = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!deleteTarget) return;
+    // 纵深防御：即使按钮 disabled 被绕过，也不允许向后端发送不匹配的确认名。
+    if (deleteConfirm.trim() !== (deleteTarget.instance_name ?? '')) {
+      setDeleteError('确认文本与节点实例名不一致');
+      return;
+    }
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await api.delete(`/nodes/${deleteTarget.id ?? deleteTarget.node_id}`, {
+        body: { confirm_instance_name: deleteConfirm.trim() },
+      });
+      setDeleteTarget(null);
+      nodesState.reload();
+      enrollState.reload();
+    } catch (err) {
+      setDeleteError(err instanceof ApiError ? err.message : '删除失败，请重试');
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  const canDelete = (n: NodeInfo) =>
+    n.role === 'child' && (n.status === 'offline' || n.status === 'disabled');
+
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
     return nodes.filter((n) => {
@@ -189,6 +227,7 @@ export default function ServersPage() {
                   <th>版本</th>
                   <th>最近心跳</th>
                   <th>资源摘要</th>
+                  <th style={{ width: 90 }}>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -232,6 +271,15 @@ export default function ServersPage() {
                         <div className="muted mono" style={{ fontSize: 12 }}>
                           负载 {hb.load_1 ?? '—'}/{hb.load_5 ?? '—'}/{hb.load_15 ?? '—'}
                         </div>
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        {canDelete(n) ? (
+                          <button className="btn btn-danger btn-sm" onClick={() => openDelete(n)}>
+                            删除
+                          </button>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
                       </td>
                     </tr>
                   );
@@ -282,6 +330,55 @@ export default function ServersPage() {
               </button>
               <button type="submit" className={cn('btn', reviewAction === 'approve' ? 'btn-primary' : 'btn-danger')} disabled={reviewBusy}>
                 {reviewBusy ? '提交中…' : reviewAction === 'approve' ? '确认批准' : '确认拒绝'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      <Modal open={deleteTarget !== null} title="永久删除服务器节点" onClose={() => setDeleteTarget(null)} width={520}>
+        {deleteTarget && (
+          <form onSubmit={submitDelete}>
+            <div className="kv" style={{ marginBottom: 14 }}>
+              <dt>节点</dt>
+              <dd>{nodeName(deleteTarget)}</dd>
+              <dt>实例名</dt>
+              <dd className="mono">{deleteTarget.instance_name || deleteTarget.id || deleteTarget.node_id || '—'}</dd>
+              <dt>角色</dt>
+              <dd>子节点</dd>
+              <dt>状态</dt>
+              <dd><StatusBadge status={deleteTarget.status} /></dd>
+            </div>
+            <div className="alert alert-danger" role="alert">
+              ⚠️ 此操作<strong>不可恢复</strong>：该节点的任务、Lease、自动免审批规则、参数历史、指标与审计记录将被<strong>永久删除</strong>。删除后原节点凭证立即失效，重新上线需重新注册审批。
+            </div>
+            {isProd && (
+              <div className="alert alert-danger" role="alert">
+                ⚠️ <strong>正式环境</strong>：删除将立即生效并写入正式环境审计。
+              </div>
+            )}
+            <label className="field">
+              <span className="field-label">
+                输入节点实例名以确认 <em className="req">*</em>
+              </span>
+              <TextInput
+                placeholder={deleteTarget.instance_name || '请输入节点实例名'}
+                value={deleteConfirm}
+                onChange={(e) => setDeleteConfirm(e.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            {deleteError && <div className="alert alert-danger">{deleteError}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={() => setDeleteTarget(null)} disabled={deleteBusy}>
+                取消
+              </button>
+              <button
+                type="submit"
+                className="btn btn-danger"
+                disabled={deleteBusy || deleteConfirm.trim() !== (deleteTarget.instance_name ?? '')}
+              >
+                {deleteBusy ? '删除中…' : '确认永久删除'}
               </button>
             </div>
           </form>

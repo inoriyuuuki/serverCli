@@ -29,6 +29,8 @@ erDiagram
     AI_LEASE ||--o{ AI_SSH_SESSION : opens
     AI_LEASE ||--o{ AI_LEASE_EVENT : changes
     AUDIT_EVENT }o--|| NODE : concerns
+    NODE ||--o{ AI_AUTO_APPROVAL : approves
+    NODE ||--o{ TASK_PARAMETER_HISTORY : reuses
 ```
 
 ## 3. 表设计草案
@@ -278,6 +280,26 @@ Secret 使用外部配置，不写该表。
 - `candidate_count/deleted_count/skipped_protected_count`
 - `status/error_message`
 - `requested_by`
+
+### 3.18 `ai_auto_approval`
+
+- `id`、`environment_id`
+- `ai_agent_id` / `ai_agent_name`：设备身份（沿用 Lease 申请的 `ai_agent_id`）
+- `node_id`：免审批目标节点
+- `source_request_id`：创建该规则时的来源申请
+- `created_by`、`created_at`、`updated_at`
+- `expires_at`：到期时间
+- 唯一约束 `(environment_id, ai_agent_id, node_id)`：同一设备访问同一节点只保留一条规则，延长/重新创建时更新到期时间
+- 有效期上限 15 天；延长从当前到期时间累加但不超过“操作时刻 + 15 天”
+
+### 3.19 `task_parameter_history`
+
+- `id`、`node_id`、`command_id`、`command_version`
+- `arguments_json`：完整参数（含敏感字段，仅管理员接口返回）
+- `arguments_hash`：规范化参数 JSON 的 SHA-256
+- `last_task_id`、`first_used_at`、`last_used_at`、`use_count`
+- 唯一约束 `(node_id, command_id, command_version, arguments_hash)`；重复使用只累加次数
+- 任务入队后写入；空参数不记录；删除节点时随节点级联删除
 
 ## 4. 状态机
 

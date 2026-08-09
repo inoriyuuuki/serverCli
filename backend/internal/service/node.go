@@ -755,3 +755,45 @@ func (s *NodeService) CredentialForNode(ctx context.Context, nodeID string) (str
 	}
 	return credentialFor(s.claimTokenFor(e.ID)), nil
 }
+
+// DeleteNode permanently deletes an offline or disabled child node together
+// with all of its associated data. The admin must confirm the node's
+// immutable instance_name exactly. The primary node can never be deleted and
+// online nodes must be stopped/disabled first.
+func (s *NodeService) DeleteNode(ctx context.Context, scopeNodeID, id, adminID, confirmInstanceName string) error {
+	if scopeNodeID != "" || s.cfg.NodeRole != "primary" {
+		return ErrForbidden
+	}
+	n, err := s.store.NodeByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if n.Role == "primary" {
+		return ErrForbidden
+	}
+	if n.Status != model.NodeStatusOffline && n.Status != model.NodeStatusDisabled {
+		return ErrConflict
+	}
+	if confirmInstanceName == "" || confirmInstanceName != n.InstanceName {
+		return ErrBadRequest
+	}
+	if err := s.store.DeleteNodeCascade(ctx, n.ID); err != nil {
+		if errors.Is(err, store.ErrStateTransition) {
+			return ErrConflict
+		}
+		return err
+	}
+	// Recorded after the transaction so it survives the cascade (node_id is
+	// intentionally empty; the deleted identity lives in the details).
+	s.auditor.OK(ctx, AuditInput{
+		ActorType: model.ActorAdmin, ActorID: adminID, Action: "node.delete",
+		ResourceType: "node", ResourceID: n.ID,
+		Summary:   "node permanently deleted with all data",
+		Details:   map[string]any{"node_id": n.ID, "instance_name": n.InstanceName, "role": n.Role},
+		RiskLevel: RiskCritical,
+	})
+	return nil
+}

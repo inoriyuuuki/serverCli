@@ -457,3 +457,17 @@ table.table {
   transition: transform 0.15s;
 }
 .switch-on .switch-knob { transform: translateX(18px); }
+
+/* Command center: multi-node selection + reusable parameter history. */
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.param-history-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}

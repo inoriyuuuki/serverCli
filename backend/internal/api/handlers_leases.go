@@ -271,3 +271,68 @@ func (s *Server) handleGetLeaseStatus(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 }
+
+// handleCreateAutoApproval approves a pending request and creates (or
+// extends) the device-node auto-approval rule in one atomic operation.
+func (s *Server) handleCreateAutoApproval(w http.ResponseWriter, r *http.Request) {
+	if s.scope() != "" {
+		writeError(w, r, s.log, http.StatusForbidden, "FORBIDDEN", "auto-approval rules are managed by the primary node", nil)
+		return
+	}
+	var req struct {
+		DurationDays int `json:"duration_days"`
+	}
+	if !decodeJSON(w, r, s.log, &req) {
+		return
+	}
+	admin := adminFrom(r.Context())
+	res, err := s.leases.AutoApproveWithDuration(r.Context(), r.PathValue("id"), admin.ID, req.DurationDays)
+	if err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	out := map[string]any{
+		"auto_approval": res.AutoApproval,
+		"lease_request": res.LeaseRequest,
+	}
+	if res.Lease != nil {
+		out["lease"] = res.Lease
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleListAutoApprovals(w http.ResponseWriter, r *http.Request) {
+	if s.scope() != "" {
+		writeError(w, r, s.log, http.StatusForbidden, "FORBIDDEN", "auto-approval rules are managed by the primary node", nil)
+		return
+	}
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	rules, err := s.leases.ListAutoApprovals(r.Context(), "", q.Get("node_id"), q.Get("status"), limit, offset)
+	if err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auto_approvals": rules})
+}
+
+func (s *Server) handleExtendAutoApproval(w http.ResponseWriter, r *http.Request) {
+	if s.scope() != "" {
+		writeError(w, r, s.log, http.StatusForbidden, "FORBIDDEN", "auto-approval rules are managed by the primary node", nil)
+		return
+	}
+	var req struct {
+		DurationDays int `json:"duration_days"`
+	}
+	if !decodeJSON(w, r, s.log, &req) {
+		return
+	}
+	admin := adminFrom(r.Context())
+	rule, err := s.leases.ExtendAutoApproval(r.Context(), r.PathValue("id"), admin.ID, req.DurationDays)
+	if err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auto_approval": rule})
+}
