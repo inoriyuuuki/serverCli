@@ -87,9 +87,9 @@ export function formatUptime(seconds: number | null | undefined): string {
   return formatDuration(seconds);
 }
 
-export function remainingText(expiresIso?: string | null): { text: string; kind: 'ok' | 'warn' | 'over' | 'none' } {
+export function remainingText(expiresIso?: string | null, now = Date.now()): { text: string; kind: 'ok' | 'warn' | 'over' | 'none' } {
   if (!expiresIso) return { text: '—', kind: 'none' };
-  const ms = new Date(expiresIso).getTime() - Date.now();
+  const ms = new Date(expiresIso).getTime() - now;
   if (Number.isNaN(ms)) return { text: '—', kind: 'none' };
   if (ms <= 0) return { text: '已到期', kind: 'over' };
   const mins = ms / 60000;
