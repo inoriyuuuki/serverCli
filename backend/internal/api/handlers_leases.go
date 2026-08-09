@@ -184,9 +184,9 @@ func (s *Server) handleAIAccess(w http.ResponseWriter, r *http.Request) {
 // (WebSocket push) and the admin UI that the lease list changed.
 func (s *Server) publishLeaseKeys(lease *model.AILease) {
 	if lease != nil {
-		s.events.publish(lease.NodeID, EventLeaseKeysChanged)
+		s.events.publishEvent(lease.NodeID, EventLeaseKeysChanged)
 	}
-	s.events.publish("", EventLeasesChanged)
+	s.events.publishEvent("", EventLeasesChanged)
 }
 
 func (s *Server) sshTarget(r *http.Request, nodeID string) (string, int) {

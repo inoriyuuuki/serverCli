@@ -9,33 +9,41 @@ import (
 )
 
 // Realtime event names pushed to connected clients.
-// - Node agents receive EventLeaseKeysChanged to refresh keys immediately.
+// - Node agents receive EventLeaseKeysChanged / EventTaskCancelled.
 // - Admin UI receives the *_changed events to refresh lists in real time.
 const (
 	EventLeaseKeysChanged = "lease_keys_changed" // node agent: refresh lease keys
+	EventTaskCancelled    = "task_cancelled"     // node agent: cancel a queued/running task immediately
 	EventLeasesChanged    = "leases_changed"     // admin UI: leases / lease requests / auto-approvals
 	EventTasksChanged     = "tasks_changed"      // admin UI: tasks
 	EventNodesChanged     = "nodes_changed"      // admin UI: nodes
 )
 
-// eventBroker fans out named events to subscribed channels. Node agents
-// subscribe with their node_id (lease key refresh); the admin UI subscribes
-// with the global scope "" (list refreshes). Nodes are outbound-only, so the
-// control plane pushes over the agent's long-lived WebSocket.
+// wsMessage is a push payload over the WebSocket channels. Event is always
+// set; Data carries optional event-specific payloads (e.g. cancelled task id).
+type wsMessage struct {
+	Event string `json:"event"`
+	Data  any    `json:"data,omitempty"`
+}
+
+// eventBroker fans out wsMessages to subscribed channels. Node agents
+// subscribe with their node_id; the admin UI subscribes with the global scope
+// "". Nodes are outbound-only, so the control plane pushes over the agent's
+// long-lived WebSocket.
 type eventBroker struct {
 	mu   sync.Mutex
-	subs map[string]map[chan string]struct{}
+	subs map[string]map[chan wsMessage]struct{}
 }
 
 func newEventBroker() *eventBroker {
-	return &eventBroker{subs: make(map[string]map[chan string]struct{})}
+	return &eventBroker{subs: make(map[string]map[chan wsMessage]struct{})}
 }
 
-func (b *eventBroker) subscribe(scope string) (chan string, func()) {
-	ch := make(chan string, 64)
+func (b *eventBroker) subscribe(scope string) (chan wsMessage, func()) {
+	ch := make(chan wsMessage, 64)
 	b.mu.Lock()
 	if b.subs[scope] == nil {
-		b.subs[scope] = make(map[chan string]struct{})
+		b.subs[scope] = make(map[chan wsMessage]struct{})
 	}
 	b.subs[scope][ch] = struct{}{}
 	b.mu.Unlock()
@@ -54,15 +62,20 @@ func (b *eventBroker) subscribe(scope string) (chan string, func()) {
 	}
 }
 
-func (b *eventBroker) publish(scope, event string) {
+func (b *eventBroker) publish(scope string, msg wsMessage) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for ch := range b.subs[scope] {
 		select {
-		case ch <- event:
+		case ch <- msg:
 		default: // slow/disconnected subscriber misses it and falls back to polling
 		}
 	}
+}
+
+// publishEvent sends an event with no payload to a scope.
+func (b *eventBroker) publishEvent(scope, event string) {
+	b.publish(scope, wsMessage{Event: event})
 }
 
 // wsUpgrader upgrades authenticated agent/admin connections. Origin is
@@ -74,12 +87,12 @@ var wsUpgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-func writeWSEvent(conn *websocket.Conn, event string) bool {
-	msg, err := json.Marshal(map[string]string{"event": event})
+func writeWSMessage(conn *websocket.Conn, msg wsMessage) bool {
+	raw, err := json.Marshal(msg)
 	if err != nil {
 		return false
 	}
-	return conn.WriteMessage(websocket.TextMessage, msg) == nil
+	return conn.WriteMessage(websocket.TextMessage, raw) == nil
 }
 
 // pumpRead discards inbound frames until the client disconnects, then closes
@@ -93,8 +106,23 @@ func pumpRead(conn *websocket.Conn, done chan<- struct{}) {
 	}
 }
 
+// streamLoop forwards broker messages for the given scope to the WebSocket
+// until the client disconnects.
+func streamLoop(conn *websocket.Conn, ch <-chan wsMessage, done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case msg := <-ch:
+			if !writeWSMessage(conn, msg) {
+				return
+			}
+		}
+	}
+}
+
 // handleAgentWS streams realtime events to the calling node agent (signed
-// agent auth). The agent refreshes lease keys on EventLeaseKeysChanged.
+// agent auth). The agent refreshes lease keys / cancels tasks immediately.
 func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	node := nodeFrom(r.Context())
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -107,16 +135,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 	done := make(chan struct{})
 	go pumpRead(conn, done)
-	for {
-		select {
-		case <-done:
-			return
-		case ev := <-ch:
-			if !writeWSEvent(conn, ev) {
-				return
-			}
-		}
-	}
+	streamLoop(conn, ch, done)
 }
 
 // handleAdminWS streams realtime events to the browser admin UI. Auth uses
@@ -142,14 +161,5 @@ func (s *Server) handleAdminWS(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 	done := make(chan struct{})
 	go pumpRead(conn, done)
-	for {
-		select {
-		case <-done:
-			return
-		case ev := <-ch:
-			if !writeWSEvent(conn, ev) {
-				return
-			}
-		}
-	}
+	streamLoop(conn, ch, done)
 }

@@ -123,7 +123,7 @@ func (s *Server) handleApproveEnrollment(w http.ResponseWriter, r *http.Request)
 		writeServiceError(w, r, s.log, err)
 		return
 	}
-	s.events.publish("", EventNodesChanged)
+	s.events.publishEvent("", EventNodesChanged)
 	writeJSON(w, http.StatusOK, map[string]any{"enrollment": e})
 }
 
@@ -141,7 +141,7 @@ func (s *Server) handleRejectEnrollment(w http.ResponseWriter, r *http.Request) 
 		writeServiceError(w, r, s.log, err)
 		return
 	}
-	s.events.publish("", EventNodesChanged)
+	s.events.publishEvent("", EventNodesChanged)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "rejected"})
 }
 
@@ -210,6 +210,6 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
-	s.events.publish("", EventNodesChanged)
+	s.events.publishEvent("", EventNodesChanged)
 	w.WriteHeader(http.StatusNoContent)
 }

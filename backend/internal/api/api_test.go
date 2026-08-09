@@ -950,9 +950,9 @@ func TestAgentWSStreamDeliversLeaseKeysChanged(t *testing.T) {
 		case err := <-readErr:
 			t.Fatalf("ws read error: %v", err)
 		case <-first:
-			env.srv.events.publish(env.nodeID, EventLeaseKeysChanged)
+			env.srv.events.publishEvent(env.nodeID, EventLeaseKeysChanged)
 		case <-pub.C:
-			env.srv.events.publish(env.nodeID, EventLeaseKeysChanged)
+			env.srv.events.publishEvent(env.nodeID, EventLeaseKeysChanged)
 		case <-deadline:
 			t.Fatal("timed out waiting for lease_keys_changed event")
 		}
@@ -965,11 +965,11 @@ func TestEventBroker(t *testing.T) {
 	ch, unsubscribe := b.subscribe("node-1")
 	defer unsubscribe()
 
-	b.publish("node-1", EventLeaseKeysChanged)
+	b.publishEvent("node-1", EventLeaseKeysChanged)
 	select {
 	case ev := <-ch:
-		if ev != EventLeaseKeysChanged {
-			t.Fatalf("unexpected event %q", ev)
+		if ev.Event != EventLeaseKeysChanged {
+			t.Fatalf("unexpected event %q", ev.Event)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("event not delivered")
@@ -978,10 +978,10 @@ func TestEventBroker(t *testing.T) {
 	// Other nodes must not receive the event.
 	ch2, unsubscribe2 := b.subscribe("node-2")
 	defer unsubscribe2()
-	b.publish("node-1", EventLeaseKeysChanged)
+	b.publishEvent("node-1", EventLeaseKeysChanged)
 	select {
 	case ev := <-ch2:
-		t.Fatalf("node-2 received node-1 event %q", ev)
+		t.Fatalf("node-2 received node-1 event %q", ev.Event)
 	case <-time.After(300 * time.Millisecond):
 	}
 
