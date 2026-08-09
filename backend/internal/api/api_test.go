@@ -519,6 +519,11 @@ func TestNodeListIncludesHeartbeat(t *testing.T) {
 		if hb["cpu_usage_percent"] != 12.5 {
 			t.Fatalf("GET %s unexpected cpu in heartbeat: %s", path, out)
 		}
+		// 地址必须内嵌在 node 对象内，前端 nodeIp() 依赖 node.addresses 显示 IP。
+		addrs, ok := node["addresses"].([]any)
+		if !ok || len(addrs) == 0 {
+			t.Fatalf("GET %s missing node.addresses: %s", path, out)
+		}
 	}
 }
 

@@ -27,7 +27,11 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	hbs, _ := s.store.LatestHeartbeats(r.Context(), ids)
 	out := make([]map[string]any, 0, len(nodes))
 	for _, n := range nodes {
-		out = append(out, nodeWithHeartbeat(n, hbs[n.ID]))
+		m := nodeWithHeartbeat(n, hbs[n.ID])
+		if addrs, err := s.store.NodeAddresses(r.Context(), n.ID); err == nil && len(addrs) > 0 {
+			m["addresses"] = addrs
+		}
+		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": out})
 }
@@ -69,7 +73,9 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 	}
 	addrs, _ := s.store.NodeAddresses(r.Context(), n.ID)
 	hb, _ := s.store.LatestHeartbeat(r.Context(), n.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"node": nodeWithHeartbeat(n, hb), "addresses": addrs})
+	m := nodeWithHeartbeat(n, hb)
+	m["addresses"] = addrs
+	writeJSON(w, http.StatusOK, map[string]any{"node": m, "addresses": addrs})
 }
 
 func (s *Server) handlePatchNode(w http.ResponseWriter, r *http.Request) {
