@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApi, errorMessage } from '../lib/useApi';
+import { useRealtime } from '../lib/realtime';
 import { api, unwrapList, ApiError } from '../api/client';
 import type { Enrollment, NodeInfo } from '../api/types';
 import {
@@ -25,8 +26,13 @@ export default function ServersPage() {
   const navigate = useNavigate();
   const isProd = session?.environment === 'production';
 
-  const nodesState = useApi<unknown>('/nodes');
+  const nodesState = useApi<unknown>('/nodes', { pollIntervalMs: 60000 });
   const enrollState = useApi<unknown>('/node-enrollments');
+  // 节点状态变化（上线/离线/审批）由 WebSocket 实时推送，轮询仅作兜底。
+  useRealtime(['nodes_changed'], () => {
+    nodesState.reload();
+    enrollState.reload();
+  });
 
   const nodes = useMemo(() => unwrapList<NodeInfo>(nodesState.data, ['nodes']), [nodesState.data]);
   const enrollments = useMemo(() => unwrapList<Enrollment>(enrollState.data, ['enrollments']), [enrollState.data]);

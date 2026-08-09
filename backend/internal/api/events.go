@@ -1,108 +1,155 @@
 package api
 
 import (
-	"fmt"
+	"encoding/json"
 	"net/http"
 	"sync"
-	"time"
+
+	"github.com/gorilla/websocket"
 )
 
-// EventLeaseKeysChanged notifies a node that its lease key set changed
-// (new lease issued / revoked / disconnected), so the agent refreshes keys
-// immediately instead of waiting for the next heartbeat.
-const EventLeaseKeysChanged = "lease_keys_changed"
+// Realtime event names pushed to connected clients.
+// - Node agents receive EventLeaseKeysChanged to refresh keys immediately.
+// - Admin UI receives the *_changed events to refresh lists in real time.
+const (
+	EventLeaseKeysChanged = "lease_keys_changed" // node agent: refresh lease keys
+	EventLeasesChanged    = "leases_changed"     // admin UI: leases / lease requests / auto-approvals
+	EventTasksChanged     = "tasks_changed"      // admin UI: tasks
+	EventNodesChanged     = "nodes_changed"      // admin UI: nodes
+)
 
-// eventBroker fans out node-scoped server-sent events to connected node agents.
-// Node agents are outbound-only, so the control plane cannot push directly;
-// SSE over the agent's existing signed channel is the notification path.
+// eventBroker fans out named events to subscribed channels. Node agents
+// subscribe with their node_id (lease key refresh); the admin UI subscribes
+// with the global scope "" (list refreshes). Nodes are outbound-only, so the
+// control plane pushes over the agent's long-lived WebSocket.
 type eventBroker struct {
 	mu   sync.Mutex
-	subs map[string]map[chan string]struct{} // nodeID -> subscribers
+	subs map[string]map[chan string]struct{}
 }
 
 func newEventBroker() *eventBroker {
 	return &eventBroker{subs: make(map[string]map[chan string]struct{})}
 }
 
-// subscribe registers a channel for nodeID and returns an unsubscribe func.
-func (b *eventBroker) subscribe(nodeID string) (chan string, func()) {
-	ch := make(chan string, 32)
+func (b *eventBroker) subscribe(scope string) (chan string, func()) {
+	ch := make(chan string, 64)
 	b.mu.Lock()
-	if b.subs[nodeID] == nil {
-		b.subs[nodeID] = make(map[chan string]struct{})
+	if b.subs[scope] == nil {
+		b.subs[scope] = make(map[chan string]struct{})
 	}
-	b.subs[nodeID][ch] = struct{}{}
+	b.subs[scope][ch] = struct{}{}
 	b.mu.Unlock()
 	return ch, func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		if m := b.subs[nodeID]; m != nil {
+		if m := b.subs[scope]; m != nil {
 			if _, ok := m[ch]; ok {
 				delete(m, ch)
 				close(ch)
 			}
 			if len(m) == 0 {
-				delete(b.subs, nodeID)
+				delete(b.subs, scope)
 			}
 		}
 	}
 }
 
-// publish sends event to all subscribers of nodeID (non-blocking; slow or
-// disconnected subscribers simply miss the notification and fall back to the
-// next heartbeat).
-func (b *eventBroker) publish(nodeID, event string) {
-	if nodeID == "" {
-		return
-	}
+func (b *eventBroker) publish(scope, event string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for ch := range b.subs[nodeID] {
+	for ch := range b.subs[scope] {
 		select {
 		case ch <- event:
-		default:
+		default: // slow/disconnected subscriber misses it and falls back to polling
 		}
 	}
 }
 
-// handleAgentEvents streams server-sent events for the calling node agent.
-// Kept alive with periodic ": ping" comments; the client reconnects on drop.
-func (s *Server) handleAgentEvents(w http.ResponseWriter, r *http.Request) {
+// wsUpgrader upgrades authenticated agent/admin connections. Origin is
+// accepted: agent connections are signature-authenticated and the admin UI is
+// same-origin + cookie-authenticated (read-only push, no CSRF surface).
+var wsUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	CheckOrigin:     func(r *http.Request) bool { return true },
+}
+
+func writeWSEvent(conn *websocket.Conn, event string) bool {
+	msg, err := json.Marshal(map[string]string{"event": event})
+	if err != nil {
+		return false
+	}
+	return conn.WriteMessage(websocket.TextMessage, msg) == nil
+}
+
+// pumpRead discards inbound frames until the client disconnects, then closes
+// done so the writer loop can exit.
+func pumpRead(conn *websocket.Conn, done chan<- struct{}) {
+	defer close(done)
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+	}
+}
+
+// handleAgentWS streams realtime events to the calling node agent (signed
+// agent auth). The agent refreshes lease keys on EventLeaseKeysChanged.
+func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	node := nodeFrom(r.Context())
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, r, s.log, http.StatusInternalServerError, "STREAM_UNSUPPORTED", "streaming unsupported", nil)
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.log.Warn("agent ws upgrade failed", "error", err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
+	defer conn.Close()
 	ch, unsubscribe := s.events.subscribe(node.ID)
 	defer unsubscribe()
-	// Flush headers immediately so the client connection is established
-	// before the first event arrives.
-	flusher.Flush()
-
-	ctx := r.Context()
-	ping := time.NewTicker(15 * time.Second)
-	defer ping.Stop()
-
+	done := make(chan struct{})
+	go pumpRead(conn, done)
 	for {
 		select {
-		case <-ctx.Done():
+		case <-done:
 			return
 		case ev := <-ch:
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: {}\n\n", ev); err != nil {
+			if !writeWSEvent(conn, ev) {
 				return
 			}
-			flusher.Flush()
-		case <-ping.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+		}
+	}
+}
+
+// handleAdminWS streams realtime events to the browser admin UI. Auth uses
+// the session cookie only (WebSocket clients cannot set custom headers; this
+// endpoint is read-only push so no CSRF token is required).
+func (s *Server) handleAdminWS(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("servercli_session")
+	if err != nil {
+		writeError(w, r, s.log, http.StatusUnauthorized, "UNAUTHENTICATED", "login required", nil)
+		return
+	}
+	if _, _, err := s.auth.Authenticate(r.Context(), cookie.Value); err != nil {
+		writeError(w, r, s.log, http.StatusUnauthorized, "UNAUTHENTICATED", "session invalid or expired", nil)
+		return
+	}
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.log.Warn("admin ws upgrade failed", "error", err)
+		return
+	}
+	defer conn.Close()
+	ch, unsubscribe := s.events.subscribe("")
+	defer unsubscribe()
+	done := make(chan struct{})
+	go pumpRead(conn, done)
+	for {
+		select {
+		case <-done:
+			return
+		case ev := <-ch:
+			if !writeWSEvent(conn, ev) {
 				return
 			}
-			flusher.Flush()
 		}
 	}
 }

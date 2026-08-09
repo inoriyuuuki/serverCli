@@ -81,26 +81,19 @@ func (c *Client) DoRaw(method, path string, query url.Values, body []byte, heade
 	return c.http.Do(req)
 }
 
-// DoStream performs a signed GET on a long-lived connection (no client
-// timeout), used for the SSE lease-key event stream. The caller owns the
-// returned response body and must close it.
-func (c *Client) DoStream(path string) (*http.Response, error) {
+// StreamHeaders returns the signed headers for a long-lived stream request
+// (WebSocket lease-key event stream).
+func (c *Client) StreamHeaders(method, path string) http.Header {
 	sum := sha256.Sum256(nil)
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	sig := Sign(c.credential, ts, "GET", path, hex.EncodeToString(sum[:]))
-	req, err := http.NewRequest("GET", c.baseURL+path, nil)
-	if err != nil {
-		return nil, err
-	}
+	sig := Sign(c.credential, ts, method, path, hex.EncodeToString(sum[:]))
+	h := http.Header{}
 	if c.credential != "" {
-		req.Header.Set("Authorization", "Bearer "+c.credential)
+		h.Set("Authorization", "Bearer "+c.credential)
 	}
-	req.Header.Set("X-Agent-Timestamp", ts)
-	req.Header.Set("X-Agent-Signature", sig)
-	req.Header.Set("Accept", "text/event-stream")
-	// Long-lived stream: no client-level timeout (the transport is shared).
-	sc := &http.Client{Transport: c.http.Transport}
-	return sc.Do(req)
+	h.Set("X-Agent-Timestamp", ts)
+	h.Set("X-Agent-Signature", sig)
+	return h
 }
 
 // Do performs a signed request. body may be nil. respBody is decoded into out

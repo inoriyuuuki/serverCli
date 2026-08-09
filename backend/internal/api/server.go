@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -196,7 +198,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/events", s.agentAuth(s.handleAgentTaskEvent))
 	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/result", s.agentAuth(s.handleAgentTaskResult))
 	mux.HandleFunc("POST /api/v1/agent/leases/{id}/events", s.agentAuth(s.handleAgentLeaseEvent))
-	mux.HandleFunc("GET /api/v1/agent/events", s.agentAuth(s.handleAgentEvents))
+	mux.HandleFunc("GET /api/v1/agent/ws", s.agentAuth(s.handleAgentWS))
+	mux.HandleFunc("GET /api/v1/ws", s.handleAdminWS)
 	// Agent self-service (scoped to the calling node): lets a child control
 	// plane mirror its own commands/tasks/leases/audit from the primary.
 	mux.HandleFunc("GET /api/v1/agent/commands", s.agentAuth(s.handleAgentListCommands))
@@ -369,12 +372,22 @@ func (sw *statusWriter) WriteHeader(code int) {
 	sw.ResponseWriter.WriteHeader(code)
 }
 
-// Flush forwards to the underlying writer so SSE endpoints work through the
-// request-logging wrapper (statusWriter must implement http.Flusher).
+// Flush forwards to the underlying writer so streaming endpoints work through
+// the request-logging wrapper (statusWriter must implement http.Flusher).
 func (sw *statusWriter) Flush() {
 	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack forwards to the underlying writer so WebSocket upgrades work through
+// the request-logging wrapper (statusWriter must implement http.Hijacker).
+func (sw *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := sw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not support hijacking")
+	}
+	return h.Hijack()
 }
 
 // context helpers

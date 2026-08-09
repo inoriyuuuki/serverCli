@@ -2,7 +2,7 @@ package agent
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,35 +10,37 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"servercli/internal/config"
 	"servercli/internal/logger"
 )
 
-// TestWatchEventsTriggersHeartbeatOnKeyChange verifies the SSE lease-key event
-// stream immediately triggers a heartbeat (which pulls install/remove ops),
-// instead of waiting for the next scheduled heartbeat.
+// TestWatchEventsTriggersHeartbeatOnKeyChange verifies the WebSocket lease-key
+// event stream immediately triggers a heartbeat (which pulls install/remove
+// ops), instead of waiting for the next scheduled heartbeat.
 func TestWatchEventsTriggersHeartbeatOnKeyChange(t *testing.T) {
 	var heartbeatCalls atomic.Int64
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/agent/events":
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			fl, _ := w.(http.Flusher)
-			fl.Flush()
-			time.Sleep(200 * time.Millisecond)
-			fmt.Fprint(w, "event: lease_keys_changed\ndata: {}\n\n")
-			fl.Flush()
-			// Keep the stream open so the agent can react before EOF.
-			time.Sleep(2 * time.Second)
-		case "/api/v1/agent/heartbeat":
-			heartbeatCalls.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"node_id":"n","status":"online"}`)
-		default:
-			http.NotFound(w, r)
+	up := websocket.Upgrader{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/agent/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
 		}
-	}))
+		defer conn.Close()
+		time.Sleep(200 * time.Millisecond)
+		msg, _ := json.Marshal(map[string]string{"event": "lease_keys_changed"})
+		_ = conn.WriteMessage(websocket.TextMessage, msg)
+		// Keep the connection open so the agent can react before EOF.
+		time.Sleep(2 * time.Second)
+	})
+	mux.HandleFunc("/api/v1/agent/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		heartbeatCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"node_id":"n","status":"online"}`))
+	})
+	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
 	cfg := config.Default()
@@ -49,9 +51,9 @@ func TestWatchEventsTriggersHeartbeatOnKeyChange(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := a.watchEvents(ctx); err != nil {
-		t.Fatalf("watchEvents: %v", err)
-	}
+	// The test server closes the connection after sending the event; watchEvents
+	// returning an error on close is expected. What matters is the heartbeat.
+	_ = a.watchEvents(ctx)
 	if heartbeatCalls.Load() == 0 {
 		t.Fatal("lease_keys_changed event did not trigger an immediate heartbeat")
 	}
