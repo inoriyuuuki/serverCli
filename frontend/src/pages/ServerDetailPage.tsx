@@ -21,7 +21,8 @@ import {
   TimeCell,
 } from '../components/ui';
 import { NodeInfoFields, nodeName } from '../components/NodeInfo';
-import { shortId } from '../lib/format';
+import { cn, shortId } from '../lib/format';
+import { labelsToList, listToLabelsObject, tagOptions } from '../lib/labels';
 
 type TabKey = 'info' | 'addresses' | 'commands' | 'tasks' | 'leases' | 'audit' | 'settings';
 
@@ -32,7 +33,7 @@ export default function ServerDetailPage() {
   const [tab, setTab] = useState<TabKey>('info');
   const [editOpen, setEditOpen] = useState(false);
   const [editAlias, setEditAlias] = useState('');
-  const [editLabels, setEditLabels] = useState('');
+  const [editLabels, setEditLabels] = useState<string[]>([]);
   const [editEnabled, setEditEnabled] = useState(true);
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -61,15 +62,7 @@ export default function ServerDetailPage() {
   const openEdit = () => {
     if (!node) return;
     setEditAlias(node.alias ?? '');
-    setEditLabels(
-      Array.isArray(node.labels_json)
-        ? (node.labels_json as string[]).join(', ')
-        : node.labels_json && typeof node.labels_json === 'object'
-          ? Object.entries(node.labels_json as Record<string, unknown>)
-              .map(([k, v]) => `${k}=${v}`)
-              .join(', ')
-          : '',
-    );
+    setEditLabels(labelsToList(node.labels_json));
     setEditEnabled(node.enabled !== false);
     setEditError(null);
     setEditOpen(true);
@@ -80,14 +73,10 @@ export default function ServerDetailPage() {
     if (!node) return;
     setEditBusy(true);
     setEditError(null);
-    const labels = editLabels
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
     try {
       await api.patch(`/nodes/${node.id ?? node.node_id}`, {
         alias: editAlias.trim() || null,
-        labels: labels.length ? labels : [],
+        labels: listToLabelsObject(editLabels),
         enabled: editEnabled,
       });
       setEditOpen(false);
@@ -102,15 +91,15 @@ export default function ServerDetailPage() {
   if (nodeState.loading && !node) {
     return (
       <div>
-        <PageHeader title="节点详情" />
-        <LoadingState label="加载节点详情…" />
+        <PageHeader title="服务器详情" />
+        <LoadingState label="加载服务器详情…" />
       </div>
     );
   }
   if (nodeState.error) {
     return (
       <div>
-        <PageHeader title="节点详情" />
+        <PageHeader title="服务器详情" />
         <ErrorState message={errorMessage(nodeState.error)} onRetry={nodeState.reload} />
       </div>
     );
@@ -118,8 +107,8 @@ export default function ServerDetailPage() {
   if (!node) {
     return (
       <div>
-        <PageHeader title="节点详情" />
-        <EmptyState title="未找到节点" hint="节点可能已被删除或无权限访问。" />
+        <PageHeader title="服务器详情" />
+        <EmptyState title="未找到服务器" hint="服务器可能已被删除或无权限访问。" />
       </div>
     );
   }
@@ -145,7 +134,7 @@ export default function ServerDetailPage() {
         }
         actions={
           <div className="btn-row">
-            <Badge tone={node.role === 'primary' ? 'indigo' : 'teal'}>{node.role === 'primary' ? '主节点' : '子节点'}</Badge>
+            <Badge tone={node.role === 'primary' ? 'indigo' : 'teal'}>{node.role === 'primary' ? '主服务器' : '子服务器'}</Badge>
             <StatusBadge status={node.status} />
             {node.enabled === false && <Badge tone="gray">已禁用</Badge>}
             <button className="btn btn-ghost btn-sm" onClick={openEdit}>
@@ -205,7 +194,7 @@ export default function ServerDetailPage() {
           ) : commandsState.error ? (
             <ErrorState message={errorMessage(commandsState.error)} onRetry={commandsState.reload} />
           ) : commands.length === 0 ? (
-            <EmptyState title="该节点尚未上报命令" hint="Agent 启动或变更后会同步命令清单。" />
+            <EmptyState title="该服务器尚未上报命令" hint="Agent 启动或变更后会同步命令清单。" />
           ) : (
             <div className="table-wrap">
               <table className="table">
@@ -307,7 +296,7 @@ export default function ServerDetailPage() {
       )}
 
       {tab === 'settings' && (
-        <Card title="节点设置">
+        <Card title="服务器设置">
           <div className="kv kv-2col">
             <dt>别名</dt>
             <dd>{node.alias || '—'}</dd>
@@ -354,20 +343,38 @@ export default function ServerDetailPage() {
         </Card>
       )}
 
-      <Modal open={editOpen} title={`编辑节点：${nodeName(node)}`} onClose={() => setEditOpen(false)} width={480}>
+      <Modal open={editOpen} title={`编辑服务器：${nodeName(node)}`} onClose={() => setEditOpen(false)} width={480}>
         <form onSubmit={submitEdit}>
           <label className="field">
             <span className="field-label">别名</span>
             <TextInput value={editAlias} onChange={(e) => setEditAlias(e.target.value)} placeholder="显示名称" />
           </label>
-          <label className="field">
-            <span className="field-label">标签</span>
-            <TextInput value={editLabels} onChange={(e) => setEditLabels(e.target.value)} placeholder="逗号分隔，如 env=prod,team=ops" />
-          </label>
-          <Checkbox label="启用该节点" checked={editEnabled} onChange={setEditEnabled} />
+          <div className="field">
+            <span className="field-label">标签（可多选）</span>
+            <div className="tag-picker">
+              {tagOptions(editLabels).map((tag) => {
+                const selected = editLabels.includes(tag);
+                return (
+                  <button
+                    type="button"
+                    key={tag}
+                    className={cn('tag-option', selected && 'is-selected')}
+                    aria-pressed={selected}
+                    onClick={() =>
+                      setEditLabels(selected ? editLabels.filter((t) => t !== tag) : [...editLabels, tag])
+                    }
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>勾选预置标签；已有自定义标签也会保留，可取消勾选移除。</div>
+          </div>
+          <Checkbox label="启用该服务器" checked={editEnabled} onChange={setEditEnabled} />
           {isProd && (
             <div className="alert alert-danger" role="alert">
-              ⚠️ <strong>正式环境</strong>：修改节点设置将写入正式环境。
+              ⚠️ <strong>正式环境</strong>：修改服务器设置将写入正式环境。
             </div>
           )}
           {editError && <div className="alert alert-danger">{editError}</div>}

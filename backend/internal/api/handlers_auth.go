@@ -85,6 +85,18 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false, "environment": env})
 		return
 	}
+	nodeInfo := map[string]any{"id": "", "instance_name": s.cfg.InstanceName, "alias": ""}
+	if sc := s.scope(); sc != "" {
+		if n, err := s.store.NodeByID(r.Context(), sc); err == nil {
+			nodeInfo["id"] = n.ID
+			nodeInfo["instance_name"] = n.InstanceName
+			nodeInfo["alias"] = n.Alias
+		}
+	} else if n, err := s.store.NodeByInstanceName(r.Context(), s.envID, s.cfg.InstanceName); err == nil {
+		nodeInfo["id"] = n.ID
+		nodeInfo["instance_name"] = n.InstanceName
+		nodeInfo["alias"] = n.Alias
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated": true,
 		"csrf_token":    s.auth.CSRFFor(sess),
@@ -98,6 +110,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 			"last_seen":  sess.LastSeenAt,
 		},
 		"environment": env,
+		"node":        nodeInfo,
 	})
 }
 

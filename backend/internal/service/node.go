@@ -611,11 +611,45 @@ func (s *NodeService) Node(ctx context.Context, scopeNodeID, id string) (*model.
 
 // NodePatch describes allowed PATCH /nodes/{id} updates.
 type NodePatch struct {
-	Alias    *string        `json:"alias"`
-	Labels   map[string]any `json:"labels"`
-	Enabled  *bool          `json:"enabled"`
-	Status   *string        `json:"status"`
-	Metadata map[string]any `json:"metadata"`
+	Alias    *string         `json:"alias"`
+	Labels   json.RawMessage `json:"labels"`
+	Enabled  *bool           `json:"enabled"`
+	Status   *string         `json:"status"`
+	Metadata map[string]any  `json:"metadata"`
+}
+
+// normalizeLabels accepts either a JSON object {k:v,...} or an array of
+// "k=v" strings (legacy UI format) and normalizes it to a string map so the
+// stored labels_json is always a stable object. "null"/absent means no change.
+func normalizeLabels(raw json.RawMessage) (map[string]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		out := make(map[string]string, len(obj))
+		for k, v := range obj {
+			out[k] = fmt.Sprint(v)
+		}
+		return out, nil
+	}
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		out := make(map[string]string, len(arr))
+		for _, item := range arr {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if k, v, ok := strings.Cut(item, "="); ok {
+				out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			} else {
+				out[item] = "true"
+			}
+		}
+		return out, nil
+	}
+	return nil, ErrBadRequest
 }
 
 // PatchNode updates node metadata within scope.
@@ -642,8 +676,12 @@ func (s *NodeService) PatchNode(ctx context.Context, scopeNodeID, id string, adm
 		}
 		n.Status = *patch.Status
 	}
-	if patch.Labels != nil {
-		if raw, err := json.Marshal(patch.Labels); err == nil {
+	if len(patch.Labels) > 0 && string(patch.Labels) != "null" {
+		labels, err := normalizeLabels(patch.Labels)
+		if err != nil {
+			return nil, err
+		}
+		if raw, err := json.Marshal(labels); err == nil {
 			n.LabelsJSON = string(raw)
 		}
 	}

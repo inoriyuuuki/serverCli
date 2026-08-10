@@ -85,6 +85,34 @@ func (s *Store) NodeByID(ctx context.Context, id string) (*model.Node, error) {
 	return n, nil
 }
 
+// NodesByIDs returns nodes keyed by id (missing ids are simply absent).
+func (s *Store) NodesByIDs(ctx context.Context, ids []string) (map[string]*model.Node, error) {
+	out := map[string]*model.Node{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "$" + strconv.Itoa(i+1)
+		args[i] = id
+	}
+	q := `SELECT ` + nodeColumns + ` FROM node WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[n.ID] = n
+	}
+	return out, rows.Err()
+}
+
 // NodeByCredentialHash finds a node by credential hash.
 func (s *Store) NodeByCredentialHash(ctx context.Context, hash string) (*model.Node, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+nodeColumns+` FROM node WHERE credential_hash = $1`, hash)

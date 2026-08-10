@@ -207,7 +207,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title={session?.role === 'primary' ? '系统设置' : '受限本机设置'} subtitle={session?.role === 'primary' ? '集群与实例运行参数。' : '子节点仅可修改受限的本机参数。'} />
+      <PageHeader title={session?.role === 'primary' ? '系统设置' : '受限本机设置'} subtitle={session?.role === 'primary' ? '集群与实例运行参数。' : '子服务器仅可修改受限的本机参数。'} />
 
       <Card title="运行参数" actions={settingsState.error ? undefined : <button className="btn btn-ghost btn-sm" onClick={settingsState.reload}>刷新</button>}>
         {settingsState.loading && settingsState.data === null ? (

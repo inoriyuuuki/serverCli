@@ -135,6 +135,7 @@ func (s *Server) handleAgentListAuditEvents(w http.ResponseWriter, r *http.Reque
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.enrichAuditNames(r.Context(), events...)
 	writeJSON(w, http.StatusOK, map[string]any{"audit_events": events})
 }
 

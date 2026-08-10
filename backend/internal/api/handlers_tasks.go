@@ -52,6 +52,10 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	names := s.nodeDisplayNames(r.Context(), taskNodeIDs(tasks))
+	for _, t := range tasks {
+		t.NodeName = names[t.NodeID]
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
 }
 
@@ -61,6 +65,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	t.NodeName = s.nodeDisplayNames(r.Context(), []string{t.NodeID})[t.NodeID]
 	writeJSON(w, http.StatusOK, map[string]any{"task": t, "events": events, "output": output})
 }
 
@@ -105,4 +110,12 @@ func (s *Server) handleDeleteTaskParameterHistory(w http.ResponseWriter, r *http
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func taskNodeIDs(tasks []*model.Task) []string {
+	ids := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		ids = append(ids, t.NodeID)
+	}
+	return ids
 }

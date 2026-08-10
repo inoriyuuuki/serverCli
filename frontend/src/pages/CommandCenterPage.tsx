@@ -332,7 +332,7 @@ export default function CommandCenterPage() {
       title: '删除参数历史',
       message: (
         <div className="kv">
-          <dt>节点</dt>
+          <dt>服务器</dt>
           <dd>{nodeName(nodeById(h.node_id ?? '')) || h.node_id || '—'}</dd>
           <dt>命令</dt>
           <dd className="mono">{h.command_id} v{h.command_version}</dd>
@@ -362,7 +362,7 @@ export default function CommandCenterPage() {
       if (!execGroup) return;
       const targets = selectedNodeIds.filter(Boolean);
       if (targets.length === 0) {
-        setSubmitError('请至少选择一个目标节点');
+        setSubmitError('请至少选择一个目标服务器');
         return;
       }
       setSubmitBusy(true);
@@ -425,7 +425,7 @@ export default function CommandCenterPage() {
       title: `执行命令：${execGroup.title ?? execGroup.commandId}`,
       message: (
         <div className="kv">
-          <dt>目标节点</dt>
+          <dt>目标服务器</dt>
           <dd className="mono">
             {targetNodes.length > 0 ? targetNodes.map((n) => nodeName(n)).join('、') : '未选择'}
           </dd>
@@ -463,16 +463,16 @@ export default function CommandCenterPage() {
     <div>
       <PageHeader
         title={isPrimary ? '命令中心' : '本机命令'}
-        subtitle={isPrimary ? '按分类 / 节点 / 权限筛选可用命令并执行；相同命令合并展示，可选择多个节点执行。' : '仅展示本机声明并封装的命令。'}
+        subtitle={isPrimary ? '按分类 / 服务器 / 权限筛选可用命令并执行；相同命令合并展示，可选择多个服务器执行。' : '仅展示本机声明并封装的命令。'}
       />
 
       <Card>
         <div className="filter-bar">
           {isPrimary && (
             <div className="filter-group">
-              <span className="filter-label">目标节点</span>
+              <span className="filter-label">目标服务器</span>
               <Select value={nodeFilter} onChange={(e) => setNodeFilter(e.target.value)}>
-                <option value="">全部节点</option>
+                <option value="">全部服务器</option>
                 {nodes.map((n) => (
                   <option key={n.id ?? n.node_id} value={n.id ?? n.node_id}>
                     {nodeName(n)}（{n.status ?? '未知'}）
@@ -524,7 +524,7 @@ export default function CommandCenterPage() {
         ) : groups.length === 0 ? (
           <EmptyState
             title={keyword || nodeFilter || categoryFilter || permFilter ? '没有匹配的命令' : '暂无可用命令'}
-            hint={keyword || nodeFilter || categoryFilter || permFilter ? '请调整筛选条件。' : '节点 Agent 上报命令清单后此处会显示可用命令。'}
+            hint={keyword || nodeFilter || categoryFilter || permFilter ? '请调整筛选条件。' : '服务器 Agent 上报命令清单后此处会显示可用命令。'}
           />
         ) : (
           <div className="table-wrap">
@@ -533,7 +533,7 @@ export default function CommandCenterPage() {
                 <tr>
                   <th>命令</th>
                   <th>分类</th>
-                  <th>支持节点</th>
+                  <th>支持服务器</th>
                   <th>权限</th>
                   <th>版本</th>
                   <th>超时</th>
@@ -554,7 +554,7 @@ export default function CommandCenterPage() {
                         <Badge tone="blue">{g.category || '—'}</Badge>
                       </td>
                       <td>
-                        <Badge tone="teal">{eligible.length} 节点</Badge>
+                        <Badge tone="teal">{eligible.length} 服务器</Badge>
                         <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
                           {eligible.length > 0 ? eligible.slice(0, 3).map((n) => nodeName(n)).join('、') + (eligible.length > 3 ? ' 等' : '') : '—'}
                         </div>
@@ -570,7 +570,7 @@ export default function CommandCenterPage() {
                             执行
                           </button>
                         ) : (
-                          <Badge tone="gray">无可用节点</Badge>
+                          <Badge tone="gray">无可用服务器</Badge>
                         )}
                       </td>
                     </tr>
@@ -594,7 +594,7 @@ export default function CommandCenterPage() {
             {execGroup.description && <p className="muted" style={{ marginBottom: 14 }}>{execGroup.description}</p>}
 
             <div className="kv" style={{ marginBottom: 14 }}>
-              <dt>目标节点</dt>
+              <dt>目标服务器</dt>
               <dd>
                 <div className="checkbox-group">
                   {eligibleNodesFor(execGroup).map((n) => {
@@ -614,7 +614,7 @@ export default function CommandCenterPage() {
                       </label>
                     );
                   })}
-                  {eligibleNodesFor(execGroup).length === 0 && <span className="muted">没有可执行的目标节点（节点离线、停用或未上报该命令）。</span>}
+                  {eligibleNodesFor(execGroup).length === 0 && <span className="muted">没有可执行的目标服务器（服务器离线、停用或未上报该命令）。</span>}
                 </div>
               </dd>
             </div>
@@ -624,7 +624,7 @@ export default function CommandCenterPage() {
                 <dt>历史参数</dt>
                 <dd>
                   <span className="muted" style={{ fontSize: 12.5 }}>
-                    展示所选命令在各目标节点的历史参数；选择后自动填充（含敏感字段）。
+                    展示所选命令在各目标服务器的历史参数；选择后自动填充（含敏感字段）。
                   </span>
                 </dd>
               </div>
@@ -687,7 +687,7 @@ export default function CommandCenterPage() {
             )}
             {submitError && <div className="alert alert-danger">{submitError}</div>}
             <div className="kv" style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-              <dt>目标节点</dt>
+              <dt>目标服务器</dt>
               <dd className="mono">{targetNodes.length > 0 ? targetNodes.map((n) => nodeName(n)).join('、') : '未选择'}</dd>
               <dt>命令版本</dt>
               <dd className="mono">{execGroup.version ?? '—'}</dd>

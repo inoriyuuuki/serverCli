@@ -74,7 +74,7 @@ export default function OverviewPage() {
         subtitle={
           session ? (
             <>
-              当前实例：{session.nodeName || '—'}（{session.role === 'primary' ? '主节点' : '子节点'}）
+              当前实例：{session.nodeName || '—'}（{session.role === 'primary' ? '主服务器' : '子服务器'}）
               {isProd && <span className="text-danger"> · 正式环境</span>}
             </>
           ) : undefined
@@ -91,7 +91,7 @@ export default function OverviewPage() {
 
       {nodesState.error && (
         <ErrorState
-          title="节点数据加载失败"
+          title="服务器数据加载失败"
           message={errorMessage(nodesState.error)}
           onRetry={nodesState.reload}
         />
@@ -106,7 +106,7 @@ export default function OverviewPage() {
             ) : localNode ? (
               <NodeInfoFields node={localNode} />
             ) : sysState.data ? (
-              <p className="empty-hint">未找到本机节点记录（可能尚未注册），系统标识：{sysState.data.environment} / {sysState.data.role}。</p>
+              <p className="empty-hint">未找到本机服务器记录（可能尚未注册），系统标识：{sysState.data.environment} / {sysState.data.role}。</p>
             ) : (
               <EmptyState title="暂无本机信息" />
             )}
@@ -114,10 +114,10 @@ export default function OverviewPage() {
 
           {isPrimary && (
             <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
-              <StatCard label="节点总数" value={summary.total} />
+              <StatCard label="服务器总数" value={summary.total} />
               <StatCard label="在线" value={summary.online} tone="green" />
               <StatCard label="离线/禁用" value={summary.offline} tone={summary.offline > 0 ? 'red' : undefined} />
-              <StatCard label="待审批" value={summary.pending} tone={summary.pending > 0 ? 'amber' : undefined} hint="含注册待审批节点" />
+              <StatCard label="待审批" value={summary.pending} tone={summary.pending > 0 ? 'amber' : undefined} hint="含注册待审批服务器" />
             </div>
           )}
         </div>
@@ -146,7 +146,7 @@ export default function OverviewPage() {
                     <thead>
                       <tr>
                         <th>任务</th>
-                        <th>节点</th>
+                        <th>服务器</th>
                         <th>命令</th>
                         <th>状态</th>
                         <th>时间</th>
@@ -192,7 +192,7 @@ export default function OverviewPage() {
                     <thead>
                       <tr>
                         <th>Lease</th>
-                        <th>节点</th>
+                        <th>服务器</th>
                         <th>权限</th>
                         <th>剩余</th>
                         <th>到期</th>
@@ -241,7 +241,7 @@ export default function OverviewPage() {
                   <thead>
                     <tr>
                       <th>时间</th>
-                      <th>节点</th>
+                      <th>服务器</th>
                       <th>操作者</th>
                       <th>动作</th>
                       <th>资源</th>
@@ -283,7 +283,7 @@ export default function OverviewPage() {
       {!isPrimary && (
         <Card title="本机说明">
           <p className="empty-hint">
-            子节点仅展示本机数据。集群管理、节点审批、全局命令与全局策略请登录主节点界面操作。
+            子服务器仅展示本机数据。集群管理、服务器审批、全局命令与全局策略请登录主服务器界面操作。
           </p>
         </Card>
       )}

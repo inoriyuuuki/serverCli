@@ -124,6 +124,10 @@ func (s *LeaseService) CreateLeaseRequest(ctx context.Context, in LeaseRequestIn
 	if in.NodeSelector == "" || in.PublicKey == "" {
 		return nil, ErrBadRequest
 	}
+	// 使用原因必填：AI 每次申请都必须说明用途，便于审计与责任追溯。
+	if strings.TrimSpace(in.Purpose) == "" {
+		return nil, ErrBadRequest
+	}
 	if err := validatePublicKey(in.PublicKey); err != nil {
 		return nil, err
 	}
@@ -159,7 +163,7 @@ func (s *LeaseService) CreateLeaseRequest(ctx context.Context, in LeaseRequestIn
 		RequestedDurationSeconds: duration,
 		PublicKey:                in.PublicKey,
 		PublicKeyFingerprint:     fingerprint(in.PublicKey),
-		Purpose:                  in.Purpose,
+		Purpose:                  strings.TrimSpace(in.Purpose),
 		Status:                   model.LeaseRequestApproved,
 		DecisionReason:           "auto-approved by access token",
 		SourceIP:                 sourceIP,

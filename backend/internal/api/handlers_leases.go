@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -40,8 +41,10 @@ func (s *Server) handleCreateLeaseRequest(w http.ResponseWriter, r *http.Request
 		status = http.StatusOK
 	}
 	out := map[string]any{"lease_request": res.LeaseRequest}
+	s.enrichLeaseRequestNames(r.Context(), res.LeaseRequest)
 	s.publishLeaseKeys(res.Lease)
 	if res.Lease != nil {
+		s.enrichLeaseNames(r.Context(), res.Lease)
 		host, port := s.sshTarget(r, res.Lease.NodeID)
 		out["lease"] = res.Lease
 		out["host"] = host
@@ -57,6 +60,7 @@ func (s *Server) handleGetLeaseRequest(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.enrichLeaseRequestNames(r.Context(), req)
 	writeJSON(w, http.StatusOK, map[string]any{"lease_request": req})
 }
 
@@ -69,6 +73,7 @@ func (s *Server) handleListLeaseRequests(w http.ResponseWriter, r *http.Request)
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.enrichLeaseRequestNames(r.Context(), reqs...)
 	writeJSON(w, http.StatusOK, map[string]any{"lease_requests": reqs})
 }
 
@@ -134,6 +139,7 @@ func (s *Server) handleListLeases(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.enrichLeaseNames(r.Context(), leases...)
 	writeJSON(w, http.StatusOK, map[string]any{"leases": leases})
 }
 
@@ -300,4 +306,34 @@ func (s *Server) handleLeaseRuntimeStatus(w http.ResponseWriter, r *http.Request
 			"expires_at":         lease.ExpiresAt,
 		},
 	})
+}
+
+func (s *Server) enrichLeaseRequestNames(ctx context.Context, reqs ...*model.AILeaseRequest) {
+	ids := make([]string, 0, len(reqs))
+	for _, r := range reqs {
+		if r != nil {
+			ids = append(ids, r.NodeID)
+		}
+	}
+	names := s.nodeDisplayNames(ctx, ids)
+	for _, r := range reqs {
+		if r != nil {
+			r.NodeName = names[r.NodeID]
+		}
+	}
+}
+
+func (s *Server) enrichLeaseNames(ctx context.Context, leases ...*model.AILease) {
+	ids := make([]string, 0, len(leases))
+	for _, l := range leases {
+		if l != nil {
+			ids = append(ids, l.NodeID)
+		}
+	}
+	names := s.nodeDisplayNames(ctx, ids)
+	for _, l := range leases {
+		if l != nil {
+			l.NodeName = names[l.NodeID]
+		}
+	}
 }

@@ -81,7 +81,7 @@ export default function LoginPage() {
             )}
             {sysInfo?.role && (
               <Badge tone={sysInfo.role === 'primary' ? 'indigo' : 'teal'}>
-                {sysInfo.role === 'primary' ? '主节点' : '子节点'}
+                {sysInfo.role === 'primary' ? '主服务器' : '子服务器'}
               </Badge>
             )}
           </div>

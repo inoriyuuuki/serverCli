@@ -151,7 +151,7 @@ export default function TaskDetailPage() {
         <dl className="kv kv-2col">
           <dt>任务 ID</dt>
           <dd className="mono">{task.id}</dd>
-          <dt>节点</dt>
+          <dt>服务器</dt>
           <dd>{task.node_name || task.node_id || '—'}</dd>
           <dt>命令</dt>
           <dd className="mono">

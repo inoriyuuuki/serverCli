@@ -53,7 +53,7 @@ export default function ApiDirectoryPage() {
       <div className="alert alert-info" role="alert" style={{ marginBottom: 14 }}>
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           <li>接口目录由后端同一份路由定义生成，不会与真实路由漂移。</li>
-          <li>Agent/HMAC、节点注册认领、WebSocket、SSE 与 Lease 运行时接口仅展示文档，不允许在线执行。</li>
+          <li>Agent/HMAC、服务器注册认领、WebSocket、SSE 与 Lease 运行时接口仅展示文档，不允许在线执行。</li>
           <li>在线调试中的 Access Token 仅保存在当前页面内存，不写入 localStorage、URL、日志或生成的 curl 示例。</li>
         </ul>
       </div>

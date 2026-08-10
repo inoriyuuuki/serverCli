@@ -27,7 +27,7 @@ const STATUS_OPTIONS = [
   ['failed', '失败'],
   ['timed_out', '超时'],
   ['cancelled', '已取消'],
-  ['node_unreachable', '节点失联'],
+  ['node_unreachable', '服务器失联'],
   ['result_unknown', '结果未知'],
 ];
 
@@ -75,9 +75,9 @@ export default function TasksPage() {
           </div>
           {isPrimary && (
             <div className="filter-group">
-              <span className="filter-label">节点</span>
+              <span className="filter-label">服务器</span>
               <Select value={nodeFilter} onChange={(e) => setNodeFilter(e.target.value)}>
-                <option value="">全部节点</option>
+                <option value="">全部服务器</option>
                 {nodes.map((n) => (
                   <option key={n.id ?? n.node_id} value={n.id ?? n.node_id}>
                     {nodeName(n)}
@@ -110,7 +110,7 @@ export default function TasksPage() {
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>节点</th>
+                  <th>服务器</th>
                   <th>命令</th>
                   <th>发起者</th>
                   <th>状态</th>

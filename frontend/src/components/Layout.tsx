@@ -54,12 +54,12 @@ export function Layout() {
           </div>
           <Badge tone={isProd ? 'red' : 'blue'}>{isProd ? '正式环境' : '测试环境'}</Badge>
           <Badge tone={session.role === 'primary' ? 'indigo' : 'teal'}>
-            {session.role === 'primary' ? '主节点' : '子节点'}
+            {session.role === 'primary' ? '主服务器' : '子服务器'}
           </Badge>
         </div>
         <div className="topbar-right">
           <span className="topbar-item" title={session.nodeId ? `node_id: ${session.nodeId}` : undefined}>
-            <span className="muted">节点</span> {session.nodeName || '—'}
+            <span className="muted">服务器</span> {session.nodeName || '—'}
             {session.nodeIp && <span className="muted"> ({session.nodeIp})</span>}
             {session.nodeId && <span className="mono muted"> #{shortId(session.nodeId)}</span>}
           </span>

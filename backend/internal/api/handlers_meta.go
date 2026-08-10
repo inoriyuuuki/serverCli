@@ -51,6 +51,7 @@ func (s *Server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	s.enrichAuditNames(r.Context(), events...)
 	writeJSON(w, http.StatusOK, map[string]any{"audit_events": events})
 }
 

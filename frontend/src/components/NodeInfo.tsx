@@ -60,12 +60,12 @@ export function NodeInfoFields({ node, showAddresses = true }: { node: NodeInfo;
     <dl className="kv kv-2col">
       <dt>主机名</dt>
       <dd>{node.hostname || node.name || '—'}</dd>
-      <dt>节点 ID</dt>
+      <dt>服务器 ID</dt>
       <dd className="mono" title={node.id ?? node.node_id}>{node.id ?? node.node_id ?? '—'}</dd>
       <dt>角色</dt>
       <dd>
         <Badge tone={node.role === 'primary' ? 'indigo' : 'teal'}>
-          {node.role === 'primary' ? '主节点' : node.role === 'child' ? '子节点' : node.role || '—'}
+          {node.role === 'primary' ? '主服务器' : node.role === 'child' ? '子服务器' : node.role || '—'}
         </Badge>
       </dd>
       <dt>IP</dt>

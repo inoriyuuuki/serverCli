@@ -211,6 +211,7 @@ curl -X POST "$PRIMARY_API/ai/lease-requests" \
   }'
 ```
 
+`purpose`（使用原因）**必填**：缺失或空白时返回 400 `BAD_REQUEST`，申请不会签发 Lease。
 响应包含 `lease_request`（含 `access_token_id/access_token_name`）与 `lease`、`host`、`ssh_port`、`user`；不再返回 `renewal_token`。
 Lease 到期 = `min(申请时长, Token 到期时间, 系统绝对上限)`；Token 到期/撤销后 API 立即失败、关联活动 Lease 撤销并通知节点删除公钥。
 

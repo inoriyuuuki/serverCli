@@ -78,9 +78,9 @@ function normalizeSession(data: unknown): SessionInfo | null {
     session.nodeId,
   );
   const nodeName = firstString(
+    node?.alias,
     envObj?.instance_name,
     envObj?.INSTANCE_NAME,
-    node?.alias,
     node?.instance_name,
     node?.name,
     node?.hostname,

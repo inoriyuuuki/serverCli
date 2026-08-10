@@ -89,11 +89,11 @@ export function ErrorState({ title = '加载失败', message, onRetry }: { title
   );
 }
 
-export function OfflineState({ message = '目标节点当前离线，部分功能不可用。' }: { message?: string }) {
+export function OfflineState({ message = '目标服务器当前离线，部分功能不可用。' }: { message?: string }) {
   return (
     <div className="state-block state-offline" role="status">
       <div className="state-icon" aria-hidden>⛔</div>
-      <p>节点离线</p>
+      <p>服务器离线</p>
       <p className="muted">{message}</p>
     </div>
   );
@@ -157,7 +157,7 @@ export function statusMeta(status?: string | null): { label: string; tone: Tone 
     failure: { label: '失败', tone: 'red' },
     timed_out: { label: '超时', tone: 'amber' },
     cancelled: { label: '已取消', tone: 'gray' },
-    node_unreachable: { label: '节点失联', tone: 'red' },
+    node_unreachable: { label: '服务器失联', tone: 'red' },
     result_unknown: { label: '结果未知', tone: 'amber' },
     // leases
     active: { label: '生效中', tone: 'green' },

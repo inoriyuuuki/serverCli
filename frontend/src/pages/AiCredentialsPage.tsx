@@ -182,7 +182,7 @@ export default function AiCredentialsPage() {
         {revokeTarget && (
           <form onSubmit={submitRevoke}>
             <div className="kv" style={{ marginBottom: 14 }}>
-              <dt>目标节点</dt>
+              <dt>目标服务器</dt>
               <dd>{revokeTarget.node_name || revokeTarget.node_id || '—'}</dd>
               <dt>AI</dt>
               <dd>{revokeTarget.ai_agent_name || revokeTarget.ai_agent_id || '—'}</dd>
@@ -255,7 +255,7 @@ function ActiveLeases({
             <tr>
               <th>Lease</th>
               <th>状态</th>
-              <th>目标节点</th>
+              <th>目标服务器</th>
               <th>AI</th>
               <th>Token 来源</th>
               <th>权限</th>
@@ -343,10 +343,11 @@ function RequestsTab({
             <tr>
               <th>申请</th>
               <th>AI</th>
-              <th>节点</th>
+              <th>服务器</th>
               <th>Token 来源</th>
               <th>权限</th>
               <th>时长</th>
+              <th>使用原因</th>
               <th>公钥指纹</th>
               <th>状态</th>
               <th>决策 / 原因</th>
@@ -365,6 +366,7 @@ function RequestsTab({
                 <td><TokenSourceCell tokenName={r.access_token_name} tokenPrefix={r.access_token_prefix} /></td>
                 <td><ProfileBadge profile={r.requested_profile ?? r.permission_profile} /></td>
                 <td className="mono">{r.requested_duration_seconds ? `${Math.round(r.requested_duration_seconds / 60)} 分钟` : '—'}</td>
+                <td>{r.purpose || '—'}</td>
                 <td className="mono" title={r.public_key_fingerprint}>{r.public_key_fingerprint ? shortId(r.public_key_fingerprint, 16) : '—'}</td>
                 <td><StatusBadge status={r.status} /></td>
                 <td className="muted">{r.decision_reason || '—'}</td>
@@ -445,7 +447,7 @@ function PolicyTab({
   const emergencyRevoke = async () => {
     const result = await confirm({
       title: '紧急撤销全部 Lease',
-      message: `确认撤销${scopeNode ? '所选节点范围内' : '全局范围内'}全部活动 Lease？该操作不可撤销。`,
+      message: `确认撤销${scopeNode ? '所选服务器范围内' : '全局范围内'}全部活动 Lease？该操作不可撤销。`,
       confirmLabel: '紧急撤销',
       danger: true,
       production: isProd,
@@ -500,7 +502,7 @@ function PolicyTab({
         </Card>
         <Card title="紧急撤销">
           <p className="empty-hint" style={{ marginBottom: 12 }}>
-            批量紧急撤销由主节点统一执行；本机（子节点）请在主节点「AI 凭证 → 控制策略」中操作，或对单个 Lease 执行撤销。
+            批量紧急撤销由主服务器统一执行；本机（子服务器）请在主服务器「AI 凭证 → 控制策略」中操作，或对单个 Lease 执行撤销。
           </p>
         </Card>
       </div>
@@ -536,12 +538,12 @@ function PolicyTab({
         </div>
       </Card>
 
-      <Card title="节点范围控制">
+      <Card title="服务器范围控制">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <label className="field">
-            <span className="field-label">目标节点</span>
+            <span className="field-label">目标服务器</span>
             <Select value={scopeNode} onChange={(e) => setScopeNode(e.target.value)}>
-              <option value="">全局（所有节点）</option>
+              <option value="">全局（所有服务器）</option>
               {nodes.map((n) => (
                 <option key={n.id ?? n.node_id} value={n.id ?? n.node_id}>
                   {nodeName(n)}
@@ -562,14 +564,14 @@ function PolicyTab({
             onChange={(v) => toggleSwitch(v, 'renewals_enabled')}
           />
           <div className="alert alert-warn" role="alert">
-            切换节点开关将按所选节点覆盖策略（PATCH /settings/ai-access，scope=node_id）。
+            切换服务器开关将按所选服务器覆盖策略（PATCH /settings/ai-access，scope=node_id）。
           </div>
         </div>
       </Card>
 
       <Card title="紧急撤销">
         <p className="empty-hint" style={{ marginBottom: 12 }}>
-          立即撤销{scopeNode ? '所选节点范围内' : '全局范围内'}全部活动 Lease，并终止相关 SSH 会话。
+          立即撤销{scopeNode ? '所选服务器范围内' : '全局范围内'}全部活动 Lease，并终止相关 SSH 会话。
         </p>
         <button className="btn btn-danger" onClick={emergencyRevoke} disabled={busy}>
           {busy ? '处理中…' : '紧急撤销全部'}

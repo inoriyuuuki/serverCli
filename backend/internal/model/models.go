@@ -229,6 +229,7 @@ type NodeCommand struct {
 type Task struct {
 	ID                string     `json:"id"`
 	NodeID            string     `json:"node_id"`
+	NodeName          string     `json:"node_name,omitempty"`
 	CommandID         string     `json:"command_id"`
 	CommandVersion    string     `json:"command_version"`
 	RequestedBy       string     `json:"requested_by"`
@@ -285,6 +286,7 @@ type AILeaseRequest struct {
 	AIAgentID                string     `json:"ai_agent_id"`
 	AIAgentName              string     `json:"ai_agent_name"`
 	NodeID                   string     `json:"node_id"`
+	NodeName                 string     `json:"node_name,omitempty"`
 	RequestedProfile         string     `json:"requested_profile"`
 	RequestedDurationSeconds int        `json:"requested_duration_seconds"`
 	PublicKey                string     `json:"-"`
@@ -308,6 +310,7 @@ type AILease struct {
 	AccessTokenName      string     `json:"access_token_name,omitempty"`
 	AccessTokenPrefix    string     `json:"access_token_prefix,omitempty"`
 	NodeID               string     `json:"node_id"`
+	NodeName             string     `json:"node_name,omitempty"`
 	AIAgentID            string     `json:"ai_agent_id"`
 	PermissionProfile    string     `json:"permission_profile"`
 	PublicKey            string     `json:"-"`
@@ -431,6 +434,7 @@ type AuditEvent struct {
 	OccurredAt    time.Time  `json:"occurred_at"`
 	EnvironmentID string     `json:"environment_id"`
 	NodeID        string     `json:"node_id"`
+	NodeName      string     `json:"node_name,omitempty"`
 	ActorType     string     `json:"actor_type"`
 	ActorID       string     `json:"actor_id"`
 	Action        string     `json:"action"`

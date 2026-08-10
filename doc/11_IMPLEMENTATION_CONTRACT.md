@@ -171,7 +171,7 @@ Result 体：`{status:"succeeded|failed|timed_out|cancelled|result_unknown", std
 | GET | `/api/v1/ai/lease-requests` | 申请历史（管理） |
 | PATCH | `/api/v1/settings/ai-access` | 开关 `{new_requests_enabled, renewals_enabled, scope:"global"|node_id}` |
 
-申请体：`{node_selector, public_key, permission_profile:"read-only|operator|admin", requested_duration_seconds, purpose, client_request_id}`。
+申请体：`{node_selector, public_key, permission_profile:"read-only|operator|admin", requested_duration_seconds, purpose（必填：使用原因，将写入审计与申请记录）, client_request_id}`。
 响应：`{lease_request:{id,status,access_token_id,access_token_name}, lease?:{id,node_id,access_token_id,expires_at,absolute_expires_at,...}, host, ssh_port, user}`。
 AI 认证：`Authorization: Bearer <access_token>`（`sct_*`，创建时返回一次明文，服务端只存 SHA-256 哈希与前缀）。
 Lease 到期 = `min(申请时长, Token 到期时间, 系统绝对上限(issued_at + ai_lease_max_hours))`；永久 Token 不突破绝对上限。

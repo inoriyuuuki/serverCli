@@ -140,6 +140,6 @@ export function newIdempotencyKey(): string {
 
 /** Humanized labels for common enums. */
 export const ROLE_LABEL: Record<string, string> = {
-  primary: '主节点',
-  child: '子节点',
+  primary: '主服务器',
+  child: '子服务器',
 };

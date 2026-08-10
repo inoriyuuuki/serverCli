@@ -413,6 +413,18 @@ table.table {
 .time-cell { white-space: nowrap; }
 .pill-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
+.tag-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-option {
+  cursor: pointer; user-select: none;
+  border: 1px solid var(--border-strong); background: #fff;
+  border-radius: 999px; padding: 3px 10px; font-size: 12px;
+  color: var(--text-2); transition: all .12s;
+}
+.tag-option:hover { border-color: var(--primary); color: var(--primary); }
+.tag-option.is-selected {
+  background: var(--primary); border-color: var(--primary); color: #fff;
+}
+
 .tag {
   background: #f1f5f9; color: var(--text-2);
   border-radius: 6px; padding: 2px 8px; font-size: 12px;

@@ -28,7 +28,7 @@ export default function ServersPage() {
 
   const nodesState = useApi<unknown>('/nodes', { pollIntervalMs: 60000 });
   const enrollState = useApi<unknown>('/node-enrollments');
-  // 节点状态变化（上线/离线/审批）由 WebSocket 实时推送，轮询仅作兜底。
+  // 服务器状态变化（上线/离线/审批）由 WebSocket 实时推送，轮询仅作兜底。
   useRealtime(['nodes_changed'], () => {
     nodesState.reload();
     enrollState.reload();
@@ -63,7 +63,7 @@ export default function ServersPage() {
     if (!deleteTarget) return;
     // 纵深防御：即使按钮 disabled 被绕过，也不允许向后端发送不匹配的确认名。
     if (deleteConfirm.trim() !== (deleteTarget.instance_name ?? '')) {
-      setDeleteError('确认文本与节点实例名不一致');
+      setDeleteError('确认文本与服务器实例名不一致');
       return;
     }
     setDeleteBusy(true);
@@ -126,7 +126,7 @@ export default function ServersPage() {
 
   return (
     <div>
-      <PageHeader title="服务器" subtitle={`共 ${nodes.length} 个节点 · ${pendingCount} 个待审批申请`} />
+      <PageHeader title="服务器" subtitle={`共 ${nodes.length} 个服务器 · ${pendingCount} 个待审批申请`} />
 
       <Card title={`待审批申请${pendingCount ? `（${pendingCount}）` : ''}`}>
         {enrollState.loading && enrollState.data === null ? (
@@ -134,7 +134,7 @@ export default function ServersPage() {
         ) : enrollState.error ? (
           <ErrorState message={errorMessage(enrollState.error)} onRetry={enrollState.reload} />
         ) : pendingCount === 0 ? (
-          <EmptyState title="没有待审批的节点申请" />
+          <EmptyState title="没有待审批的服务器申请" />
         ) : (
           <div className="table-wrap">
             <table className="table">
@@ -159,7 +159,7 @@ export default function ServersPage() {
                       </td>
                       <td>
                         <Badge tone={e.requested_role === 'primary' ? 'indigo' : 'teal'}>
-                          {e.requested_role === 'primary' ? '主节点' : '子节点'}
+                          {e.requested_role === 'primary' ? '主服务器' : '子服务器'}
                         </Badge>
                       </td>
                       <td className="mono">{e.source_ip || (e.reported_addresses?.[0]?.address ?? '—')}</td>
@@ -186,7 +186,7 @@ export default function ServersPage() {
       </Card>
 
       <Card
-        title="节点列表"
+        title="服务器列表"
         actions={
           <div className="btn-row">
             <TextInput
@@ -206,8 +206,8 @@ export default function ServersPage() {
             </Select>
             <Select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
               <option value="">全部角色</option>
-              <option value="primary">主节点</option>
-              <option value="child">子节点</option>
+              <option value="primary">主服务器</option>
+              <option value="child">子服务器</option>
             </Select>
             <button className="btn btn-ghost btn-sm" onClick={nodesState.reload}>
               刷新
@@ -216,11 +216,11 @@ export default function ServersPage() {
         }
       >
         {nodesState.loading && nodesState.data === null ? (
-          <LoadingState label="加载节点列表…" />
+          <LoadingState label="加载服务器列表…" />
         ) : nodesState.error ? (
           <ErrorState message={errorMessage(nodesState.error)} onRetry={nodesState.reload} />
         ) : filtered.length === 0 ? (
-          <EmptyState title={nodes.length === 0 ? '还没有注册节点' : '没有匹配的节点'} hint={nodes.length === 0 ? '等待节点 Agent 发起注册申请。' : '请调整筛选条件。'} />
+          <EmptyState title={nodes.length === 0 ? '还没有注册服务器' : '没有匹配的服务器'} hint={nodes.length === 0 ? '等待服务器 Agent 发起注册申请。' : '请调整筛选条件。'} />
         ) : (
           <div className="table-wrap">
             <table className="table">
@@ -248,7 +248,7 @@ export default function ServersPage() {
                         <div className="muted mono" style={{ fontSize: 12 }}>{n.id ?? n.node_id}</div>
                       </td>
                       <td>
-                        <Badge tone={n.role === 'primary' ? 'indigo' : 'teal'}>{n.role === 'primary' ? '主节点' : '子节点'}</Badge>
+                        <Badge tone={n.role === 'primary' ? 'indigo' : 'teal'}>{n.role === 'primary' ? '主服务器' : '子服务器'}</Badge>
                       </td>
                       <td className="mono">
                         {nodeIp(n)}
@@ -298,7 +298,7 @@ export default function ServersPage() {
 
       <Modal
         open={reviewTarget !== null}
-        title={reviewAction === 'approve' ? '批准节点申请' : '拒绝节点申请'}
+        title={reviewAction === 'approve' ? '批准服务器申请' : '拒绝服务器申请'}
         onClose={() => setReviewTarget(null)}
         width={480}
       >
@@ -308,7 +308,7 @@ export default function ServersPage() {
               <dt>主机名</dt>
               <dd>{reviewTarget.hostname || '—'}</dd>
               <dt>申请角色</dt>
-              <dd>{reviewTarget.requested_role === 'primary' ? '主节点' : '子节点'}</dd>
+              <dd>{reviewTarget.requested_role === 'primary' ? '主服务器' : '子服务器'}</dd>
               <dt>来源地址</dt>
               <dd className="mono">{reviewTarget.source_ip || '—'}</dd>
               <dt>Agent 版本</dt>
@@ -326,7 +326,7 @@ export default function ServersPage() {
             </label>
             {isProd && reviewAction === 'approve' && (
               <div className="alert alert-danger" role="alert">
-                ⚠️ <strong>正式环境</strong>：批准后节点将获得正式环境身份。
+                ⚠️ <strong>正式环境</strong>：批准后服务器将获得正式环境身份。
               </div>
             )}
             {reviewError && <div className="alert alert-danger">{reviewError}</div>}
@@ -342,21 +342,21 @@ export default function ServersPage() {
         )}
       </Modal>
 
-      <Modal open={deleteTarget !== null} title="永久删除服务器节点" onClose={() => setDeleteTarget(null)} width={520}>
+      <Modal open={deleteTarget !== null} title="永久删除服务器" onClose={() => setDeleteTarget(null)} width={520}>
         {deleteTarget && (
           <form onSubmit={submitDelete}>
             <div className="kv" style={{ marginBottom: 14 }}>
-              <dt>节点</dt>
+              <dt>服务器</dt>
               <dd>{nodeName(deleteTarget)}</dd>
               <dt>实例名</dt>
               <dd className="mono">{deleteTarget.instance_name || deleteTarget.id || deleteTarget.node_id || '—'}</dd>
               <dt>角色</dt>
-              <dd>子节点</dd>
+              <dd>子服务器</dd>
               <dt>状态</dt>
               <dd><StatusBadge status={deleteTarget.status} /></dd>
             </div>
             <div className="alert alert-danger" role="alert">
-              ⚠️ 此操作<strong>不可恢复</strong>：该节点的任务、Lease、自动免审批规则、参数历史、指标与审计记录将被<strong>永久删除</strong>。删除后原节点凭证立即失效，重新上线需重新注册审批。
+              ⚠️ 此操作<strong>不可恢复</strong>：该服务器的任务、Lease、自动免审批规则、参数历史、指标与审计记录将被<strong>永久删除</strong>。删除后原服务器凭证立即失效，重新上线需重新注册审批。
             </div>
             {isProd && (
               <div className="alert alert-danger" role="alert">
@@ -365,10 +365,10 @@ export default function ServersPage() {
             )}
             <label className="field">
               <span className="field-label">
-                输入节点实例名以确认 <em className="req">*</em>
+                输入服务器实例名以确认 <em className="req">*</em>
               </span>
               <TextInput
-                placeholder={deleteTarget.instance_name || '请输入节点实例名'}
+                placeholder={deleteTarget.instance_name || '请输入服务器实例名'}
                 value={deleteConfirm}
                 onChange={(e) => setDeleteConfirm(e.target.value)}
                 autoComplete="off"

@@ -396,6 +396,7 @@ func TestLeaseAbsoluteCapBlocksRenew(t *testing.T) {
 	res, err := leases.CreateLeaseRequest(ctx, LeaseRequestInput{
 		NodeSelector: nodeID, PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",
 		PermissionProfile: "read-only", RequestedDurationSecs: 3600, ClientRequestID: "cap-1", AIAgentID: "ai-1",
+		Purpose: "test",
 	}, "1.1.1.1", principal)
 	if err != nil || res.Lease == nil {
 		t.Fatalf("lease request: %v", err)
@@ -444,7 +445,7 @@ func TestRenewalsDisabled(t *testing.T) {
 	principal := mustCreatePrincipal(t, st, nodes.EnvID(), "renew", 24*time.Hour)
 	res, err := leases.CreateLeaseRequest(ctx, LeaseRequestInput{
 		NodeSelector: nodeID, PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",
-		PermissionProfile: "read-only", ClientRequestID: "nr-1", AIAgentID: "ai-1",
+		PermissionProfile: "read-only", ClientRequestID: "nr-1", AIAgentID: "ai-1", Purpose: "test",
 	}, "1.1.1.1", principal)
 	if err != nil || res.Lease == nil {
 		t.Fatalf("lease request: %v", err)
@@ -462,7 +463,7 @@ func TestRenewalsDisabled(t *testing.T) {
 	}
 	if _, err := leases.CreateLeaseRequest(ctx, LeaseRequestInput{
 		NodeSelector: nodeID, PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",
-		PermissionProfile: "read-only", ClientRequestID: "nr-2", AIAgentID: "ai-1",
+		PermissionProfile: "read-only", ClientRequestID: "nr-2", AIAgentID: "ai-1", Purpose: "test",
 	}, "1.1.1.1", principal); err == nil {
 		t.Fatal("new requests should be denied when gate off")
 	}

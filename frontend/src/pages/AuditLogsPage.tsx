@@ -108,9 +108,9 @@ export default function AuditLogsPage() {
           </div>
           {isPrimary && (
             <div className="filter-group">
-              <span className="filter-label">节点</span>
+              <span className="filter-label">服务器</span>
               <Select value={nodeFilter} onChange={(e) => { setNodeFilter(e.target.value); setPage(1); }}>
-                <option value="">全部节点</option>
+                <option value="">全部服务器</option>
                 {nodes.map((n) => (
                   <option key={n.id ?? n.node_id} value={n.id ?? n.node_id}>
                     {nodeName(n)}
@@ -125,7 +125,7 @@ export default function AuditLogsPage() {
               <option value="">全部</option>
               <option value="admin">管理员</option>
               <option value="ai_agent">AI Agent</option>
-              <option value="node">节点</option>
+              <option value="node">服务器</option>
               <option value="system">系统</option>
             </Select>
           </div>
@@ -190,7 +190,7 @@ export default function AuditLogsPage() {
                 <thead>
                   <tr>
                     <th>时间</th>
-                    <th>节点</th>
+                    <th>服务器</th>
                     <th>操作者</th>
                     <th>动作</th>
                     <th>资源</th>
@@ -245,7 +245,7 @@ export default function AuditLogsPage() {
             <dl className="kv kv-2col">
               <dt>事件 ID</dt>
               <dd className="mono">{detail.id}</dd>
-              <dt>节点</dt>
+              <dt>服务器</dt>
               <dd>{detail.node_name || detail.node_id || '—'}</dd>
               <dt>操作者</dt>
               <dd>
