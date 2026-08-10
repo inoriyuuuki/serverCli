@@ -12,6 +12,9 @@ const (
 	AuthAgent   = "agent"   // node credential + HMAC signature
 	AuthToken   = "token"   // access token (sct_*)
 	AuthRuntime = "runtime" // lease runtime signed token
+	// AuthAdminOrToken marks read-only endpoints that accept either an admin
+	// session cookie or a valid access token (dual auth).
+	AuthAdminOrToken = "admin|token"
 )
 
 // RouteParam describes one documented parameter.

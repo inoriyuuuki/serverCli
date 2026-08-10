@@ -184,8 +184,8 @@ func (s *Server) Handler() http.Handler {
 	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/auth/password", Group: "认证", Auth: AuthAdmin, Summary: "修改密码", Debug: false}, s.handleChangePassword)
 
 	// Nodes.
-	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes", Group: "节点", Auth: AuthAdmin, Summary: "节点列表", Params: []RouteParam{{Name: "limit", In: "query", Type: "integer"}}, Debug: true}, s.requireAdmin(s.handleListNodes))
-	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes/{id}", Group: "节点", Auth: AuthAdmin, Summary: "节点详情", Debug: true}, s.requireAdmin(s.handleGetNode))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes", Group: "节点", Auth: AuthAdminOrToken, Summary: "节点列表（管理员 Session 或 Access Token）", Params: []RouteParam{{Name: "limit", In: "query", Type: "integer"}}, Debug: true}, s.adminOrToken(service.ResourceNodes, service.ActionRead, "/api/v1/nodes")(s.handleListNodes))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes/{id}", Group: "节点", Auth: AuthAdminOrToken, Summary: "节点详情（管理员 Session 或 Access Token）", Debug: true}, s.adminOrToken(service.ResourceNodes, service.ActionRead, "/api/v1/nodes/{id}")(s.handleGetNode))
 	s.register(mux, RouteSpec{Method: "PATCH", Path: "/api/v1/nodes/{id}", Group: "节点", Auth: AuthAdmin, Summary: "更新节点（启用/停用/别名等）", Debug: true}, s.requireAdmin(s.handlePatchNode))
 	s.register(mux, RouteSpec{Method: "DELETE", Path: "/api/v1/nodes/{id}", Group: "节点", Auth: AuthAdmin, Summary: "删除节点（级联清理）", Errors: []string{"409"}, Debug: true}, s.requireAdmin(s.handleDeleteNode))
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/node-enrollments", Group: "节点", Auth: AuthAdmin, Summary: "注册申请列表", Debug: true}, s.requireAdmin(s.handleListEnrollments))

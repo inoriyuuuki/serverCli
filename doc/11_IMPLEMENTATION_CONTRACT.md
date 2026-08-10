@@ -98,8 +98,8 @@ SQLite 默认 `DATABASE_URL=file:<AGENT_STATE_DIR>/servercli.db`；PostgreSQL �
 ### 4.3 节点
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/v1/nodes` | 主看全部；子看本机 |
-| GET | `/api/v1/nodes/{node_id}` | 详情（子越权 404） |
+| GET | `/api/v1/nodes` | 主看全部；子看本机（管理员 Session 或 Access Token） |
+| GET | `/api/v1/nodes/{node_id}` | 详情（子越权 404；管理员 Session 或 Access Token） |
 | PATCH | `/api/v1/nodes/{node_id}` | 别名/标签/备注/启用 |
 | GET | `/api/v1/node-enrollments` | 申请列表（主） |
 | POST | `/api/v1/node-enrollments/{id}/approve` | 批准 `{review_note}` |

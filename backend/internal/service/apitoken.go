@@ -66,6 +66,7 @@ const defaultPermissionsJSON = `{"version":1,"grants":[{"resource":"*","actions"
 const (
 	ResourceLeaseRequests = "ai.lease_requests"
 	ResourceLeases        = "ai.leases"
+	ResourceNodes         = "nodes"
 
 	ActionCreate    = "create"
 	ActionRead      = "read"

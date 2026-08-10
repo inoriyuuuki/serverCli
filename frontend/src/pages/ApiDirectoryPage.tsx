@@ -19,6 +19,7 @@ const AUTH_LABEL: Record<string, { label: string; tone: 'teal' | 'indigo' | 'amb
   admin: { label: '管理员 Session', tone: 'indigo' },
   agent: { label: 'Agent HMAC', tone: 'amber' },
   token: { label: 'Access Token', tone: 'teal' },
+  'admin|token': { label: '管理员或 Token', tone: 'indigo' },
   runtime: { label: 'Lease 运行时', tone: 'red' },
 };
 

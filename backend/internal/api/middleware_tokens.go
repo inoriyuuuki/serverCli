@@ -125,3 +125,25 @@ func idsFromPath(path string) (leaseRequestID, leaseID string) {
 	}
 	return leaseRequestID, leaseID
 }
+
+// adminOrToken accepts either an admin session (cookie) or a valid access
+// token for read-only endpoints (e.g. node discovery). Token requests go
+// through the normal tokenAuth path, including usage logging and the
+// resource/action permission check. Write methods keep requireAdmin only.
+func (s *Server) adminOrToken(resource, action, route string) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if cookie, err := r.Cookie("servercli_session"); err == nil {
+				if sess, admin, aerr := s.auth.Authenticate(r.Context(), cookie.Value); aerr == nil {
+					_ = s.store.TouchSession(r.Context(), sess.ID, remoteIP(r), r.UserAgent())
+					ctx := context.WithValue(r.Context(), adminCtxKey{}, admin)
+					ctx = context.WithValue(ctx, sessionCtxKey{}, sess)
+					next(w, r.WithContext(ctx))
+					return
+				}
+			}
+			// No valid session: fall back to Access Token (401 when absent).
+			s.tokenAuth(resource, action, route)(next)(w, r)
+		}
+	}
+}

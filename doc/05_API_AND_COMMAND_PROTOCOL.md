@@ -36,11 +36,11 @@
 
 ## 3. 节点 API
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `/nodes` | 主节点列出所有节点；子视图只返回本机 |
-| `GET` | `/nodes/{node_id}` | 节点详情 |
-| `PATCH` | `/nodes/{node_id}` | 别名、标签、启用状态 |
+| 方法 | 路径 | 鉴权 | 说明 |
+| --- | --- | --- | --- |
+| `GET` | `/nodes` | 管理员 Session 或 Access Token | 主节点列出所有节点；子视图只返回本机 |
+| `GET` | `/nodes/{node_id}` | 管理员 Session 或 Access Token | 节点详情 |
+| `PATCH` | `/nodes/{node_id}` | 管理员 Session | 别名、标签、启用状态 |
 | `GET` | `/node-enrollments` | 待审批申请 |
 | `POST` | `/node-enrollments/{id}/approve` | 批准 |
 | `POST` | `/node-enrollments/{id}/reject` | 拒绝 |
@@ -229,6 +229,7 @@ Profile 映射到命令、sudoers、文件路径和网络访问白名单，而�
 ## 11. API 安全与限流
 
 - 外部 AI 自助 API 使用 Access Token 鉴权（`sct_*`，库中仅存 SHA-256 哈希与前缀，日志/错误/示例不出现明文）；每次可识别 Token 的请求写入 `api_token_usage_log`。
+- 只读节点发现接口（`GET /nodes`、`GET /nodes/{id}`）支持「管理员 Session 或 Access Token」双鉴权，便于 AI 客户端用 Token 解析 `node_id`；其余管理端写接口仍仅管理员 Session。
 - 登录、Lease 申请、续期和节点注册均设置独立限流。
 - 节点凭证失败达到阈值后产生高风险审计，不自动永久封禁合法节点。
 - 所有错误响应不泄露节点密钥、用户存在性、内部路径和原始数据库错误。

@@ -791,3 +791,54 @@ func TestPublicKeyInjectionRejected(t *testing.T) {
 		t.Fatalf("legitimate key should be accepted, got %d: %s", status, out)
 	}
 }
+
+// TestAccessTokenNodeDiscovery verifies that read-only node discovery accepts
+// an Access Token (dual auth), while write operations still require an admin
+// session.
+func TestAccessTokenNodeDiscovery(t *testing.T) {
+	env := setupAPI(t)
+
+	_, tok := createAPIToken(t, env, "discover", "1h")
+	h := tokenHeaders(tok)
+
+	// Token can list nodes (used by the skill to resolve node_id).
+	status, out := env.serve("GET", "/api/v1/nodes", nil, h)
+	if status != http.StatusOK {
+		t.Fatalf("token node list should be 200, got %d: %s", status, out)
+	}
+	nodes := mustDecode[struct {
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+	}](t, out)
+	if len(nodes.Nodes) == 0 {
+		t.Fatalf("expected at least the enrolled node")
+	}
+	found := false
+	for _, n := range nodes.Nodes {
+		if n.ID == env.nodeID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("enrolled node not in list: %s", out)
+	}
+
+	// Token can read one node.
+	status, _ = env.serve("GET", "/api/v1/nodes/"+env.nodeID, nil, h)
+	if status != http.StatusOK {
+		t.Fatalf("token node detail should be 200, got %d", status)
+	}
+
+	// Write operations stay admin-only: token without session -> 401.
+	status, _ = env.serve("PATCH", "/api/v1/nodes/"+env.nodeID, map[string]any{"alias": "x"}, h)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("token write should be 401, got %d", status)
+	}
+
+	// No token at all -> 401.
+	status, _ = env.serve("GET", "/api/v1/nodes", nil, nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("anonymous node list should be 401, got %d", status)
+	}
+}
