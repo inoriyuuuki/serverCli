@@ -117,13 +117,15 @@ type auditMeta struct {
 func (s *NotificationService) send(ctx context.Context, req NotificationRequest, meta auditMeta) (*NotificationResult, error) {
 	normalized, err := validateNotification(req)
 	if err != nil {
-		s.auditNotification(ctx, req, meta, ResultFailure, "notification.send")
+		// Caller-side validation failure is a denied attempt (the request was
+		// never delivered), not an upstream failure.
+		s.auditNotification(ctx, req, meta, ResultDenied, "notification.send")
 		return nil, err
 	}
 	provider, ok := s.providers[normalized.Channel]
 	if !ok {
 		err := fmt.Errorf("%w: unsupported channel %q", ErrBadRequest, normalized.Channel)
-		s.auditNotification(ctx, normalized, meta, ResultFailure, "notification.send")
+		s.auditNotification(ctx, normalized, meta, ResultDenied, "notification.send")
 		return nil, err
 	}
 	if err := provider.Send(ctx, normalized); err != nil {

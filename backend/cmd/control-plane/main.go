@@ -135,6 +135,30 @@ func run() error {
 		if err := srv.LeaseService().MigrateLegacyApprovalFlow(ctx); err != nil {
 			log.Warn("legacy lease approval migration failed", "error", err)
 		}
+		// Startup permission hygiene: warn + audit tokens whose permission JSON
+		// is missing/empty/invalid or still carries a residual wildcard
+		// (fail-closed authorization is handled at Resolve/Authorize time).
+		if err := srv.TokenService().ScanInvalidPermissions(ctx); err != nil {
+			log.Warn("invalid permission scan failed", "error", err)
+		}
+	}
+
+	// Periodic cleanup of idle notification rate-limit buckets (in-process,
+	// single-instance counters; multi-instance deployments each count their own).
+	{
+		limiter := srv.NotificationLimiter()
+		go func() {
+			ticker := time.NewTicker(10 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					limiter.Cleanup()
+				}
+			}
+		}()
 	}
 
 	// One-time backfill of reusable task parameter history from existing task

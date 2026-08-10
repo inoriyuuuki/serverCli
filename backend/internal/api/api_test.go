@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -54,6 +55,21 @@ func setupAPI(t *testing.T) *testEnv {
 	cfg.LogLevel = "error"
 	cfg.InstanceName = "test-primary"
 	cfg.NodeRole = "primary"
+	// Notification tests configure the Feishu webhook / rate limits through
+	// env vars (t.Setenv) so setupAPI can stay parameterless.
+	if v := os.Getenv("NOTIFICATION_FEISHU_WEBHOOK_URL"); v != "" {
+		cfg.NotificationFeishuWebhookURL = v
+	}
+	if v := os.Getenv("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.NotificationRateLimitPerTokenPerMinute = n
+		}
+	}
+	if v := os.Getenv("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.NotificationRateLimitGlobalPerMinute = n
+		}
+	}
 	log := logger.New(io.Discard, "error")
 	ctx := context.Background()
 	database, err := db.Open(ctx, "sqlite", cfg.DatabaseURL, log)
@@ -403,6 +419,9 @@ func TestAPIFullFlow(t *testing.T) {
 	if tokenResp.Token == "" || !strings.HasPrefix(tokenResp.Token, "sct_") {
 		t.Fatalf("token not created: %s", out)
 	}
+	tokenID, _ := tokenResp.APIToken["id"].(string)
+	// New tokens start with zero permissions: grant the AI credential surface.
+	grantAIPermissions(t, env, tokenID, 1)
 	auth := map[string]string{"Authorization": "Bearer " + tokenResp.Token}
 	status, out = env.serve("POST", "/api/v1/ai/lease-requests", map[string]any{
 		"node_selector": env.nodeID, "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",

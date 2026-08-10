@@ -17,11 +17,58 @@ func tokenPrincipalFrom(ctx context.Context) *service.TokenPrincipal {
 	return v
 }
 
+// tokenAuthHookState carries per-request state shared between the token auth
+// middleware, the optional afterResolve hook and the handler itself. The
+// middleware stores a pointer in the request context so handlers can mutate
+// it (e.g. force a usage outcome) via setForcedOutcome.
+type tokenAuthHookState struct {
+	rateAcquired  bool   // notification rate-limit quota was acquired
+	forcedOutcome string // handler-forced usage outcome ("" = none)
+	route         string // normalized route template for usage logging
+}
+
+type tokenAuthHookStateKey struct{}
+
+// tokenAuthHookStateFrom returns the hook state attached by tokenAuthWith, or
+// nil when the request did not pass through it.
+func tokenAuthHookStateFrom(ctx context.Context) *tokenAuthHookState {
+	v, _ := ctx.Value(tokenAuthHookStateKey{}).(*tokenAuthHookState)
+	return v
+}
+
+// setForcedOutcome marks the usage outcome the middleware must record for the
+// current request, overriding the status-code based default (used by GET
+// /notice which returns HTTP 200 while the attempt is denied/failed).
+func setForcedOutcome(ctx context.Context, outcome string) {
+	if h := tokenAuthHookStateFrom(ctx); h != nil {
+		h.forcedOutcome = outcome
+	}
+}
+
+// tokenAuthOptions configures the tokenAuthWith middleware.
+type tokenAuthOptions struct {
+	// afterResolve runs after Resolve succeeds and before Authorize; it may
+	// consume side quotas (e.g. notification rate limits). Returning true
+	// means the hook already wrote the response plus usage/audit records and
+	// the middleware returns immediately.
+	afterResolve func(w http.ResponseWriter, r *http.Request, p *service.TokenPrincipal, tok *model.APIAccessToken) bool
+	// outcomeOverride forces the usage outcome after the handler returns
+	// (for handlers that return HTTP 200 while the attempt is denied/failed).
+	outcomeOverride func(r *http.Request, p *service.TokenPrincipal, tok *model.APIAccessToken) (outcome string, ok bool)
+}
+
 // tokenAuth authenticates external AI self-service requests with an access
 // token, authorizes the resource/action pair and records a usage log row for
 // every recognized token (valid, expired or revoked). route is the normalized
 // path template (e.g. /api/v1/ai/lease-requests/{id}).
 func (s *Server) tokenAuth(resource, action, route string) func(http.HandlerFunc) http.HandlerFunc {
+	return s.tokenAuthWith(resource, action, route, tokenAuthOptions{})
+}
+
+// tokenAuthWith is the full token-auth pipeline: authenticate, run the
+// optional afterResolve hook (e.g. rate-limit acquisition), authorize, run the
+// handler, then record a usage row honoring an optional outcome override.
+func (s *Server) tokenAuthWith(resource, action, route string, opts tokenAuthOptions) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			plaintext := bearerToken(r)
@@ -47,6 +94,14 @@ func (s *Server) tokenAuth(resource, action, route string) func(http.HandlerFunc
 				writeError(w, r, s.log, http.StatusUnauthorized, "UNAUTHENTICATED", "invalid or expired access token", nil)
 				return
 			}
+			hookState := &tokenAuthHookState{route: route}
+			authCtx := context.WithValue(r.Context(), tokenCtxKey{}, principal)
+			authCtx = context.WithValue(authCtx, tokenAuthHookStateKey{}, hookState)
+			if opts.afterResolve != nil {
+				if opts.afterResolve(w, r.WithContext(authCtx), principal, tok) {
+					return
+				}
+			}
 			if authErr := s.tokens.Authorize(principal, resource, action, nil); authErr != nil {
 				sw := &statusWriter{ResponseWriter: w, status: http.StatusForbidden}
 				s.recordTokenUsage(r, sw, tok, model.TokenStateValid, model.TokenUsageDenied, resource, action, route)
@@ -58,7 +113,6 @@ func (s *Server) tokenAuth(resource, action, route string) func(http.HandlerFunc
 				writeError(w, r, s.log, http.StatusForbidden, "FORBIDDEN", "access token lacks permission for this operation", nil)
 				return
 			}
-			ctx := context.WithValue(r.Context(), tokenCtxKey{}, principal)
 			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 			recorded := false
 			defer func() {
@@ -71,13 +125,18 @@ func (s *Server) tokenAuth(resource, action, route string) func(http.HandlerFunc
 					s.recordTokenUsage(r, sw, tok, model.TokenStateValid, model.TokenUsageFailure, resource, action, route)
 				}
 			}()
-			next(sw, r.WithContext(ctx))
+			next(sw, r.WithContext(authCtx))
 			recorded = true
 			outcome := model.TokenUsageSuccess
 			if sw.status >= 400 && sw.status < 500 {
 				outcome = model.TokenUsageDenied
 			} else if sw.status >= 500 {
 				outcome = model.TokenUsageFailure
+			}
+			if opts.outcomeOverride != nil {
+				if o, ok := opts.outcomeOverride(r.WithContext(authCtx), principal, tok); ok {
+					outcome = o
+				}
 			}
 			s.recordTokenUsage(r, sw, tok, model.TokenStateValid, outcome, resource, action, route)
 			if err := s.store.TouchAccessToken(r.Context(), principal.TokenID, remoteIP(r)); err != nil {

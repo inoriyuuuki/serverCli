@@ -16,7 +16,28 @@ func (s *Server) primaryOnly(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
+// tokenView augments an access token with the structured permissions parsed
+// from its stored JSON, so list/detail/create/revoke/update responses expose a
+// stable "permissions" object instead of raw JSON.
+type tokenView struct {
+	*model.APIAccessToken
+	Permissions service.PermissionSet `json:"permissions"`
+}
+
+// newTokenView builds a tokenView. Unparseable permission JSON fails closed to
+// an empty zero-grant set (never leaks the raw JSON).
+func newTokenView(t *model.APIAccessToken) tokenView {
+	perms, err := service.ParsePermissions(t.PermissionsJSON)
+	if err != nil {
+		perms = service.PermissionSet{Version: 1}
+	}
+	return tokenView{APIAccessToken: t, Permissions: perms}
+}
+
 // handleCreateAPIToken creates an access token; the plaintext is returned once.
+// New tokens always start with zero permissions; grants are assigned later via
+// handleUpdateAPITokenPermissions. The create body intentionally accepts no
+// permissions field (decodeJSON rejects unknown fields).
 func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
 	if s.primaryOnly(w, r) {
 		return
@@ -32,7 +53,7 @@ func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"api_token": res.Token,
+		"api_token": newTokenView(res.Token),
 		"token":     res.Plaintext,
 	})
 }
@@ -51,7 +72,7 @@ func (s *Server) handleListAPITokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type tokenWithCount struct {
-		*model.APIAccessToken
+		tokenView
 		ActiveLeaseCount int64 `json:"active_lease_count"`
 	}
 	out := make([]tokenWithCount, 0, len(tokens))
@@ -61,7 +82,7 @@ func (s *Server) handleListAPITokens(w http.ResponseWriter, r *http.Request) {
 			s.log.Warn("active lease count unavailable", "error", err, "token_id", tok.ID)
 			n = 0
 		}
-		out = append(out, tokenWithCount{APIAccessToken: tok, ActiveLeaseCount: n})
+		out = append(out, tokenWithCount{tokenView: newTokenView(tok), ActiveLeaseCount: n})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"api_tokens": out})
 }
@@ -77,7 +98,7 @@ func (s *Server) handleGetAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, _ := s.store.ActiveLeaseCountByAccessToken(r.Context(), tok.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"api_token": tok, "active_lease_count": n})
+	writeJSON(w, http.StatusOK, map[string]any{"api_token": newTokenView(tok), "active_lease_count": n})
 }
 
 // handleRevokeAPIToken revokes a token and cascades to its active leases in
@@ -119,9 +140,44 @@ func (s *Server) handleRevokeAPIToken(w http.ResponseWriter, r *http.Request) {
 		s.publishLeaseKeys(l)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"api_token":           tok,
+		"api_token":           newTokenView(tok),
 		"revoked_lease_count": len(affected),
 	})
+}
+
+// handlePermissionCatalog returns the static permission catalog and its
+// top-level categories, driving the admin UI permission editor.
+func (s *Server) handlePermissionCatalog(w http.ResponseWriter, r *http.Request) {
+	if s.primaryOnly(w, r) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"categories":  service.PermissionCategories(),
+		"permissions": service.PermissionCatalog(),
+	})
+}
+
+// handleUpdateAPITokenPermissions replaces a token's permission set under an
+// optimistic lock: the request must carry the current permission_version,
+// otherwise the update conflicts (409) and the caller must re-read the token.
+func (s *Server) handleUpdateAPITokenPermissions(w http.ResponseWriter, r *http.Request) {
+	if s.primaryOnly(w, r) {
+		return
+	}
+	var in struct {
+		PermissionVersion int                   `json:"permission_version"`
+		Permissions       service.PermissionSet `json:"permissions"`
+	}
+	if !decodeJSON(w, r, s.log, &in) {
+		return
+	}
+	admin := adminFrom(r.Context())
+	tok, err := s.tokens.UpdatePermissions(r.Context(), r.PathValue("id"), in.PermissionVersion, in.Permissions, admin.ID)
+	if err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_token": newTokenView(tok)})
 }
 
 // handleListTokenUsageLogs lists usage logs for a token.

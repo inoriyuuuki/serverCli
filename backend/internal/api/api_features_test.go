@@ -61,6 +61,53 @@ func tokenHeaders(plaintext string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + plaintext}
 }
 
+// putPermissions assigns a grant set to a token via the admin permissions API
+// under an optimistic lock and returns the new permission revision.
+func putPermissions(t *testing.T, env *testEnv, tokenID string, revision int, grants []map[string]any) int {
+	t.Helper()
+	status, out := env.serve("PUT", "/api/v1/api-tokens/"+tokenID+"/permissions", map[string]any{
+		"permission_version": revision,
+		"permissions":        map[string]any{"version": 1, "grants": grants},
+	}, env.adminHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("grant permissions status %d: %s", status, out)
+	}
+	var resp struct {
+		APIToken struct {
+			PermissionVersion int `json:"permission_version"`
+		} `json:"api_token"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("decode grant response %s: %v", out, err)
+	}
+	if resp.APIToken.PermissionVersion != revision+1 {
+		t.Fatalf("expected permission revision %d, got %d: %s", revision+1, resp.APIToken.PermissionVersion, out)
+	}
+	return resp.APIToken.PermissionVersion
+}
+
+// grantAIPermissions assigns the full AI credential surface (nodes:read,
+// ai.lease_requests:create/read, ai.leases:renew/heartbeat/disconnect) to a
+// token and returns the new permission revision. New tokens start with zero
+// permissions, so AI API calls require this grant.
+func grantAIPermissions(t *testing.T, env *testEnv, tokenID string, revision int) int {
+	t.Helper()
+	return putPermissions(t, env, tokenID, revision, []map[string]any{
+		{"resource": "nodes", "actions": []string{"read"}},
+		{"resource": "ai.lease_requests", "actions": []string{"create", "read"}},
+		{"resource": "ai.leases", "actions": []string{"renew", "heartbeat", "disconnect"}},
+	})
+}
+
+// grantNotificationsPermission grants only notifications:send to a token and
+// returns the new permission revision.
+func grantNotificationsPermission(t *testing.T, env *testEnv, tokenID string, revision int) int {
+	t.Helper()
+	return putPermissions(t, env, tokenID, revision, []map[string]any{
+		{"resource": "notifications", "actions": []string{"send"}},
+	})
+}
+
 func TestAccessTokenLeaseFlow(t *testing.T) {
 	env := setupAPI(t)
 	ctx := context.Background()
@@ -74,7 +121,7 @@ func TestAccessTokenLeaseFlow(t *testing.T) {
 		t.Fatalf("error response leaked token material: %s", out)
 	}
 	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", "read-only"),
-		tokenHeaders("sct_" + strings.Repeat("0", 64)))
+		tokenHeaders("sct_"+strings.Repeat("0", 64)))
 	if status != http.StatusUnauthorized {
 		t.Fatalf("invalid token should be 401, got %d: %s", status, out)
 	}
@@ -87,8 +134,13 @@ func TestAccessTokenLeaseFlow(t *testing.T) {
 
 	// Create tokens: short-lived (15m), medium (1h) and permanent.
 	shortID, shortTok := createAPIToken(t, env, "short-lived", "15m")
-	_, midTok := createAPIToken(t, env, "one-hour", "1h")
-	_, permTok := createAPIToken(t, env, "permanent", "never")
+	midID, midTok := createAPIToken(t, env, "one-hour", "1h")
+	permID, permTok := createAPIToken(t, env, "permanent", "never")
+	// New tokens start with zero permissions: grant the AI credential surface
+	// before any AI API call.
+	grantAIPermissions(t, env, shortID, 1)
+	grantAIPermissions(t, env, midID, 1)
+	grantAIPermissions(t, env, permID, 1)
 
 	// Lease request with a valid token is auto-approved and bound to the token.
 	h := tokenHeaders(shortTok)
@@ -234,7 +286,8 @@ func TestAccessTokenLeaseFlow(t *testing.T) {
 func TestAccessTokenTTLBoundsLease(t *testing.T) {
 	env := setupAPI(t)
 
-	_, permTok := createAPIToken(t, env, "perm", "never")
+	permID, permTok := createAPIToken(t, env, "perm", "never")
+	grantAIPermissions(t, env, permID, 1)
 
 	// A permanent token cannot exceed the system absolute lease cap (24h).
 	h := tokenHeaders(permTok)
@@ -255,7 +308,8 @@ func TestAccessTokenTTLBoundsLease(t *testing.T) {
 	}
 
 	// 1h token with a 6h request: lease expires at the token, not 6h.
-	_, hTok := createAPIToken(t, env, "one-hour", "1h")
+	hID, hTok := createAPIToken(t, env, "one-hour", "1h")
+	grantAIPermissions(t, env, hID, 1)
 	h2 := tokenHeaders(hTok)
 	h2["Idempotency-Key"] = "ttl-1h-1"
 	body := leaseRequestBody(env.nodeID, "device-P", "read-only")
@@ -531,11 +585,11 @@ func TestLegacyAutoApprovalRoutesRetired(t *testing.T) {
 
 	// The old manual-approval and auto-approval routes are gone (404).
 	for path, method := range map[string]string{
-		"/api/v1/ai/auto-approvals":                          "GET",
-		"/api/v1/ai/lease-requests/some-id/approve":          "POST",
-		"/api/v1/ai/lease-requests/some-id/reject":           "POST",
-		"/api/v1/ai/lease-requests/some-id/auto-approval":    "POST",
-		"/api/v1/ai/auto-approvals/some-id/extend":           "POST",
+		"/api/v1/ai/auto-approvals":                       "GET",
+		"/api/v1/ai/lease-requests/some-id/approve":       "POST",
+		"/api/v1/ai/lease-requests/some-id/reject":        "POST",
+		"/api/v1/ai/lease-requests/some-id/auto-approval": "POST",
+		"/api/v1/ai/auto-approvals/some-id/extend":        "POST",
 	} {
 		req := httptest.NewRequest(method, path, nil)
 		for k, v := range env.adminHeaders() {
@@ -691,8 +745,10 @@ func TestAgentTaskParameterHistoryEndpoints(t *testing.T) {
 func TestIdempotencyReplayOwnershipIsolation(t *testing.T) {
 	env := setupAPI(t)
 
-	_, tokA := createAPIToken(t, env, "owner-A", "1h")
-	_, tokB := createAPIToken(t, env, "owner-B", "1h")
+	idA, tokA := createAPIToken(t, env, "owner-A", "1h")
+	idB, tokB := createAPIToken(t, env, "owner-B", "1h")
+	grantAIPermissions(t, env, idA, 1)
+	grantAIPermissions(t, env, idB, 1)
 
 	// A creates a request keyed solely by the Idempotency-Key header.
 	body := leaseRequestBody(env.nodeID, "device-A", "read-only")
@@ -768,7 +824,8 @@ func TestExpiredAccessTokenRejected(t *testing.T) {
 func TestPublicKeyInjectionRejected(t *testing.T) {
 	env := setupAPI(t)
 
-	_, tok := createAPIToken(t, env, "inject", "1h")
+	id, tok := createAPIToken(t, env, "inject", "1h")
+	grantAIPermissions(t, env, id, 1)
 	for _, bad := range []string{
 		"ssh-ed25519 AAAA...\ncommand=\"/bin/sh\" ssh-ed25519 BBBB...",
 		"ssh-ed25519 AAAA,no-agent-forwarding BBBB",
@@ -798,7 +855,8 @@ func TestPublicKeyInjectionRejected(t *testing.T) {
 func TestAccessTokenNodeDiscovery(t *testing.T) {
 	env := setupAPI(t)
 
-	_, tok := createAPIToken(t, env, "discover", "1h")
+	id, tok := createAPIToken(t, env, "discover", "1h")
+	grantAIPermissions(t, env, id, 1)
 	h := tokenHeaders(tok)
 
 	// Token can list nodes (used by the skill to resolve node_id).
