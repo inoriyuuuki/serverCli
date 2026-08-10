@@ -13,69 +13,75 @@ import (
 
 // Config holds all runtime settings for control plane and node agent.
 type Config struct {
-	AppEnv                     string
-	InstanceName               string
-	NodeRole                   string
-	PrimaryServerIP            string
-	PrimaryBackendURL          string
-	FrontendAddr               string
-	BackendAddr                string
-	DatabaseDriver             string
-	DatabaseURL                string
-	AgentStateDir              string
-	LogDir                     string
-	AdminInitialPassword       string
-	AdminInitialPasswordFile   string
-	AILeaseDefaultMinutes      int
-	AILeaseMaxHours            int
-	AILeaseDisconnectGraceSecs int
-	RetentionDays              int
-	CleanupSchedule            string
-	HeartbeatIntervalSeconds   int
-	OfflineThresholdSeconds    int
-	TaskPollTimeoutSeconds     int
-	CommandsDir                string
-	AuthorizedKeysFile         string
-	LeaseShellBin              string
-	HTTPInsecureSkipVerify     bool
-	LogLevel                   string
-	FrontendDistDir            string
-	MaxTaskOutputBytes         int64
-	TaskPollMaxWaitSeconds     int
-	AgentEnrollmentAutoExpireH int
+	AppEnv                                 string
+	InstanceName                           string
+	NodeRole                               string
+	PrimaryServerIP                        string
+	PrimaryBackendURL                      string
+	FrontendAddr                           string
+	BackendAddr                            string
+	DatabaseDriver                         string
+	DatabaseURL                            string
+	AgentStateDir                          string
+	LogDir                                 string
+	AdminInitialPassword                   string
+	AdminInitialPasswordFile               string
+	AILeaseDefaultMinutes                  int
+	AILeaseMaxHours                        int
+	AILeaseDisconnectGraceSecs             int
+	RetentionDays                          int
+	CleanupSchedule                        string
+	HeartbeatIntervalSeconds               int
+	OfflineThresholdSeconds                int
+	TaskPollTimeoutSeconds                 int
+	CommandsDir                            string
+	AuthorizedKeysFile                     string
+	LeaseShellBin                          string
+	HTTPInsecureSkipVerify                 bool
+	LogLevel                               string
+	FrontendDistDir                        string
+	MaxTaskOutputBytes                     int64
+	TaskPollMaxWaitSeconds                 int
+	NotificationFeishuWebhookURL           string
+	NotificationRateLimitPerTokenPerMinute int
+	NotificationRateLimitGlobalPerMinute   int
+	AgentEnrollmentAutoExpireH             int
 }
 
 // Default returns a Config populated with contract defaults.
 func Default() *Config {
 	return &Config{
-		AppEnv:                     "test",
-		InstanceName:               "test-primary",
-		NodeRole:                   "primary",
-		PrimaryServerIP:            "127.0.0.1",
-		PrimaryBackendURL:          "http://127.0.0.1:9045",
-		FrontendAddr:               "0.0.0.0:9044",
-		BackendAddr:                "0.0.0.0:9045",
-		DatabaseDriver:             "sqlite",
-		DatabaseURL:                "",
-		AgentStateDir:              "./state/test-primary",
-		LogDir:                     "./logs/test-primary",
-		AILeaseDefaultMinutes:      60,
-		AILeaseMaxHours:            24,
-		AILeaseDisconnectGraceSecs: 60,
-		RetentionDays:              7,
-		CleanupSchedule:            "weekly",
-		HeartbeatIntervalSeconds:   30,
-		OfflineThresholdSeconds:    90,
-		TaskPollTimeoutSeconds:     25,
-		CommandsDir:                "commands",
-		AuthorizedKeysFile:         "",
-		LeaseShellBin:              "",
-		HTTPInsecureSkipVerify:     false,
-		LogLevel:                   "info",
-		FrontendDistDir:            "../frontend/dist",
-		MaxTaskOutputBytes:         262144,
-		TaskPollMaxWaitSeconds:     25,
-		AgentEnrollmentAutoExpireH: 72,
+		AppEnv:                                 "test",
+		InstanceName:                           "test-primary",
+		NodeRole:                               "primary",
+		PrimaryServerIP:                        "127.0.0.1",
+		PrimaryBackendURL:                      "http://127.0.0.1:9045",
+		FrontendAddr:                           "0.0.0.0:9044",
+		BackendAddr:                            "0.0.0.0:9045",
+		DatabaseDriver:                         "sqlite",
+		DatabaseURL:                            "",
+		AgentStateDir:                          "./state/test-primary",
+		LogDir:                                 "./logs/test-primary",
+		AILeaseDefaultMinutes:                  60,
+		AILeaseMaxHours:                        24,
+		AILeaseDisconnectGraceSecs:             60,
+		RetentionDays:                          7,
+		CleanupSchedule:                        "weekly",
+		HeartbeatIntervalSeconds:               30,
+		OfflineThresholdSeconds:                90,
+		TaskPollTimeoutSeconds:                 25,
+		CommandsDir:                            "commands",
+		AuthorizedKeysFile:                     "",
+		LeaseShellBin:                          "",
+		HTTPInsecureSkipVerify:                 false,
+		LogLevel:                               "info",
+		FrontendDistDir:                        "../frontend/dist",
+		MaxTaskOutputBytes:                     262144,
+		TaskPollMaxWaitSeconds:                 25,
+		NotificationFeishuWebhookURL:           "",
+		NotificationRateLimitPerTokenPerMinute: 30,
+		NotificationRateLimitGlobalPerMinute:   120,
+		AgentEnrollmentAutoExpireH:             72,
 	}
 }
 
@@ -137,6 +143,9 @@ func Load() (*Config, error) {
 	intv("OFFLINE_THRESHOLD_SECONDS", &cfg.OfflineThresholdSeconds)
 	intv("TASK_POLL_TIMEOUT_SECONDS", &cfg.TaskPollTimeoutSeconds)
 	int64v("MAX_TASK_OUTPUT_BYTES", &cfg.MaxTaskOutputBytes)
+	str("NOTIFICATION_FEISHU_WEBHOOK_URL", &cfg.NotificationFeishuWebhookURL)
+	intv("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE", &cfg.NotificationRateLimitPerTokenPerMinute)
+	intv("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE", &cfg.NotificationRateLimitGlobalPerMinute)
 
 	// Derive dependent defaults.
 	if cfg.DatabaseURL == "" {
@@ -166,6 +175,13 @@ func Load() (*Config, error) {
 	}
 	if cfg.DatabaseDriver != "sqlite" && cfg.DatabaseDriver != "postgres" {
 		return nil, fmt.Errorf("config: DATABASE_DRIVER must be sqlite or postgres, got %q", cfg.DatabaseDriver)
+	}
+	// Notification rate limits: configured values must be positive or startup fails.
+	if cfg.NotificationRateLimitPerTokenPerMinute <= 0 {
+		return nil, fmt.Errorf("config: NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE must be a positive integer, got %d", cfg.NotificationRateLimitPerTokenPerMinute)
+	}
+	if cfg.NotificationRateLimitGlobalPerMinute <= 0 {
+		return nil, fmt.Errorf("config: NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE must be a positive integer, got %d", cfg.NotificationRateLimitGlobalPerMinute)
 	}
 	// Production must never skip TLS verification: the node credential and
 	// agent signatures travel to the primary over this connection.

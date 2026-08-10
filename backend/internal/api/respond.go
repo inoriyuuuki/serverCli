@@ -71,6 +71,12 @@ func writeServiceError(w http.ResponseWriter, r *http.Request, log *slog.Logger,
 		status, code = http.StatusConflict, "TERMINAL_STATE"
 	case errors.Is(err, service.ErrOffline):
 		status, code = http.StatusConflict, "NODE_OFFLINE"
+	case errors.Is(err, service.ErrNotConfigured):
+		status, code = http.StatusServiceUnavailable, "NOT_CONFIGURED"
+	case errors.Is(err, service.ErrUpstream):
+		status, code = http.StatusBadGateway, "UPSTREAM_ERROR"
+	case errors.Is(err, service.ErrRateLimited):
+		status, code = http.StatusTooManyRequests, "RATE_LIMITED"
 	case errors.Is(err, service.ErrUnavailable):
 		status, code = http.StatusServiceUnavailable, "UNAVAILABLE"
 	default:
