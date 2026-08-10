@@ -68,14 +68,14 @@ func (r *Redactor) RedactString(s string) string {
 		changed = true
 		return "[REDACTED_PRIVATE_KEY]"
 	})
-	if strings.Contains(out, "authorization") || strings.Contains(out, "Authorization") {
+	if lower := strings.ToLower(out); strings.Contains(lower, "authorization") {
 		auth := authHeaderRe.ReplaceAllStringFunc(out, func(m string) string {
 			changed = true
 			return "[REDACTED_AUTH]"
 		})
 		out = auth
 	}
-	if strings.Contains(out, "cookie") || strings.Contains(out, "Cookie") {
+	if lower := strings.ToLower(out); strings.Contains(lower, "cookie") {
 		ck := cookieRe.ReplaceAllStringFunc(out, func(m string) string {
 			changed = true
 			return "[REDACTED_COOKIE]"

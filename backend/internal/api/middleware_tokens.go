@@ -22,7 +22,6 @@ func tokenPrincipalFrom(ctx context.Context) *service.TokenPrincipal {
 // middleware stores a pointer in the request context so handlers can mutate
 // it (e.g. force a usage outcome) via setForcedOutcome.
 type tokenAuthHookState struct {
-	rateAcquired  bool   // notification rate-limit quota was acquired
 	forcedOutcome string // handler-forced usage outcome ("" = none)
 	route         string // normalized route template for usage logging
 }

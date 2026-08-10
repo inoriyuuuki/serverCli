@@ -195,5 +195,3 @@ func (s *Server) handleListTokenUsageLogs(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"usage_logs": logs})
 }
-
-var _ = model.TokenUsageSuccess

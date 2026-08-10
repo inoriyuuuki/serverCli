@@ -350,7 +350,8 @@ func (s *Store) LeasesRevokedByToken(ctx context.Context, tokenID, reason string
 // revoked_at/expires_at.
 func (s *Store) UpdateAccessTokenPermissions(ctx context.Context, tokenID string, expectedRevision int, permissionsJSON string) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE api_access_token SET permissions_json=$1, permission_version=permission_version+1
-		WHERE id=$2 AND permission_version=$3`, permissionsJSON, tokenID, expectedRevision)
+		WHERE id=$2 AND permission_version=$3 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $4)`,
+		permissionsJSON, tokenID, expectedRevision, ts(now()))
 	if err != nil {
 		return false, err
 	}

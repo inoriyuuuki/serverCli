@@ -483,6 +483,116 @@ func TestNotificationRateLimit(t *testing.T) {
 	}
 }
 
+// TestNotificationRateLimitSharedAndConsumption covers the acceptance
+// behaviours around shared POST/GET quota and which outcomes consume quota:
+//   - POST and GET /notice share the same per-token (and global) quota;
+//   - 403 / 400 / 502 / 503 requests from a valid token consume quota;
+//   - 429 never consumes quota and never delivers.
+func TestNotificationRateLimitSharedAndConsumption(t *testing.T) {
+	t.Run("post_get_share_quota", func(t *testing.T) {
+		t.Setenv("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE", "2")
+		t.Setenv("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE", "120")
+		mock := &feishuMock{code: 0}
+		env := setupNotifAPI(t, mock)
+		id, tok := createAPIToken(t, env, "share", "1h")
+		grantNotificationsPermission(t, env, id, 1)
+
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t1", "m1"), tokenHeaders(tok)); status != http.StatusOK {
+			t.Fatalf("POST 1 should succeed, got %d: %s", status, out)
+		}
+		if status, out := env.serve("GET", "/notice?method=t2&message=m2", nil, tokenHeaders(tok)); status != http.StatusOK {
+			t.Fatalf("GET should succeed, got %d: %s", status, out)
+		}
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t3", "m3"), tokenHeaders(tok)); status != http.StatusTooManyRequests {
+			t.Fatalf("POST after POST+GET should be 429, got %d: %s", status, out)
+		}
+		if mock.count() != 2 {
+			t.Fatalf("expected exactly 2 deliveries (POST+GET), got %d", mock.count())
+		}
+	})
+
+	t.Run("forbidden_consumes_quota", func(t *testing.T) {
+		t.Setenv("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE", "1")
+		t.Setenv("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE", "120")
+		mock := &feishuMock{code: 0}
+		env := setupNotifAPI(t, mock)
+		_, tok := createAPIToken(t, env, "no-notif-ratelimit", "1h") // no notifications permission
+		// First attempt is denied by authorization AFTER the quota hook, so it
+		// consumes the single per-token allowance.
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok)); status != http.StatusForbidden {
+			t.Fatalf("first request should be 403, got %d: %s", status, out)
+		}
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok)); status != http.StatusTooManyRequests {
+			t.Fatalf("second request should be 429 (403 consumed quota), got %d: %s", status, out)
+		}
+	})
+
+	t.Run("bad_request_consumes_quota", func(t *testing.T) {
+		t.Setenv("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE", "1")
+		t.Setenv("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE", "120")
+		mock := &feishuMock{code: 0}
+		env := setupNotifAPI(t, mock)
+		id, tok := createAPIToken(t, env, "badreq", "1h")
+		grantNotificationsPermission(t, env, id, 1)
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("", "m"), tokenHeaders(tok)); status != http.StatusBadRequest {
+			t.Fatalf("invalid body should be 400, got %d: %s", status, out)
+		}
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok)); status != http.StatusTooManyRequests {
+			t.Fatalf("second request should be 429 (400 consumed quota), got %d: %s", status, out)
+		}
+	})
+
+	t.Run("not_configured_consumes_quota", func(t *testing.T) {
+		t.Setenv("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE", "1")
+		t.Setenv("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE", "120")
+		t.Setenv("NOTIFICATION_FEISHU_WEBHOOK_URL", "") // no webhook -> 503
+		env := setupAPI(t)
+		id, tok := createAPIToken(t, env, "nc", "1h")
+		grantNotificationsPermission(t, env, id, 1)
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok)); status != http.StatusServiceUnavailable {
+			t.Fatalf("no webhook should be 503, got %d: %s", status, out)
+		}
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok)); status != http.StatusTooManyRequests {
+			t.Fatalf("second request should be 429 (503 consumed quota), got %d: %s", status, out)
+		}
+	})
+
+	t.Run("upstream_failure_consumes_quota", func(t *testing.T) {
+		t.Setenv("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE", "1")
+		t.Setenv("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE", "120")
+		mock := &feishuMock{status: http.StatusInternalServerError}
+		env := setupNotifAPI(t, mock)
+		id, tok := createAPIToken(t, env, "up", "1h")
+		grantNotificationsPermission(t, env, id, 1)
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok)); status != http.StatusBadGateway {
+			t.Fatalf("upstream error should be 502, got %d: %s", status, out)
+		}
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok)); status != http.StatusTooManyRequests {
+			t.Fatalf("second request should be 429 (502 consumed quota), got %d: %s", status, out)
+		}
+	})
+
+	t.Run("rate_limited_never_delivers", func(t *testing.T) {
+		t.Setenv("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE", "1")
+		t.Setenv("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE", "120")
+		mock := &feishuMock{code: 0}
+		env := setupNotifAPI(t, mock)
+		id, tok := createAPIToken(t, env, "rl", "1h")
+		grantNotificationsPermission(t, env, id, 1)
+		if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t1", "m1"), tokenHeaders(tok)); status != http.StatusOK {
+			t.Fatalf("first request should succeed, got %d: %s", status, out)
+		}
+		for i := 0; i < 3; i++ {
+			if status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t2", "m2"), tokenHeaders(tok)); status != http.StatusTooManyRequests {
+				t.Fatalf("request %d should be 429, got %d: %s", i+1, status, out)
+			}
+		}
+		if mock.count() != 1 {
+			t.Fatalf("429 requests must never deliver, got %d deliveries", mock.count())
+		}
+	})
+}
+
 func TestPermissionCatalogAndTokenViews(t *testing.T) {
 	env := setupAPI(t)
 

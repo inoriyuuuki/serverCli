@@ -107,6 +107,24 @@ func Load() (*Config, error) {
 			}
 		}
 	}
+	// intStrict fails startup when a numeric env var is present but not a
+	// valid integer (requirement: invalid notification rate config fails boot).
+	intStrict := func(key string, dst *int) error {
+		v, ok := os.LookupEnv(key)
+		if !ok {
+			return nil
+		}
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return nil // explicitly empty is treated as unset (use default)
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("config: %s must be an integer, got %q", key, v)
+		}
+		*dst = n
+		return nil
+	}
 	int64v := func(key string, dst *int64) {
 		if v, ok := os.LookupEnv(key); ok {
 			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
@@ -144,8 +162,12 @@ func Load() (*Config, error) {
 	intv("TASK_POLL_TIMEOUT_SECONDS", &cfg.TaskPollTimeoutSeconds)
 	int64v("MAX_TASK_OUTPUT_BYTES", &cfg.MaxTaskOutputBytes)
 	str("NOTIFICATION_FEISHU_WEBHOOK_URL", &cfg.NotificationFeishuWebhookURL)
-	intv("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE", &cfg.NotificationRateLimitPerTokenPerMinute)
-	intv("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE", &cfg.NotificationRateLimitGlobalPerMinute)
+	if err := intStrict("NOTIFICATION_RATE_LIMIT_PER_TOKEN_PER_MINUTE", &cfg.NotificationRateLimitPerTokenPerMinute); err != nil {
+		return nil, err
+	}
+	if err := intStrict("NOTIFICATION_RATE_LIMIT_GLOBAL_PER_MINUTE", &cfg.NotificationRateLimitGlobalPerMinute); err != nil {
+		return nil, err
+	}
 
 	// Derive dependent defaults.
 	if cfg.DatabaseURL == "" {

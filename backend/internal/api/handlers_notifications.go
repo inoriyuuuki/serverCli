@@ -27,9 +27,6 @@ func (s *Server) notificationRateHook() func(w http.ResponseWriter, r *http.Requ
 	return func(w http.ResponseWriter, r *http.Request, p *service.TokenPrincipal, tok *model.APIAccessToken) bool {
 		retryAfter, ok := s.notifyLimiter.TryAcquire(p.TokenID)
 		if ok {
-			if h := tokenAuthHookStateFrom(r.Context()); h != nil {
-				h.rateAcquired = true
-			}
 			return false
 		}
 		// Rate limited: nothing was debited, so no quota was consumed. The
@@ -51,6 +48,11 @@ func (s *Server) notificationRateHook() func(w http.ResponseWriter, r *http.Requ
 			Details:   notificationAuditDetails(notificationSource, "default", "", 0, 0, service.ResultDenied, r),
 			RiskLevel: service.RiskHigh,
 		})
+		// Keep the last-used trail for rate-limited requests even though the
+		// middleware returns early on this path.
+		if err := s.store.TouchAccessToken(r.Context(), p.TokenID, remoteIP(r)); err != nil {
+			s.log.Warn("token usage touch failed", "error", err)
+		}
 		return true
 	}
 }
@@ -93,6 +95,17 @@ func (s *Server) handleNotificationSend(w http.ResponseWriter, r *http.Request) 
 		Channel string `json:"channel"`
 	}
 	if !decodeJSON(w, r, s.log, &in) {
+		// Invalid/unknown-field bodies never reach the service, so audit the
+		// denied attempt here with the whitelisted details keys only.
+		if principal := tokenPrincipalFrom(r.Context()); principal != nil {
+			s.auditor.Denied(r.Context(), service.AuditInput{
+				ActorType: model.ActorAI, ActorID: principal.TokenID, Action: "notification.send",
+				ResourceType: "api_access_token", ResourceID: principal.TokenID,
+				Summary:   "notification denied (invalid request body)",
+				Details:   notificationAuditDetails(notificationSource, "default", "", 0, 0, service.ResultDenied, r),
+				RiskLevel: service.RiskHigh,
+			})
+		}
 		return
 	}
 	principal := tokenPrincipalFrom(r.Context())
@@ -187,7 +200,11 @@ func (s *Server) handleNotice(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case errors.Is(err, service.ErrRateLimited):
-		// Should not happen: the auth hook already acquired the quota.
+		// Should not happen: the auth hook already acquired the quota, but if
+		// it does surface, keep the standard 429 with a Retry-After header.
+		if ra, ok := s.notifyLimiter.RetryAfter(principal.TokenID); ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(ra.Seconds()))))
+		}
 		writeServiceError(w, r, s.log, err)
 	case errors.Is(err, service.ErrBadRequest):
 		// Service-level validation failure (e.g. level/channel): denied.

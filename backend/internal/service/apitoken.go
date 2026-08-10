@@ -375,6 +375,7 @@ func ValidatePermissionSet(p PermissionSet) error {
 		return nil
 	}
 	idx := permissionCatalogIndex()
+	seen := make(map[string]bool)
 	for i, g := range p.Grants {
 		if g.Resource == "" || strings.Contains(g.Resource, "*") {
 			return fmt.Errorf("%w: grant %d resource must not be empty or contain wildcard", ErrBadRequest, i)
@@ -382,16 +383,16 @@ func ValidatePermissionSet(p PermissionSet) error {
 		if len(g.Actions) == 0 {
 			return fmt.Errorf("%w: grant %d actions must not be empty", ErrBadRequest, i)
 		}
-		seen := make(map[string]bool, len(g.Actions))
 		for _, a := range g.Actions {
 			if a == "" || strings.Contains(a, "*") {
 				return fmt.Errorf("%w: grant %d action %q must not be empty or contain wildcard", ErrBadRequest, i, a)
 			}
-			if seen[a] {
-				return fmt.Errorf("%w: grant %d duplicate action %q", ErrBadRequest, i, a)
+			key := permissionKey(g.Resource, a)
+			if seen[key] {
+				return fmt.Errorf("%w: duplicate permission %s:%s", ErrBadRequest, g.Resource, a)
 			}
-			seen[a] = true
-			if _, ok := idx[permissionKey(g.Resource, a)]; !ok {
+			seen[key] = true
+			if _, ok := idx[key]; !ok {
 				return fmt.Errorf("%w: unknown permission %s:%s", ErrBadRequest, g.Resource, a)
 			}
 		}

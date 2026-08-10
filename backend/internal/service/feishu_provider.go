@@ -42,6 +42,9 @@ func NewFeishuProvider(webhookURL string, timeout time.Duration, client *http.Cl
 // Name returns the stable provider identifier.
 func (p *FeishuProvider) Name() string { return "feishu" }
 
+// Configured reports whether the provider has a webhook URL to send to.
+func (p *FeishuProvider) Configured() bool { return p.webhookURL != "" }
+
 // feishuResponse is the minimal business envelope returned by Feishu.
 type feishuResponse struct {
 	Code int `json:"code"`

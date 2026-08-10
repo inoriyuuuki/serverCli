@@ -143,3 +143,36 @@ func (l *NotificationLimiter) Cleanup() {
 		}
 	}
 }
+
+// RetryAfter returns the time until both the per-token bucket for tokenID and
+// the global bucket can serve another request, without debiting anything.
+// ok=false when no wait is needed (both buckets have at least one token).
+func (l *NotificationLimiter) RetryAfter(tokenID string) (time.Duration, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	tokenRate := l.perTokenPerMinute / 60.0
+	globalRate := l.globalPerMinute / 60.0
+
+	var retry time.Duration
+	needWait := false
+
+	if b := l.buckets[tokenID]; b != nil {
+		b.refill(tokenRate, l.perTokenPerMinute, now)
+		if b.tokens < 1 {
+			if ra := retryAfterSeconds(b.tokens, tokenRate); ra > retry {
+				retry = ra
+			}
+			needWait = true
+		}
+	}
+	l.global.refill(globalRate, l.globalPerMinute, now)
+	if l.global.tokens < 1 {
+		if ra := retryAfterSeconds(l.global.tokens, globalRate); ra > retry {
+			retry = ra
+		}
+		needWait = true
+	}
+	return retry, needWait
+}

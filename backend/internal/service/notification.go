@@ -80,6 +80,13 @@ func (s *NotificationService) registerProvider(channel string, p NotificationPro
 // limit quota and returns ErrRateLimited when the global bucket is empty, then
 // validates, resolves the channel, sends and audits.
 func (s *NotificationService) Send(ctx context.Context, req NotificationRequest) (*NotificationResult, error) {
+	// Do not consume global quota when no provider is configured: the attempt
+	// would fail anyway and the quota is shared with external callers.
+	if p, ok := s.providers[defaultChannel]; ok {
+		if c, ok := p.(interface{ Configured() bool }); ok && !c.Configured() {
+			return nil, ErrNotConfigured
+		}
+	}
 	if retryAfter, ok := s.limiter.TryAcquireGlobal(); !ok {
 		s.auditNotification(ctx, req, auditMeta{actorType: model.ActorSystem}, ResultDenied, "notification.ratelimited")
 		return nil, fmt.Errorf("%w: retry after %s", ErrRateLimited, retryAfter)
