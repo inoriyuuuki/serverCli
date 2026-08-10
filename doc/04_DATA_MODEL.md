@@ -305,9 +305,17 @@ Secret 使用外部配置，不写该表。
 - `expires_at`：永久 Token 为 `NULL`
 - `revoked_at`、`revoked_by`
 - `last_used_at`、`last_used_ip`、`usage_count`
-- `permission_version`、`permissions_json`：预留 `{version, grants:[{resource, actions, constraints}]}`，首版为全权限 `*:*`
+- `permissions_json`：结构化权限 JSON，形如 `{"version":1,"grants":[{"resource":"...","actions":["..."],"constraints":{}}]}`。新 Token 创建即**零权限**（`{"version":1,"grants":[]}`），权限由管理员按静态权限目录（`notifications:send`；`nodes:read`；`ai.lease_requests:create/read`；`ai.leases:renew/heartbeat/disconnect`）显式授予。其中 `version` 是权限 schema 版本（首版 = 1），与乐观锁 `permission_version` 无关。
+- `permission_version`：乐观锁 revision；每次权限更新 +1，更新接口必须携带当前值，冲突/撤销/过期返回 409。Token 列表/详情接口返回解析后的 `permissions` 对象（非法 JSON fail closed 为空授权集，不泄露原始 JSON）。
 
 明文只返回一次；日志/错误/示例不得出现完整 Token。
+
+> **历史数据与迁移 0006**：0005 之前创建的 Token 权限为 canonical wildcard（`{"version":1,"grants":[{"resource":"*","actions":["*"]}]}` 或其带 `constraints` 形态）。
+> 迁移 `0006_legacy_wildcard_permissions.sql` **仅精确匹配这两种历史 canonical wildcard JSON**，改写为显式完整 AI 凭证权限
+> （`nodes:read`、`ai.lease_requests:create/read`、`ai.leases:renew/heartbeat/disconnect`），**不授予通知权限**；
+> 非 canonical、手工修改或任何其他形态的 JSON 不被覆盖，迁移幂等可重放。
+> 任何残留 wildcard / NULL / 空 / 非法 JSON 一律 **fail closed**（拒绝授权 + 告警 + 审计）。
+> 回滚不会恢复发布窗口中新 Token 的权限（权限是数据而非代码），必要时人工重新授权或重建（见 12_NOTIFICATION_MIGRATION.md §6）。
 
 ### 3.18.2 `api_token_usage_log`
 

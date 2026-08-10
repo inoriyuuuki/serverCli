@@ -15,7 +15,8 @@ func TestLeaseRuntimeStatusEndpoint(t *testing.T) {
 	ctx := context.Background()
 
 	// Create an access token + lease so we have a real lease row.
-	_, tok := createAPIToken(t, env, "rt-test", "6h")
+	id, tok := createAPIToken(t, env, "rt-test", "6h")
+	grantAIPermissions(t, env, id, 1)
 	h := tokenHeaders(tok)
 	h["Idempotency-Key"] = "rt-1"
 	status, out := env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "rt", "read-only"), h)
@@ -95,7 +96,8 @@ func TestRenewRefreshesNodeKeyRegistration(t *testing.T) {
 	ctx := context.Background()
 	env := setupAPI(t)
 
-	_, tok := createAPIToken(t, env, "renew-refresh", "6h")
+	id, tok := createAPIToken(t, env, "renew-refresh", "6h")
+	grantAIPermissions(t, env, id, 1)
 	h := tokenHeaders(tok)
 	h["Idempotency-Key"] = "renew-refresh-1"
 	status, out := env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "rr", "read-only"), h)

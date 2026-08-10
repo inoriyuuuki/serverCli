@@ -229,6 +229,35 @@ export interface AiLeaseRequest {
   [key: string]: unknown;
 }
 
+export interface PermissionGrant {
+  resource: string;
+  actions: string[];
+  constraints?: Record<string, unknown>;
+}
+
+export interface PermissionSet {
+  version: number;
+  grants: PermissionGrant[];
+}
+
+export interface PermissionDef {
+  category: string;
+  resource: string;
+  action: string;
+  label: string;
+  description: string;
+}
+
+export interface PermissionCategory {
+  category: string;
+  label: string;
+}
+
+export interface PermissionCatalogResponse {
+  categories: PermissionCategory[];
+  permissions: PermissionDef[];
+}
+
 export interface ApiAccessToken {
   id: string;
   name?: string;
@@ -242,6 +271,7 @@ export interface ApiAccessToken {
   last_used_ip?: string | null;
   usage_count?: number;
   permission_version?: number;
+  permissions?: PermissionSet;
 }
 
 export interface ApiTokenUsageLog {
