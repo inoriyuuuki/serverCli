@@ -16,4 +16,7 @@ var (
 	ErrTerminal           = errors.New("operation not allowed in terminal state")
 	ErrUnavailable        = errors.New("unavailable")
 	ErrDisabled           = errors.New("disabled")
+	ErrNotConfigured      = errors.New("notification not configured")
+	ErrUpstream           = errors.New("notification upstream error")
+	ErrRateLimited        = errors.New("notification rate limited")
 )

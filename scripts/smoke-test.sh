@@ -413,6 +413,18 @@ if [ -n "$child_id" ]; then
     fail "Access Token 创建失败 (HTTP $CURL_CODE): $(redact "$CURL_BODY")"
   fi
 
+  # 2b) 新 Token 默认零权限：先为 smoke Token 授权完整 AI 凭证权限，
+  #     后续 Lease 申请/续期/断开才能通过（调用方迁移）。
+  if [ -n "$SMOKE_TOKEN_ID" ]; then
+    http_json PUT "$PRIMARY_API/api-tokens/$SMOKE_TOKEN_ID/permissions" \
+      '{"permission_version":1,"permissions":{"version":1,"grants":[{"resource":"nodes","actions":["read"]},{"resource":"ai.lease_requests","actions":["create","read"]},{"resource":"ai.leases","actions":["renew","heartbeat","disconnect"]}]}}'
+    if [ "$CURL_CODE" = "200" ]; then
+      ok "Access Token 已授权 AI 凭证权限"
+    else
+      fail "Access Token 授权 AI 凭证权限失败 (HTTP $CURL_CODE): $(redact "$CURL_BODY")"
+    fi
+  fi
+
   KEYFILE="$TMP_DIR/lease_key"
   PUBKEY=""
   if command -v ssh-keygen >/dev/null 2>&1; then
@@ -472,6 +484,38 @@ if [ -n "$LEASE_ID" ] && [ -n "$ACCESS_TOKEN" ]; then
   fi
 elif [ -n "$LEASE_ID" ]; then
   fail "未获得 Access Token，跳过续期/断开"
+fi
+
+# 顺带验证「新 Token 默认零权限」：不带权限的第二个 token 申请 Lease 必须 403。
+ZERO_TOKEN=""
+ZERO_TOKEN_ID=""
+http_json POST "$PRIMARY_API/api-tokens" '{"name":"smoke-zero","ttl":"15m"}'
+if [ "$CURL_CODE" = "201" ]; then
+  ZERO_TOKEN="$(jget "$CURL_BODY" 'd.get("token","")')"
+  ZERO_TOKEN_ID="$(jget "$CURL_BODY" 'd.get("api_token",{}).get("id","")')"
+  if [ -n "$ZERO_TOKEN" ]; then
+    tmp="$(mktemp "${TMPDIR:-/tmp}/servercli-smoke-zero.XXXXXX")"
+    CURL_CODE="$(curl -sS --max-time 20 -X POST -H 'Content-Type: application/json'       -H "Authorization: Bearer $ZERO_TOKEN" -o "$tmp" -w '%{http_code}'       --data '{"node_selector":"x","public_key":"x"}' "$PRIMARY_API/ai/lease-requests" 2>/dev/null)"
+    rm -f "$tmp"
+    if [ "$CURL_CODE" = "403" ]; then
+      ok "新 Token 默认无权限（Lease 申请被拒 403）"
+    else
+      fail "新 Token 默认应无权限（期望 403，实际 $CURL_CODE）"
+    fi
+  else
+    fail "零权限验证 token 缺少明文，跳过断言"
+  fi
+else
+  fail "零权限验证 token 创建失败 (HTTP $CURL_CODE)"
+fi
+# 清理：撤销零权限验证 token（避免遗留）。
+if [ -n "$ZERO_TOKEN_ID" ]; then
+  http_json POST "$PRIMARY_API/api-tokens/$ZERO_TOKEN_ID/revoke" '{"reason":"smoke-test zero-permission check cleanup"}'
+  if [ "$CURL_CODE" = "200" ]; then
+    ok "零权限验证 token 已撤销"
+  else
+    fail "零权限验证 token 撤销失败 (HTTP $CURL_CODE)"
+  fi
 fi
 
 # 撤销 smoke Token（按本次创建的 id，避免误撤销上一轮遗留；级联清理避免遗留）。

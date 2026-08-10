@@ -35,6 +35,9 @@ type Server struct {
 	auditor  *service.Auditor
 	cleanup  *service.CleanupService
 
+	notifications *service.NotificationService
+	notifyLimiter *service.NotificationLimiter
+
 	version    string
 	build      string
 	commit     string
@@ -123,6 +126,8 @@ func New(opts Options) (*Server, error) {
 	leases := service.NewLeaseService(opts.Store, opts.Config, opts.Log, auditor, nodes, settings)
 	tokens := service.NewTokenService(opts.Store, opts.Config, opts.Log, auditor, nodes)
 	cleanup := service.NewCleanupService(opts.Store, opts.Config, opts.Log, auditor, settings)
+	notifyLimiter := service.NewNotificationLimiter(opts.Config.NotificationRateLimitPerTokenPerMinute, opts.Config.NotificationRateLimitGlobalPerMinute)
+	notifications := service.NewNotificationService(opts.Config, opts.Log, auditor, notifyLimiter)
 	srv := &Server{
 		cfg:      opts.Config,
 		log:      opts.Log,
@@ -136,11 +141,14 @@ func New(opts Options) (*Server, error) {
 		settings: settings,
 		auditor:  auditor,
 		cleanup:  cleanup,
-		version:  opts.Version,
-		build:    opts.Build,
-		commit:   opts.Commit,
-		envID:    opts.Config.InstanceName + "-env",
-		events:   newEventBroker(),
+
+		notifications: notifications,
+		notifyLimiter: notifyLimiter,
+		version:       opts.Version,
+		build:         opts.Build,
+		commit:        opts.Commit,
+		envID:         opts.Config.InstanceName + "-env",
+		events:        newEventBroker(),
 	}
 	if opts.ChildNodeID != "" {
 		srv.childScope.Store(opts.ChildNodeID)
@@ -154,6 +162,16 @@ func (s *Server) SettingsService() *service.SettingsService { return s.settings 
 
 // CleanupService exposes cleanup for the scheduler.
 func (s *Server) CleanupService() *service.CleanupService { return s.cleanup }
+
+// NotificationLimiter exposes the notification rate limiter for the cleanup
+// ticker wiring in main.
+func (s *Server) NotificationLimiter() *service.NotificationLimiter { return s.notifyLimiter }
+
+// NotificationService exposes the notification service for internal senders.
+func (s *Server) NotificationService() *service.NotificationService { return s.notifications }
+
+// TokenService exposes access-token management for startup hygiene scans.
+func (s *Server) TokenService() *service.TokenService { return s.tokens }
 
 // NodeService exposes nodes for the scheduler.
 func (s *Server) NodeService() *service.NodeService { return s.nodes }
@@ -245,12 +263,24 @@ func (s *Server) Handler() http.Handler {
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/ai/leases", Group: "AI Lease", Auth: AuthAdmin, Summary: "Lease 列表（管理）", Debug: true}, s.requireAdmin(s.handleListLeases))
 	s.register(mux, RouteSpec{Method: "PATCH", Path: "/api/v1/settings/ai-access", Group: "AI Lease", Auth: AuthAdmin, Summary: "AI 申请/续期开关", Debug: true}, s.requireAdmin(s.handleAIAccess))
 
+	// Notifications (external AI self-service, token-authenticated).
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/notifications/send", Group: "通知", Auth: AuthToken, Summary: "发送通知", Body: `{"title":"...","message":"...","level":"info","channel":"default"}`, Errors: []string{"400", "401", "403", "429", "502", "503"}, Debug: true}, s.tokenAuthWith(service.ResourceNotifications, service.ActionSend, "/api/v1/notifications/send", tokenAuthOptions{
+		afterResolve:    s.notificationRateHook(),
+		outcomeOverride: notificationOutcomeOverride,
+	})(s.handleNotificationSend))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/notice", Group: "通知", Auth: AuthToken, Summary: "兼容通知接口（GET 参数 method/message/logLevel）", Debug: true}, s.tokenAuthWith(service.ResourceNotifications, service.ActionSend, "/notice", tokenAuthOptions{
+		afterResolve:    s.notificationRateHook(),
+		outcomeOverride: notificationOutcomeOverride,
+	})(s.handleNotice))
+
 	// Access token management (primary only).
 	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/api-tokens", Group: "Token", Auth: AuthAdmin, Summary: "创建 Access Token（仅返回一次明文）", Body: `{"name":"my-agent","ttl":"1h"}`, Errors: []string{"400"}, Debug: true}, s.requireAdmin(s.handleCreateAPIToken))
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/api-tokens", Group: "Token", Auth: AuthAdmin, Summary: "Token 列表", Debug: true}, s.requireAdmin(s.handleListAPITokens))
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/api-tokens/{id}", Group: "Token", Auth: AuthAdmin, Summary: "Token 详情", Debug: true}, s.requireAdmin(s.handleGetAPIToken))
 	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/api-tokens/{id}/revoke", Group: "Token", Auth: AuthAdmin, Summary: "撤销 Token（级联撤销 Lease）", Body: `{"reason":"..."}`, Debug: true}, s.requireAdmin(s.handleRevokeAPIToken))
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/api-tokens/{id}/usage-logs", Group: "Token", Auth: AuthAdmin, Summary: "Token 使用日志", Params: []RouteParam{{Name: "outcome", In: "query", Type: "string"}}, Debug: true}, s.requireAdmin(s.handleListTokenUsageLogs))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/api-tokens/permissions/catalog", Group: "Token", Auth: AuthAdmin, Summary: "权限目录（分类 + 权限定义）", Debug: true}, s.requireAdmin(s.handlePermissionCatalog))
+	s.register(mux, RouteSpec{Method: "PUT", Path: "/api/v1/api-tokens/{id}/permissions", Group: "Token", Auth: AuthAdmin, Summary: "更新 Token 权限（乐观锁）", Body: `{"permission_version":1,"permissions":{"version":1,"grants":[...]}}`, Errors: []string{"400", "404", "409"}, Debug: true}, s.requireAdmin(s.handleUpdateAPITokenPermissions))
 
 	// Interface directory / OpenAPI.
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/meta/openapi", Group: "系统", Auth: AuthAdmin, Summary: "全接口目录（OpenAPI）", Debug: true}, s.requireAdmin(s.handleOpenAPI))
@@ -342,7 +372,7 @@ func (s *Server) withFrontend(mux http.Handler) http.Handler {
 	if err != nil || !info.IsDir() {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// API routes were already matched by the mux; unknown routes get a hint.
-			if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health") || r.URL.Path == "/version" {
+			if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health") || r.URL.Path == "/version" || r.URL.Path == "/notice" {
 				mux.ServeHTTP(w, r)
 				return
 			}
@@ -353,7 +383,7 @@ func (s *Server) withFrontend(mux http.Handler) http.Handler {
 	}
 	fileServer := http.FileServer(http.Dir(dist))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health") || r.URL.Path == "/version" {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health") || r.URL.Path == "/version" || r.URL.Path == "/notice" {
 			mux.ServeHTTP(w, r)
 			return
 		}

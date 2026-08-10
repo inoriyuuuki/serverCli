@@ -15,6 +15,8 @@ ServerCLI 是「一台固定主服务器 + 多台节点服务器」的轻量级�
 - ⏱️ **任务系统**：长轮询领取任务、事件流上报、超时/取消/幂等（`Idempotency-Key`）
 - 🔑 **AI SSH Lease**：Access Token 自动审批、临时公钥授权、续期、心跳、断连/撤销，全流程审计
 - 🛡️ **安全与审计**：Secret 脱敏落盘、管理员会话 + CSRF、Agent 签名（HMAC）、限流、保留策略（默认 7 天）
+- 🔔 **通知模块**：飞书通知（`POST /api/v1/notifications/send` + 迁移兼容 `GET /notice`），Bearer Token + `notifications:send` 权限；Webhook 仅存部署机 0600 secrets
+- 🛂 **Token 权限模型**：新 Token 默认零权限，按静态权限目录显式授权（乐观锁 revision），覆盖通知与 AI 凭证 7 项权限
 
 ## 技术栈
 
@@ -219,6 +221,7 @@ make test-child     # 等价于 start.sh --env test --role child --instance test
   （`ProtectSystem=strict`、`NoNewPrivileges=true` 等）。
 - 节点身份、AI 临时公钥等凭证由后端按契约管理，本仓库不含任何真实凭证。
 - AI SSH 使用 Access Token 自动审批 + 临时公钥租约（默认 1 小时，可续期，累计最多 24 小时），不向 AI 暴露长期密码或长期私钥。Token（`sct_*`）仅存哈希与前缀，明文只在创建时返回一次；Lease 有效期受 Token 有效期约束。
+- 通知 Webhook（`NOTIFICATION_FEISHU_WEBHOOK_URL`）为 Secret，真实值仅存部署机 0600 secrets 文件；通知 API 需 Bearer Token + `notifications:send` 权限，迁移与回归见 [doc/12_NOTIFICATION_MIGRATION.md](doc/12_NOTIFICATION_MIGRATION.md)。
 
 ## 文档索引
 
@@ -235,6 +238,7 @@ make test-child     # 等价于 start.sh --env test --role child --instance test
 | [doc/09_IMPLEMENTATION_PLAN.md](doc/09_IMPLEMENTATION_PLAN.md) | 分阶段实施、测试策略、交付物与验收门禁 |
 | [doc/10_CHANGE_TARGETS.md](doc/10_CHANGE_TARGETS.md) | 本轮确认需求、目标变动、待确认事项和变更记录 |
 | [doc/11_IMPLEMENTATION_CONTRACT.md](doc/11_IMPLEMENTATION_CONTRACT.md) | 接口契约（权威）：目录、环境变量、API 端点、命令 Manifest 格式 |
+| [doc/12_NOTIFICATION_MIGRATION.md](doc/12_NOTIFICATION_MIGRATION.md) | 通知模块迁移与运维：旧 Flask 回归、Webhook 重建、9103 下线与回滚 |
 
 ## 初始化与引导（servercli init）
 

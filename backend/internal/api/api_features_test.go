@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"servercli/internal/model"
+	"servercli/internal/security"
 	"servercli/internal/store"
 )
 
@@ -61,6 +62,53 @@ func tokenHeaders(plaintext string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + plaintext}
 }
 
+// putPermissions assigns a grant set to a token via the admin permissions API
+// under an optimistic lock and returns the new permission revision.
+func putPermissions(t *testing.T, env *testEnv, tokenID string, revision int, grants []map[string]any) int {
+	t.Helper()
+	status, out := env.serve("PUT", "/api/v1/api-tokens/"+tokenID+"/permissions", map[string]any{
+		"permission_version": revision,
+		"permissions":        map[string]any{"version": 1, "grants": grants},
+	}, env.adminHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("grant permissions status %d: %s", status, out)
+	}
+	var resp struct {
+		APIToken struct {
+			PermissionVersion int `json:"permission_version"`
+		} `json:"api_token"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("decode grant response %s: %v", out, err)
+	}
+	if resp.APIToken.PermissionVersion != revision+1 {
+		t.Fatalf("expected permission revision %d, got %d: %s", revision+1, resp.APIToken.PermissionVersion, out)
+	}
+	return resp.APIToken.PermissionVersion
+}
+
+// grantAIPermissions assigns the full AI credential surface (nodes:read,
+// ai.lease_requests:create/read, ai.leases:renew/heartbeat/disconnect) to a
+// token and returns the new permission revision. New tokens start with zero
+// permissions, so AI API calls require this grant.
+func grantAIPermissions(t *testing.T, env *testEnv, tokenID string, revision int) int {
+	t.Helper()
+	return putPermissions(t, env, tokenID, revision, []map[string]any{
+		{"resource": "nodes", "actions": []string{"read"}},
+		{"resource": "ai.lease_requests", "actions": []string{"create", "read"}},
+		{"resource": "ai.leases", "actions": []string{"renew", "heartbeat", "disconnect"}},
+	})
+}
+
+// grantNotificationsPermission grants only notifications:send to a token and
+// returns the new permission revision.
+func grantNotificationsPermission(t *testing.T, env *testEnv, tokenID string, revision int) int {
+	t.Helper()
+	return putPermissions(t, env, tokenID, revision, []map[string]any{
+		{"resource": "notifications", "actions": []string{"send"}},
+	})
+}
+
 func TestAccessTokenLeaseFlow(t *testing.T) {
 	env := setupAPI(t)
 	ctx := context.Background()
@@ -74,7 +122,7 @@ func TestAccessTokenLeaseFlow(t *testing.T) {
 		t.Fatalf("error response leaked token material: %s", out)
 	}
 	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", "read-only"),
-		tokenHeaders("sct_" + strings.Repeat("0", 64)))
+		tokenHeaders("sct_"+strings.Repeat("0", 64)))
 	if status != http.StatusUnauthorized {
 		t.Fatalf("invalid token should be 401, got %d: %s", status, out)
 	}
@@ -87,8 +135,13 @@ func TestAccessTokenLeaseFlow(t *testing.T) {
 
 	// Create tokens: short-lived (15m), medium (1h) and permanent.
 	shortID, shortTok := createAPIToken(t, env, "short-lived", "15m")
-	_, midTok := createAPIToken(t, env, "one-hour", "1h")
-	_, permTok := createAPIToken(t, env, "permanent", "never")
+	midID, midTok := createAPIToken(t, env, "one-hour", "1h")
+	permID, permTok := createAPIToken(t, env, "permanent", "never")
+	// New tokens start with zero permissions: grant the AI credential surface
+	// before any AI API call.
+	grantAIPermissions(t, env, shortID, 1)
+	grantAIPermissions(t, env, midID, 1)
+	grantAIPermissions(t, env, permID, 1)
 
 	// Lease request with a valid token is auto-approved and bound to the token.
 	h := tokenHeaders(shortTok)
@@ -234,7 +287,8 @@ func TestAccessTokenLeaseFlow(t *testing.T) {
 func TestAccessTokenTTLBoundsLease(t *testing.T) {
 	env := setupAPI(t)
 
-	_, permTok := createAPIToken(t, env, "perm", "never")
+	permID, permTok := createAPIToken(t, env, "perm", "never")
+	grantAIPermissions(t, env, permID, 1)
 
 	// A permanent token cannot exceed the system absolute lease cap (24h).
 	h := tokenHeaders(permTok)
@@ -255,7 +309,8 @@ func TestAccessTokenTTLBoundsLease(t *testing.T) {
 	}
 
 	// 1h token with a 6h request: lease expires at the token, not 6h.
-	_, hTok := createAPIToken(t, env, "one-hour", "1h")
+	hID, hTok := createAPIToken(t, env, "one-hour", "1h")
+	grantAIPermissions(t, env, hID, 1)
 	h2 := tokenHeaders(hTok)
 	h2["Idempotency-Key"] = "ttl-1h-1"
 	body := leaseRequestBody(env.nodeID, "device-P", "read-only")
@@ -531,11 +586,11 @@ func TestLegacyAutoApprovalRoutesRetired(t *testing.T) {
 
 	// The old manual-approval and auto-approval routes are gone (404).
 	for path, method := range map[string]string{
-		"/api/v1/ai/auto-approvals":                          "GET",
-		"/api/v1/ai/lease-requests/some-id/approve":          "POST",
-		"/api/v1/ai/lease-requests/some-id/reject":           "POST",
-		"/api/v1/ai/lease-requests/some-id/auto-approval":    "POST",
-		"/api/v1/ai/auto-approvals/some-id/extend":           "POST",
+		"/api/v1/ai/auto-approvals":                       "GET",
+		"/api/v1/ai/lease-requests/some-id/approve":       "POST",
+		"/api/v1/ai/lease-requests/some-id/reject":        "POST",
+		"/api/v1/ai/lease-requests/some-id/auto-approval": "POST",
+		"/api/v1/ai/auto-approvals/some-id/extend":        "POST",
 	} {
 		req := httptest.NewRequest(method, path, nil)
 		for k, v := range env.adminHeaders() {
@@ -691,8 +746,10 @@ func TestAgentTaskParameterHistoryEndpoints(t *testing.T) {
 func TestIdempotencyReplayOwnershipIsolation(t *testing.T) {
 	env := setupAPI(t)
 
-	_, tokA := createAPIToken(t, env, "owner-A", "1h")
-	_, tokB := createAPIToken(t, env, "owner-B", "1h")
+	idA, tokA := createAPIToken(t, env, "owner-A", "1h")
+	idB, tokB := createAPIToken(t, env, "owner-B", "1h")
+	grantAIPermissions(t, env, idA, 1)
+	grantAIPermissions(t, env, idB, 1)
 
 	// A creates a request keyed solely by the Idempotency-Key header.
 	body := leaseRequestBody(env.nodeID, "device-A", "read-only")
@@ -768,7 +825,8 @@ func TestExpiredAccessTokenRejected(t *testing.T) {
 func TestPublicKeyInjectionRejected(t *testing.T) {
 	env := setupAPI(t)
 
-	_, tok := createAPIToken(t, env, "inject", "1h")
+	id, tok := createAPIToken(t, env, "inject", "1h")
+	grantAIPermissions(t, env, id, 1)
 	for _, bad := range []string{
 		"ssh-ed25519 AAAA...\ncommand=\"/bin/sh\" ssh-ed25519 BBBB...",
 		"ssh-ed25519 AAAA,no-agent-forwarding BBBB",
@@ -798,7 +856,8 @@ func TestPublicKeyInjectionRejected(t *testing.T) {
 func TestAccessTokenNodeDiscovery(t *testing.T) {
 	env := setupAPI(t)
 
-	_, tok := createAPIToken(t, env, "discover", "1h")
+	id, tok := createAPIToken(t, env, "discover", "1h")
+	grantAIPermissions(t, env, id, 1)
 	h := tokenHeaders(tok)
 
 	// Token can list nodes (used by the skill to resolve node_id).
@@ -840,5 +899,206 @@ func TestAccessTokenNodeDiscovery(t *testing.T) {
 	status, _ = env.serve("GET", "/api/v1/nodes", nil, nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("anonymous node list should be 401, got %d", status)
+	}
+}
+
+// Legacy wildcard permission JSON shapes: the two historical canonical
+// wildcard forms that migration 0006 rewrites, plus the explicit expansion
+// (the legacy AI credentials surface, never notifications) that the migration
+// writes and that parsePermissions produces at runtime.
+const (
+	legacyWildcardWithConstraints = `{"version":1,"grants":[{"resource":"*","actions":["*"],"constraints":{}}]}`
+	legacyWildcardPlain           = `{"version":1,"grants":[{"resource":"*","actions":["*"]}]}`
+	legacyWildcardExpansion       = `{"version":1,"grants":[{"resource":"nodes","actions":["read"]},{"resource":"ai.lease_requests","actions":["create","read"]},{"resource":"ai.leases","actions":["renew","heartbeat","disconnect"]}]}`
+)
+
+// insertLegacyToken writes an api_access_token row directly with the given
+// stored permissions JSON, simulating a pre-0005 token whose "create = full
+// access" semantics persisted a canonical wildcard. Returns the token id and
+// the one-time plaintext bearer value.
+func insertLegacyToken(t *testing.T, env *testEnv, name, permissionsJSON string) (tokenID, plaintext string) {
+	t.Helper()
+	raw, err := security.NewToken(32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext = "sct_" + raw
+	tokenID = model.NewUUID()
+	tok := &model.APIAccessToken{
+		ID:                tokenID,
+		EnvironmentID:     env.nodes.EnvID(),
+		Name:              name,
+		TokenHash:         security.HashToken(plaintext),
+		TokenPrefix:       security.Prefix(plaintext, 16),
+		CreatedBy:         env.adminID,
+		CreatedAt:         time.Now().UTC(),
+		PermissionVersion: 1,
+		PermissionsJSON:   permissionsJSON,
+	}
+	if err := env.st.CreateAccessToken(context.Background(), tok); err != nil {
+		t.Fatal(err)
+	}
+	return tokenID, plaintext
+}
+
+// setStoredPermissions performs the migration-0006-equivalent UPDATE directly
+// on the stored permissions_json column.
+func setStoredPermissions(t *testing.T, env *testEnv, tokenID, permissionsJSON string) {
+	t.Helper()
+	if _, err := env.st.DB().ExecContext(context.Background(),
+		`UPDATE api_access_token SET permissions_json=$1 WHERE id=$2`, permissionsJSON, tokenID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLegacyWildcardTokenMigratedBehavior (验收 4): a historical token row
+// whose permissions_json is the canonical wildcard keeps the old AI credential
+// surface (node discovery + lease requests work) but never authorizes
+// notifications; after the migration-0006-equivalent UPDATE the behavior is
+// unchanged.
+func TestLegacyWildcardTokenMigratedBehavior(t *testing.T) {
+	env := setupAPI(t)
+
+	// Pre-0005 legacy row with the canonical wildcard (with constraints form).
+	tokenID, tok := insertLegacyToken(t, env, "legacy-wildcard", legacyWildcardWithConstraints)
+	h := tokenHeaders(tok)
+
+	// Node discovery (adminOrToken -> token path) works.
+	status, out := env.serve("GET", "/api/v1/nodes", nil, h)
+	if status != http.StatusOK {
+		t.Fatalf("legacy wildcard node discovery should be 200, got %d: %s", status, out)
+	}
+	// AI Lease request is auto-approved.
+	h["Idempotency-Key"] = "legacy-wildcard-1"
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "legacy-W", "read-only"), h)
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("legacy wildcard lease request should be 201/200, got %d: %s", status, out)
+	}
+	// The wildcard never authorizes notifications.
+	status, out = env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok))
+	if status != http.StatusForbidden {
+		t.Fatalf("legacy wildcard must never send notifications, got %d: %s", status, out)
+	}
+
+	// Run the migration-0006-equivalent UPDATE: rewrite the stored JSON to the
+	// explicit AI credential grants.
+	setStoredPermissions(t, env, tokenID, legacyWildcardExpansion)
+
+	// Node discovery and lease requests still work…
+	status, out = env.serve("GET", "/api/v1/nodes", nil, h)
+	if status != http.StatusOK {
+		t.Fatalf("migrated token node discovery should be 200, got %d: %s", status, out)
+	}
+	h["Idempotency-Key"] = "legacy-wildcard-2"
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "legacy-W2", "read-only"), h)
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("migrated token lease request should be 201/200, got %d: %s", status, out)
+	}
+	// …and notifications are still denied.
+	status, out = env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok))
+	if status != http.StatusForbidden {
+		t.Fatalf("migrated token must still deny notifications, got %d: %s", status, out)
+	}
+}
+
+// TestNotificationOnlyTokenDeniedForAI (验收 5): a token granted only
+// notifications:send can POST notifications but is denied the entire AI
+// credential surface (node discovery + lease requests -> 403).
+func TestNotificationOnlyTokenDeniedForAI(t *testing.T) {
+	mock := &feishuMock{code: 0}
+	env := setupNotifAPI(t, mock)
+	id, tok := createAPIToken(t, env, "notif-only", "1h")
+	grantNotificationsPermission(t, env, id, 1)
+
+	// notifications:send works.
+	status, out := env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok))
+	if status != http.StatusOK {
+		t.Fatalf("notification send should be 200, got %d: %s", status, out)
+	}
+	assertNoLeak(t, out, tok, mock.url)
+
+	// Node discovery via token -> 403.
+	h := tokenHeaders(tok)
+	status, out = env.serve("GET", "/api/v1/nodes", nil, h)
+	if status != http.StatusForbidden {
+		t.Fatalf("notification-only token node list should be 403, got %d: %s", status, out)
+	}
+	// Lease request -> 403.
+	h["Idempotency-Key"] = "notif-only-lease"
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "notif-only", "read-only"), h)
+	if status != http.StatusForbidden {
+		t.Fatalf("notification-only token lease request should be 403, got %d: %s", status, out)
+	}
+}
+
+// TestRemovingAIPermissionKeepsLeaseButDeniesRenew (验收 7): removing a
+// token's AI permissions does not revoke its already-issued active leases, but
+// the same token can no longer perform lease lifecycle operations (renew -> 403).
+func TestRemovingAIPermissionKeepsLeaseButDeniesRenew(t *testing.T) {
+	env := setupAPI(t)
+	ctx := context.Background()
+
+	id, tok := createAPIToken(t, env, "grant-then-revoke", "1h")
+	grantAIPermissions(t, env, id, 1)
+
+	h := tokenHeaders(tok)
+	h["Idempotency-Key"] = "remove-perm-1"
+	status, out := env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-R", "read-only"), h)
+	if status != http.StatusCreated {
+		t.Fatalf("lease request status %d: %s", status, out)
+	}
+	created := mustDecode[struct {
+		Lease struct {
+			ID string `json:"id"`
+		} `json:"lease"`
+	}](t, out)
+	if created.Lease.ID == "" {
+		t.Fatalf("lease not issued: %s", out)
+	}
+
+	// Replace the AI grants with an empty grant set (permission_version 2).
+	putPermissions(t, env, id, 2, []map[string]any{})
+
+	// The already-issued lease stays active.
+	n, err := env.st.ActiveLeaseCountByAccessToken(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 active lease to survive permission removal, got %d", n)
+	}
+
+	// The same token can no longer renew the lease (403 before ownership check).
+	status, out = env.serve("POST", "/api/v1/ai/leases/"+created.Lease.ID+"/renew",
+		map[string]any{"requested_duration_seconds": 600}, tokenHeaders(tok))
+	if status != http.StatusForbidden {
+		t.Fatalf("renew after permission removal should be 403, got %d: %s", status, out)
+	}
+}
+
+// TestNewTokenZeroPermissionsDenied (验收 1): a freshly created token has zero
+// permissions, so node discovery, lease requests and notification sends are
+// all denied with 403 (the token is valid but unauthorized).
+func TestNewTokenZeroPermissionsDenied(t *testing.T) {
+	env := setupAPI(t)
+
+	_, tok := createAPIToken(t, env, "zero-perms", "1h")
+	h := tokenHeaders(tok)
+
+	// Node discovery via token (adminOrToken token path) -> 403.
+	status, out := env.serve("GET", "/api/v1/nodes", nil, h)
+	if status != http.StatusForbidden {
+		t.Fatalf("zero-permission token node list should be 403, got %d: %s", status, out)
+	}
+	// Lease request -> 403.
+	h["Idempotency-Key"] = "zero-perm-lease"
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "zero", "read-only"), h)
+	if status != http.StatusForbidden {
+		t.Fatalf("zero-permission token lease request should be 403, got %d: %s", status, out)
+	}
+	// Notification send -> 403.
+	status, out = env.serve("POST", "/api/v1/notifications/send", notifSendBody("t", "m"), tokenHeaders(tok))
+	if status != http.StatusForbidden {
+		t.Fatalf("zero-permission token notification send should be 403, got %d: %s", status, out)
 	}
 }

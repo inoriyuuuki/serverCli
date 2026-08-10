@@ -341,3 +341,23 @@ func (s *Store) LeasesRevokedByToken(ctx context.Context, tokenID, reason string
 	}
 	return out, rows.Err()
 }
+
+// UpdateAccessTokenPermissions conditionally replaces a token's permission set
+// under an optimistic lock: the row only changes when its current
+// permission_version equals expectedRevision, and the revision is bumped by
+// one. Returns true when exactly one row was updated, false when the revision
+// no longer matches (caller maps that to a conflict). Never touches
+// revoked_at/expires_at.
+func (s *Store) UpdateAccessTokenPermissions(ctx context.Context, tokenID string, expectedRevision int, permissionsJSON string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE api_access_token SET permissions_json=$1, permission_version=permission_version+1
+		WHERE id=$2 AND permission_version=$3 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $4)`,
+		permissionsJSON, tokenID, expectedRevision, ts(now()))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
