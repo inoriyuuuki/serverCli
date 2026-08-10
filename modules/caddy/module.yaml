@@ -1,0 +1,66 @@
+# caddy (gateway) foundation module.
+#
+# Runs Caddy on a Docker bridge with host-gateway (never a hardcoded bridge IP)
+# and installs in two phases: maintenance mode obtains ACME TLS first, then the
+# formal route is switched over. The maintenance page never exposes internal
+# state. ACME failure degrades but preserves postgres/docker/v2ray.
+id: caddy
+version: 1.0.0
+phase: foundation-core
+depends_on:
+  - postgres
+delivery: env
+config_fields:
+  - name: DOMAIN
+    type: string
+    required: true
+  - name: EMAIL
+    type: string
+    required: false
+  - name: IMAGE
+    type: string
+    required: false
+  - name: DATA_DIR
+    type: string
+    required: false
+  - name: BRIDGE
+    type: string
+    required: false
+  - name: MAINTENANCE
+    type: bool
+    required: false
+secret_fields:
+  - name: ACME_DNS_API_TOKEN
+    type: string
+    required: false
+    sensitive: true
+operations:
+  preflight:
+    entry: operations/preflight.sh
+    root: true
+  plan:
+    entry: operations/plan.sh
+    root: true
+  install:
+    entry: operations/install.sh
+    timeout_seconds: 1200
+    root: true
+  verify:
+    entry: operations/verify.sh
+    root: true
+  backup:
+    entry: operations/backup.sh
+    root: true
+  restore:
+    entry: operations/restore.sh
+    root: true
+  adopt:
+    entry: operations/adopt.sh
+    root: true
+healthcheck:
+  verify: operations/verify.sh
+backup:
+  backup: operations/backup.sh
+  restore: operations/restore.sh
+  verify: operations/verify.sh
+concurrency: node

@@ -1,0 +1,85 @@
+# gitea foundation module.
+#
+# Part of foundation but NOT part of the core_ready hard gate
+# (core_ready = v2ray,docker,postgres,caddy,control-plane,agent;
+# foundation_complete = core_ready + gitea). New installs use a dedicated
+# database on the Foundation PostgreSQL. Adopted legacy instances keep
+# MariaDB 10.11; adopt/repair/update never migrate implicitly.
+id: gitea
+version: 1.0.0
+phase: foundation-services
+depends_on:
+  - control-plane
+  - postgres
+  - caddy
+delivery: env
+config_fields:
+  - name: IMAGE
+    type: string
+    required: false
+  - name: DATA_DIR
+    type: string
+    required: false
+  - name: PORT
+    type: int
+    required: false
+  - name: DB_NAME
+    type: string
+    required: false
+  - name: DB_USER
+    type: string
+    required: false
+  - name: DB_HOST
+    type: string
+    required: false
+  - name: DB_PORT
+    type: int
+    required: false
+  - name: DOMAIN
+    type: string
+    required: false
+  - name: BACKEND
+    type: string
+    required: false
+secret_fields:
+  - name: DB_PASSWORD
+    type: string
+    required: false
+    sensitive: true
+  - name: ADMIN_PASSWORD
+    type: string
+    required: false
+    sensitive: true
+operations:
+  preflight:
+    entry: operations/preflight.sh
+    root: true
+  plan:
+    entry: operations/plan.sh
+    root: true
+  install:
+    entry: operations/install.sh
+    timeout_seconds: 900
+    root: true
+  verify:
+    entry: operations/verify.sh
+    root: true
+  backup:
+    entry: operations/backup.sh
+    timeout_seconds: 1800
+    root: true
+  restore:
+    entry: operations/restore.sh
+    timeout_seconds: 1800
+    root: true
+  adopt:
+    entry: operations/adopt.sh
+    timeout_seconds: 1800
+    root: true
+healthcheck:
+  verify: operations/verify.sh
+backup:
+  backup: operations/backup.sh
+  restore: operations/restore.sh
+  verify: operations/verify.sh
+concurrency: node

@@ -1,0 +1,77 @@
+# control-plane foundation module.
+#
+# Starts the ServerCLI control plane only after postgres and the caddy gateway
+# are ready. Production requires PostgreSQL. The initial control plane is
+# reachable through Caddy via the dedicated bridge network. Local health is
+# recorded as control_plane_local_ready once all health endpoints pass.
+id: control-plane
+version: 1.0.0
+phase: foundation-core
+depends_on:
+  - postgres
+  - caddy
+delivery: env
+config_fields:
+  - name: IMAGE
+    type: string
+    required: false
+  - name: DATA_DIR
+    type: string
+    required: false
+  - name: PORT
+    type: int
+    required: false
+  - name: NODE_NAME
+    type: string
+    required: true
+  - name: ENVIRONMENT
+    type: string
+    required: true
+  - name: DB_NAME
+    type: string
+    required: true
+  - name: DB_USER
+    type: string
+    required: true
+  - name: DB_HOST
+    type: string
+    required: false
+  - name: DB_PORT
+    type: int
+    required: false
+secret_fields:
+  - name: DB_PASSWORD
+    type: string
+    required: true
+    sensitive: true
+  - name: INTERNAL_TOKEN
+    type: string
+    required: true
+    sensitive: true
+operations:
+  preflight:
+    entry: operations/preflight.sh
+    root: true
+  plan:
+    entry: operations/plan.sh
+    root: true
+  install:
+    entry: operations/install.sh
+    timeout_seconds: 1200
+    root: true
+  verify:
+    entry: operations/verify.sh
+    root: true
+  backup:
+    entry: operations/backup.sh
+    root: true
+  restore:
+    entry: operations/restore.sh
+    root: true
+healthcheck:
+  verify: operations/verify.sh
+backup:
+  backup: operations/backup.sh
+  restore: operations/restore.sh
+  verify: operations/verify.sh
+concurrency: node

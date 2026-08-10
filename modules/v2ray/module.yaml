@@ -1,0 +1,71 @@
+# v2ray foundation module.
+#
+# Proxies outbound traffic for curl/git/docker daemon/module downloader when
+# enabled. Enablement is driven by Inventory (SERVERCLI_CFG_ENABLED). When
+# disabled the Go preflight verifies direct connectivity to GitHub/OSS/mirror
+# instead. Existing proxy configuration without ServerCLI ownership is never
+# overwritten.
+id: v2ray
+version: 1.0.0
+phase: foundation-core
+depends_on: []
+delivery: env
+config_fields:
+  - name: ENABLED
+    type: bool
+    required: false
+  - name: MODE
+    type: string
+    required: false
+  - name: SOCKS_PORT
+    type: int
+    required: false
+  - name: HTTP_PORT
+    type: int
+    required: false
+  - name: UPSTREAM_HOST
+    type: string
+    required: false
+  - name: UPSTREAM_PORT
+    type: int
+    required: false
+  - name: PROXY_DOMAINS
+    type: string
+    required: false
+  - name: DIRECT_DOMAINS
+    type: string
+    required: false
+secret_fields: []
+operations:
+  preflight:
+    entry: operations/preflight.sh
+    root: true
+  plan:
+    entry: operations/plan.sh
+    root: true
+  install:
+    entry: operations/install.sh
+    timeout_seconds: 300
+    root: true
+  verify:
+    entry: operations/verify.sh
+    root: true
+  backup:
+    entry: operations/backup.sh
+    root: true
+  restore:
+    entry: operations/restore.sh
+    root: true
+  adopt:
+    entry: operations/adopt.sh
+    root: true
+  uninstall:
+    entry: operations/uninstall.sh
+    root: true
+healthcheck:
+  verify: operations/verify.sh
+backup:
+  backup: operations/backup.sh
+  restore: operations/restore.sh
+  verify: operations/verify.sh
+concurrency: node

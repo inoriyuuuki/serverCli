@@ -1,0 +1,40 @@
+# docker foundation module.
+#
+# Installs a pinned, supported Docker Engine release and reuses an existing
+# compatible installation when present. ServerCLI never cleans up containers,
+# images or volumes it does not own. Resources created by this module carry
+# managed-by/module-id/instance-id/config-digest labels or markers.
+id: docker
+version: 1.0.0
+phase: foundation-core
+depends_on:
+  - v2ray
+delivery: env
+config_fields:
+  - name: VERSION
+    type: string
+    required: false
+  - name: MIRROR_URL
+    type: string
+    required: false
+secret_fields: []
+operations:
+  preflight:
+    entry: operations/preflight.sh
+    root: true
+  plan:
+    entry: operations/plan.sh
+    root: true
+  install:
+    entry: operations/install.sh
+    timeout_seconds: 900
+    root: true
+  verify:
+    entry: operations/verify.sh
+    root: true
+  adopt:
+    entry: operations/adopt.sh
+    root: true
+healthcheck:
+  verify: operations/verify.sh
+concurrency: node
