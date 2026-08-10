@@ -42,7 +42,17 @@ function normalizeSession(data: unknown): SessionInfo | null {
         ? (session.user as Record<string, unknown>)
         : null;
 
+  // Backend returns environment as an object: { instance_name, node_role, app_env }.
+  const envObj =
+    session.environment && typeof session.environment === 'object' && !Array.isArray(session.environment)
+      ? (session.environment as Record<string, unknown>)
+      : root.environment && typeof root.environment === 'object' && !Array.isArray(root.environment)
+        ? (root.environment as Record<string, unknown>)
+        : null;
+
   const environment = firstString(
+    envObj?.app_env,
+    envObj?.APP_ENV,
     session.environment,
     session.env,
     root.environment,
@@ -51,6 +61,8 @@ function normalizeSession(data: unknown): SessionInfo | null {
     session.APP_ENV,
   );
   const role = firstString(
+    envObj?.node_role,
+    envObj?.NODE_ROLE,
     session.role,
     session.node_role,
     root.role,
@@ -66,6 +78,8 @@ function normalizeSession(data: unknown): SessionInfo | null {
     session.nodeId,
   );
   const nodeName = firstString(
+    envObj?.instance_name,
+    envObj?.INSTANCE_NAME,
     node?.alias,
     node?.instance_name,
     node?.name,
