@@ -239,3 +239,23 @@ make test-child     # 等价于 start.sh --env test --role child --instance test
 | [doc/10_CHANGE_TARGETS.md](doc/10_CHANGE_TARGETS.md) | 本轮确认需求、目标变动、待确认事项和变更记录 |
 | [doc/11_IMPLEMENTATION_CONTRACT.md](doc/11_IMPLEMENTATION_CONTRACT.md) | 接口契约（权威）：目录、环境变量、API 端点、命令 Manifest 格式 |
 | [doc/12_NOTIFICATION_MIGRATION.md](doc/12_NOTIFICATION_MIGRATION.md) | 通知模块迁移与运维：旧 Flask 回归、Webhook 重建、9103 下线与回滚 |
+
+## 初始化与引导（servercli init）
+
+ServerCLI 的物理主机发布包含**三个二进制**：`servercli`（初始化/运维 CLI，数据库无关）、
+`servercli-control-plane`（主控服务）、`servercli-node-agent`（节点 Agent）。
+
+- **安装器**：`deploy/install-servercli.sh` 面向全新 CentOS/RHEL（EL8/EL9，
+  x86_64/aarch64）一键安装。它从 GitHub Release（主源）/ OSS（回退源）下载
+  Release Manifest，用发布公钥校验 Ed25519 签名并逐个校验 artifact 的 sha256，
+  安装到 `/opt/servercli/releases/<version>` 并原子切换 `current`/`previous` 软链接；
+  仅在 TTY 下询问是否运行 `servercli init`（`--yes` 直接运行，`--no-init-prompt` 跳过）。
+- **稳定命令接口**：`servercli init|init plan|init apply|init status|init resume|init repair`、
+  `servercli config import plan|apply`、`servercli modules run`、`servercli ops update|backup|restore`、
+  `servercli version`；稳定退出码见 `backend/internal/bootstrap`。
+- **安全模型**：root-only 安装、签名 Manifest 为唯一信任锚（fail-closed）、Secret 只进
+  加密 Bootstrap Store/0600 文件/单行环境变量、原子写 + fsync、拒绝符号链接、
+  提交前由 `scripts/scan-secrets.sh` 扫描泄密；Bundle 明文只短暂存在于
+  `/run/servercli/bootstrap` tmpfs。
+- 完整设计（架构图、固定目录、发布信任链、状态机、模块顺序、owner/adopt、
+  ops 兼容、安全门禁、验收场景映射）见 [doc/13_INIT_AND_BOOTSTRAP.md](doc/13_INIT_AND_BOOTSTRAP.md)。

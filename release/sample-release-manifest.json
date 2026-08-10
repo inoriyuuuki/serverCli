@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "release_version": "v0.0.0-sample",
+  "created_at": "2026-08-10T00:00:00Z",
+  "signing_key_id": "sample-ed25519-key-id-placeholder",
+  "artifacts": [
+    {
+      "path": "bin/servercli",
+      "kind": "binary",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 0
+    },
+    {
+      "path": "bin/servercli-control-plane",
+      "kind": "binary",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 0
+    },
+    {
+      "path": "bin/servercli-node-agent",
+      "kind": "binary",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 0
+    },
+    {
+      "path": "modules/",
+      "kind": "module",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": -1
+    },
+    {
+      "path": "deploy/install-servercli.sh",
+      "kind": "installer",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 0
+    },
+    {
+      "path": "templates/",
+      "kind": "template",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": -1
+    },
+    {
+      "path": "schema/",
+      "kind": "schema",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": -1
+    }
+  ],
+  "schema_compat": {
+    "min_schema_version": "1.0",
+    "max_schema_version": "1.0",
+    "reversible": true,
+    "notes": "占位示例：正式 manifest 由 CI 签名步骤生成，sha256 为真实摘要，schema 兼容区间由发布策略声明"
+  },
+  "signature": "c2FtcGxlLXBsYWNlaG9sZGVyLXNpZ25hdHVyZS1kby1ub3QtdXNl"
+}

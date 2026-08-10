@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "bundle_id": "sample-bundle-id-placeholder",
+  "bundle_version": "v0.0.0-sample",
+  "environment": "production",
+  "target_node": "sample-node-name-placeholder",
+  "target_role": "primary",
+  "created_at": "2026-08-10T00:00:00Z",
+  "minimum_bootstrap_version": "v0.0.0-sample",
+  "payload_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "expires_at": "2027-08-10T00:00:00Z",
+  "signing_key_id": "sample-ed25519-key-id-placeholder",
+  "signature": "c2FtcGxlLXBsYWNlaG9sZGVyLWJ1bmRsZS1zaWduYXR1cmUtZG8tbm90LXVzZQ=="
+}

@@ -1,0 +1,73 @@
+# postgres foundation module.
+#
+# Runs the pinned paradedb/paradedb:pg17 image with data in
+# /var/lib/servercli/postgres. Creates one dedicated database and a
+# least-privilege account. Re-running never rebuilds or resets an existing
+# database; a non-empty data directory without ServerCLI ownership metadata is
+# blocked. No automatic restore by default.
+id: postgres
+version: 1.0.0
+phase: foundation-core
+depends_on:
+  - docker
+delivery: env
+config_fields:
+  - name: IMAGE
+    type: string
+    required: false
+  - name: IMAGE_DIGEST
+    type: string
+    required: false
+  - name: DATA_DIR
+    type: string
+    required: false
+  - name: DB_NAME
+    type: string
+    required: true
+  - name: APP_USER
+    type: string
+    required: true
+  - name: PORT
+    type: int
+    required: false
+secret_fields:
+  - name: POSTGRES_SUPER_PASSWORD
+    type: string
+    required: true
+    sensitive: true
+  - name: APP_PASSWORD
+    type: string
+    required: true
+    sensitive: true
+operations:
+  preflight:
+    entry: operations/preflight.sh
+    root: true
+  plan:
+    entry: operations/plan.sh
+    root: true
+  install:
+    entry: operations/install.sh
+    timeout_seconds: 900
+    root: true
+  verify:
+    entry: operations/verify.sh
+    root: true
+  backup:
+    entry: operations/backup.sh
+    timeout_seconds: 1800
+    root: true
+  restore:
+    entry: operations/restore.sh
+    timeout_seconds: 1800
+    root: true
+  adopt:
+    entry: operations/adopt.sh
+    root: true
+healthcheck:
+  verify: operations/verify.sh
+backup:
+  backup: operations/backup.sh
+  restore: operations/restore.sh
+  verify: operations/verify.sh
+concurrency: node

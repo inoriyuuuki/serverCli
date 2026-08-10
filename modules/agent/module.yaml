@@ -1,0 +1,60 @@
+# agent foundation module.
+#
+# Installs the node agent with a root-only local bootstrap claim channel.
+# The claim token is bound to environment/node-name/primary role/init
+# transaction id and is consumed atomically; it never appears in argv, env or
+# logs (delivery=file: the runner places it in a 0600 file under /run). After
+# the claim the agent switches to Caddy HTTPS; heartbeat success records
+# agent_ready / core_ready.
+id: agent
+version: 1.0.0
+phase: foundation-core
+depends_on:
+  - control-plane
+  - caddy
+delivery: file
+config_fields:
+  - name: NODE_NAME
+    type: string
+    required: true
+  - name: ENVIRONMENT
+    type: string
+    required: true
+  - name: ROLE
+    type: string
+    required: true
+  - name: TRANSACTION_ID
+    type: string
+    required: true
+  - name: CP_ADDRESS
+    type: string
+    required: false
+  - name: SOCKET_DIR
+    type: string
+    required: false
+secret_fields:
+  - name: CLAIM_TOKEN
+    type: string
+    required: true
+    sensitive: true
+  - name: AGENT_PRIVATE_KEY
+    type: file
+    required: true
+    sensitive: true
+operations:
+  preflight:
+    entry: operations/preflight.sh
+    root: true
+  plan:
+    entry: operations/plan.sh
+    root: true
+  install:
+    entry: operations/install.sh
+    timeout_seconds: 600
+    root: true
+  verify:
+    entry: operations/verify.sh
+    root: true
+healthcheck:
+  verify: operations/verify.sh
+concurrency: node

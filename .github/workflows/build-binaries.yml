@@ -6,10 +6,13 @@
 #   2) 手动触发 workflow_dispatch -> 可选指定 tag 与目标平台，仅上传 Actions Artifact
 #
 # 产物（每个平台一个自包含 tar.gz 包）：
-#   - bin/servercli-control-plane、bin/servercli-node-agent（纯 Go，CGO_ENABLED=0）
+#   - bin/servercli、bin/servercli-control-plane、bin/servercli-node-agent
+#     （纯 Go，CGO_ENABLED=0；servercli 为初始化/运维 CLI）
 #   - frontend/dist（前端静态资源，由控制面托管）
-#   - commands/（命令 manifest 与可执行文件）
-#   - deploy/（环境示例 + systemd 模板 + lease shell）、scripts/、VERSION、INSTALL.md
+#   - commands/（命令 manifest 与可执行文件）、modules/（公共模块）
+#   - deploy/（环境示例 + systemd 模板 + lease shell + install-servercli.sh 安装器）
+#   - release/（示例 manifest 等）、scripts/、VERSION、INSTALL.md
+#   - release-manifest.json（签名步骤生成：artifact sha256 摘要表 + 可选 Ed25519 签名）
 #
 # 旧的 Docker 镜像构建工作流已停用，见 .github/workflows/docker-build.yml.disabled
 # =============================================================================
@@ -184,6 +187,8 @@ jobs:
         run: |
           cd backend
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.build=github-actions -X main.commit=${GITHUB_SHA}" \
+            -o ../bin/servercli ./cmd/servercli
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.build=github-actions -X main.commit=${GITHUB_SHA}" \
             -o ../bin/servercli-control-plane ./cmd/control-plane
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.build=github-actions -X main.commit=${GITHUB_SHA}" \
             -o ../bin/servercli-node-agent ./cmd/node-agent
@@ -196,25 +201,191 @@ jobs:
           ARCHIVE="${ROOT}.tar.gz"
 
           mkdir -p "${ROOT}/bin" "${ROOT}/frontend" "${ROOT}/deploy"
-          cp bin/servercli-control-plane bin/servercli-node-agent "${ROOT}/bin/"
+          # modules/ 与 release/ 目标目录不存在，cp -R 直接创建（避免嵌套）；
+          cp bin/servercli-control-plane bin/servercli-node-agent bin/servercli "${ROOT}/bin/"
           cp -R frontend/dist "${ROOT}/frontend/dist"
           cp -R commands "${ROOT}/commands"
           cp -R scripts "${ROOT}/scripts"
           cp -R deploy/environments deploy/systemd "${ROOT}/deploy/"
           cp deploy/servercli-lease-shell.sh "${ROOT}/deploy/"
+          cp deploy/install-servercli.sh "${ROOT}/deploy/"
+          cp -R deploy/compat "${ROOT}/deploy/compat"
+          cp -R modules "${ROOT}/modules"
+          cp -R release "${ROOT}/release"
           cp start.sh check.sh README.md "${ROOT}/"
           printf '%s\n' "${VERSION}" > "${ROOT}/VERSION"
 
           cp deploy/INSTALL.md "${ROOT}/INSTALL.md"
 
           find "${ROOT}" -name '.DS_Store' -delete
-          chmod +x "${ROOT}/bin/"* "${ROOT}/scripts/"*.sh "${ROOT}/start.sh" "${ROOT}/check.sh" "${ROOT}/deploy/servercli-lease-shell.sh"
+          chmod +x "${ROOT}/bin/"* "${ROOT}/scripts/"*.sh "${ROOT}/start.sh" "${ROOT}/check.sh" "${ROOT}/deploy/servercli-lease-shell.sh" "${ROOT}/deploy/install-servercli.sh"
           tar -czf "${ARCHIVE}" "${ROOT}"
           sha256sum "${ARCHIVE}" > sha256sums.txt
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
           echo "ARCHIVE_NAME=${ROOT}" >> "$GITHUB_ENV"
           echo "Bundle: ${ARCHIVE}"
           ls -lh "${ARCHIVE}"
+
+      # -----------------------------------------------------------------------
+      # 签名 Release Manifest（可选）
+      # -----------------------------------------------------------------------
+      # 生成 bundle 内 release-manifest.json（各 artifact 的 sha256 摘要表）。
+      # 若配置了 SERVERCLI_RELEASE_SIGNING_KEY（base64 编码的 Ed25519 私钥 PEM），
+      # 用 openssl 对 canonical 消息（去除 signature 字段、按键排序的紧凑 JSON）
+      # 直接做标准 Ed25519 签名（无 SHA-256 预哈希）并写入 signature 字段；
+      # 未配置时生成 unsigned 标记的 manifest，签名步骤跳过并输出警告。
+      # 注意：manifest 内 sha256 摘要表是信任锚，安装器绝不相信裸 SHA256。
+      - name: Sign release manifest
+        env:
+          SERVERCLI_RELEASE_SIGNING_KEY: ${{ secrets.SERVERCLI_RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          ROOT="${ARCHIVE_NAME}"
+          if [ -z "${ROOT}" ] || [ ! -d "${ROOT}" ]; then
+            echo "::error::ARCHIVE_NAME is empty or bundle directory missing"
+            exit 1
+          fi
+          MANIFEST="${ROOT}/release-manifest.json"
+
+          # ---- 1) 从打包产物计算 sha256 摘要表并生成 release-manifest.json ----
+          python3 - "${ROOT}" <<'PY'
+          import hashlib, json, os, sys, datetime
+          
+          root = sys.argv[1]
+          
+          def file_sha256(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for chunk in iter(lambda: f.read(65536), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+          
+          def walk(d):
+              out = []
+              for base, _dirs, files in os.walk(d):
+                  for fn in files:
+                      p = os.path.join(base, fn)
+                      rel = os.path.relpath(p, d)
+                      out.append((rel, file_sha256(p)))
+              return sorted(out)
+          
+          def dir_sha256(d):
+              # 目录摘要 = 内部文件（相对路径 + sha256）排序后拼接串的 sha256，确定性可复现
+              h = hashlib.sha256()
+              for rel, digest in walk(d):
+                  h.update(("%s\t%s\n" % (rel, digest)).encode("utf-8"))
+              return h.hexdigest()
+          
+          artifacts = []
+          
+          def add(path, kind, sha, size):
+              artifacts.append({"path": path, "kind": kind, "sha256": sha, "size": size})
+          
+          for path, kind in (
+              ("bin/servercli", "binary"),
+              ("bin/servercli-control-plane", "binary"),
+              ("bin/servercli-node-agent", "binary"),
+              ("deploy/install-servercli.sh", "installer"),
+          ):
+              p = os.path.join(root, path)
+              if os.path.isfile(p):
+                  add(path, kind, file_sha256(p), os.path.getsize(p))
+          
+          for d, kind in (("modules", "module"), ("templates", "template"), ("schema", "schema")):
+              p = os.path.join(root, d)
+              if os.path.isdir(p):
+                  add(d + "/", kind, dir_sha256(p), -1)
+          
+          version = os.environ.get("VERSION", "unknown")
+          now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+          manifest = {
+              "schema_version": "1.0",
+              "release_version": version,
+              "created_at": now,
+              "signing_key_id": "ci-release-key-placeholder",
+              "artifacts": artifacts,
+              "schema_compat": {
+                  "min_schema_version": "1.0",
+                  "max_schema_version": "1.0",
+                  "reversible": True,
+                  "notes": "generated by build-binaries.yml; compatibility window is release policy",
+              },
+              "signature": "",
+          }
+          with open(os.path.join(root, "release-manifest.json"), "w") as f:
+              json.dump(manifest, f, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+          print("release-manifest.json artifacts: %d" % len(artifacts))
+          PY
+
+          # ---- 2) 可选签名：存在 SERVERCLI_RELEASE_SIGNING_KEY 时用 openssl 生成 Ed25519 签名 ----
+          KEY_B64="${SERVERCLI_RELEASE_SIGNING_KEY:-}"
+          if [ -n "${KEY_B64}" ]; then
+            KEYFILE="$(mktemp)"
+            MSG="$(mktemp)"
+            SIG="$(mktemp)"
+            trap 'rm -f "${KEYFILE}" "${MSG}" "${SIG}"' EXIT
+
+            # 密钥为 base64 编码的 Ed25519 私钥 PEM
+            printf '%s' "${KEY_B64}" | base64 -d > "${KEYFILE}"
+
+            # canonical 消息 = 去除 signature 字段后按键名排序的紧凑 JSON
+            python3 - "${MANIFEST}" "${MSG}" <<'PY'
+          import json, sys
+          m = json.load(open(sys.argv[1]))
+          m.pop("signature", None)
+          open(sys.argv[2], "w").write(json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+          PY
+
+            # 对消息 SHA-256 摘要做 Ed25519 签名（与安装器
+            # Ed25519 直接对 canonical 原文签名（无 SHA-256 预哈希），与 Go
+            # CanonicalManifestBytes / 安装器 pkeyutl -verify -rawin 一致。
+            # 注：无 SERVERCLI_RELEASE_SIGNING_KEY 时生成 unsigned 标记，安装器会拒绝。
+            openssl pkeyutl -sign -rawin -inkey "${KEYFILE}" -in "${MSG}" -out "${SIG}"
+            SIG_B64="$(base64 -w0 "${SIG}")"
+
+            python3 - "${MANIFEST}" "${SIG_B64}" <<'PY'
+          import json, sys
+          m = json.load(open(sys.argv[1]))
+          m["signature"] = sys.argv[2]
+          open(sys.argv[1], "w").write(json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+          PY
+            echo "::notice::release-manifest.json 已使用 SERVERCLI_RELEASE_SIGNING_KEY 签名"
+          else
+            python3 - "${MANIFEST}" <<'PY'
+          import json, sys
+          m = json.load(open(sys.argv[1]))
+          m["signature"] = ""
+          m["unsigned"] = True
+          open(sys.argv[1], "w").write(json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+          PY
+            echo "::warning::SERVERCLI_RELEASE_SIGNING_KEY 未配置：release-manifest.json 标记为 unsigned，跳过签名步骤"
+          fi
+          echo "Generated manifest:"
+          ls -l "${MANIFEST}"
+
+          # ---- 生成扁平 asset 布局（安装器按 slash->dash 映射下载） ----
+          # GitHub Release asset 名不允许 "/"，所以按 manifest 的 path 映射：
+          #   bin/servercli            -> bin-servercli
+          #   deploy/install-servercli.sh -> deploy-install-servercli.sh
+          #   modules/                 -> modules.tar.gz（目录打包）
+          #   release-manifest-linux-<arch>.json（按平台命名的签名 manifest）
+          FLAT="$(mktemp -d)/flat-${GOOS}-${GOARCH}"
+          mkdir -p "${FLAT}"
+          while IFS= read -r path; do
+            [ -n "${path}" ] || continue
+            case "${path}" in
+              */)
+                name="$(printf '%s' "${path%/}").tar.gz"
+                tar -czf "${FLAT}/${name}" -C "${ROOT}" "${path%/}"
+                ;;
+              *)
+                name="$(printf '%s' "${path}" | tr '/' '-')"
+                cp "${ROOT}/${path}" "${FLAT}/${name}"
+                ;;
+            esac
+          done < <(jq -r '.artifacts[].path' "${MANIFEST}")
+          cp "${MANIFEST}" "${FLAT}/release-manifest-${GOOS}-${GOARCH}.json"
+          echo "FLAT=${FLAT}" >> "$GITHUB_ENV"
 
       - name: Upload bundle
         uses: actions/upload-artifact@v4
@@ -223,6 +394,13 @@ jobs:
           path: |
             *.tar.gz
             sha256sums.txt
+          if-no-files-found: error
+
+      - name: Upload flat assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: flat-${GOOS}-${GOARCH}
+          path: ${{ env.FLAT }}/*
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -245,10 +423,16 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
+          # 平台整包 tar.gz + 签名摘要
           find . -maxdepth 2 -type f -name '*.tar.gz' -exec mv -f {} . \;
-          find . -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+          # 扁平 asset（安装器按 slash->dash 映射下载）——含每个平台的
+          # release-manifest-linux-<arch>.json 与各 artifact
+          mkdir -p flat
+          find . -maxdepth 2 -path '*/flat-*/*' -type f -exec cp -f {} flat/ \;
+          find . -mindepth 1 -maxdepth 1 -type d -name 'flat-*' -exec rm -rf {} +
           sha256sum *.tar.gz > sha256sums.txt
           ls -la
+          ls -la flat/
 
       - name: Create or update GitHub release
         env:
@@ -262,11 +446,11 @@ jobs:
           # assets with --clobber instead of failing with "already exists".
           if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             echo "Release '${TAG}' already exists; uploading/overwriting assets"
-            gh release upload "${TAG}" *.tar.gz sha256sums.txt \
+            gh release upload "${TAG}" *.tar.gz sha256sums.txt flat/* \
               --repo "${GITHUB_REPOSITORY}" \
               --clobber
           else
-            gh release create "${TAG}" *.tar.gz sha256sums.txt \
+            gh release create "${TAG}" *.tar.gz sha256sums.txt flat/* \
               --repo "${GITHUB_REPOSITORY}" \
               --title "ServerCLI ${TAG}" \
               --generate-notes
