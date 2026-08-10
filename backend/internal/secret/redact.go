@@ -28,6 +28,7 @@ var sensitiveJSONKeys = []string{
 	"node_credential", "renewal_token", "claim_token", "access_key",
 	"access_token", "refresh_token", "client_secret", "db_password",
 	"dsn", "connection_string",
+	"webhook", "hook_url", "hook",
 }
 
 // IsSensitiveKey reports whether k looks like a secret-bearing key.
@@ -46,6 +47,7 @@ var (
 	authHeaderRe = regexp.MustCompile(`(?i)(Bearer|Basic)\s+\S+`)
 	cookieRe     = regexp.MustCompile(`(?i)(session|token|auth|credential)[^=;,\s]*=[^;,\s]+`)
 	dsnRe        = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^:/\s]+):([^@/\s]+)@`)
+	hookURLRe    = regexp.MustCompile(`https?://[^\s"'<>]+`)
 	// commonSecretValueRe matches typical high-entropy secret values inside JSON.
 	commonSecretValueRe = regexp.MustCompile(`(?i)(sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sct_[A-Za-z0-9_-]+|lrt_[A-Za-z0-9_.-]+)`)
 )
@@ -93,10 +95,29 @@ func (r *Redactor) RedactString(s string) string {
 	}); m != out {
 		out = m
 	}
+	// Hook/webhook style URLs (e.g. Feishu bot webhook endpoints) carry
+	// secret tokens in the path; mask the whole URL. Runs after dsnRe so
+	// credential-bearing DSNs keep their dedicated redaction first.
+	if strings.Contains(strings.ToLower(out), "hook") {
+		urls := hookURLRe.ReplaceAllStringFunc(out, func(m string) string {
+			if isHookURL(m) {
+				changed = true
+				return "[REDACTED_URL]"
+			}
+			return m
+		})
+		out = urls
+	}
 	if changed {
 		r.count.Add(1)
 	}
 	return out
+}
+
+// isHookURL reports whether a matched URL looks like a hook/webhook endpoint.
+func isHookURL(u string) bool {
+	lower := strings.ToLower(u)
+	return strings.Contains(lower, "webhook") || strings.Contains(lower, "/hook")
 }
 
 // RedactJSON masks sensitive keys in a JSON document while preserving shape.

@@ -21,8 +21,8 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	ver := d.SchemaVersion(ctx)
-	if ver != 5 {
-		t.Fatalf("expected schema version 5, got %d", ver)
+	if ver != 6 {
+		t.Fatalf("expected schema version 6, got %d", ver)
 	}
 	// Required tables exist.
 	expected := []string{
@@ -49,7 +49,7 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer d2.Close()
-	if v := d2.SchemaVersion(ctx); v != 5 {
+	if v := d2.SchemaVersion(ctx); v != 6 {
 		t.Fatalf("reopen version mismatch: %d", v)
 	}
 }
@@ -61,7 +61,7 @@ func TestMigrateInMemory(t *testing.T) {
 		t.Fatalf("open in-memory: %v", err)
 	}
 	defer d.Close()
-	if d.SchemaVersion(context.Background()) != 5 {
+	if d.SchemaVersion(context.Background()) != 6 {
 		t.Fatal("in-memory migration failed")
 	}
 }

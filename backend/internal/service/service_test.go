@@ -121,6 +121,13 @@ func mustCreatePrincipal(t *testing.T, st *store.Store, envID, name string, ttl 
 		t.Fatal(err)
 	}
 	exp := time.Now().UTC().Add(ttl)
+	// mustCreatePrincipal is used by the legacy lease tests, so the token gets
+	// the explicit full AI credential permission set (the expansion of the
+	// historical wildcard grant), never notifications.
+	raw, err := json.Marshal(PermissionSet{Version: 1, Grants: legacyAICredentialGrants()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tok := &model.APIAccessToken{
 		ID:                model.NewUUID(),
 		EnvironmentID:     envID,
@@ -130,12 +137,12 @@ func mustCreatePrincipal(t *testing.T, st *store.Store, envID, name string, ttl 
 		CreatedAt:         time.Now().UTC(),
 		ExpiresAt:         &exp,
 		PermissionVersion: 1,
-		PermissionsJSON:   defaultPermissionsJSON,
+		PermissionsJSON:   string(raw),
 	}
 	if err := st.CreateAccessToken(context.Background(), tok); err != nil {
 		t.Fatal(err)
 	}
-	perms, err := parsePermissions(defaultPermissionsJSON)
+	perms, err := parsePermissions(string(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
