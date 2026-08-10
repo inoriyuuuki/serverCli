@@ -257,3 +257,136 @@ Profile 映射到命令、sudoers、文件路径和网络访问白名单，而�
 - 完整保存参数（含密码、Token 等敏感字段），仅管理员 API 可读取。
 - 删除只移除“一键回填”选项，不删除任务及其详情中的原始参数。
 - 子节点控制面通过 `childProxy` 将本机的参数历史 GET/DELETE 转发到主节点的 agent 自服务端点，读取主节点权威数据。
+
+## 13. 通知与 Token 权限 API
+
+> 本节更新：2026-08-10  
+> 通知 API 使用 Access Token（`sct_*`）鉴权，并要求权限 `notifications:send`；Token 权限模型见 [08_SECURITY_AND_AUDIT.md](08_SECURITY_AND_AUDIT.md) §13，迁移运维见 [12_NOTIFICATION_MIGRATION.md](12_NOTIFICATION_MIGRATION.md)。
+
+### 13.1 发送通知 `POST /api/v1/notifications/send`
+
+鉴权：`Authorization: Bearer <sct_* Access Token>` + 权限 `notifications:send`（Token 无该权限返回 403）。
+
+请求 JSON（`DisallowUnknownFields`，额外字段一律 400；调用方无法提交 `source` 或任何 Webhook/目标 URL）：
+
+```json
+{
+  "title": "部署完成",
+  "message": "test-primary 已更新到 v1.2.0",
+  "level": "info",
+  "channel": "default"
+}
+```
+
+| 字段 | 必填 | 校验 |
+| --- | --- | --- |
+| `title` | 是 | trim 后非空；≤ 200 Unicode 字符 |
+| `message` | 是 | trim 后非空；≤ 8192 bytes |
+| `level` | 否 | 默认 `info`；仅小写 `info` / `warning` / `error` |
+| `channel` | 否 | 默认 `default`；首版仅支持 `default` |
+
+`source` 由服务端固定注入为 `api.token`，外部不可提交。请求体不得包含 Webhook/目标 URL——调用方只能选择 `channel` 别名，服务端按别名解析 Provider（SSRF 防御）。
+
+成功响应：
+
+```json
+{
+  "notification": {
+    "status": "sent",
+    "channel": "default",
+    "provider": "feishu"
+  }
+}
+```
+
+错误：`400 BAD_REQUEST`（参数非法）/ `401`（无 Token 或 Token 无效/过期/撤销）/ `403`（权限不足）/ `429 RATE_LIMITED`（限流，带 `Retry-After`）/ `502 UPSTREAM_ERROR`（Provider 失败）/ `503 NOT_CONFIGURED`（`NOTIFICATION_FEISHU_WEBHOOK_URL` 未配置）。
+
+```bash
+curl -X POST "$PRIMARY_API/api/v1/notifications/send" \
+  -H "Authorization: Bearer sct_<token>" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"部署完成","message":"构建成功","level":"info","channel":"default"}'
+```
+
+### 13.2 迁移兼容通知接口 `GET /notice`
+
+> ⚠️ **安全警告**：本接口使用 GET 查询参数，method/message 会进入反向代理访问日志与浏览器历史，敏感或长内容**必须改用 POST**（§13.1）。
+
+兼容旧 Flask 调用方，使用同一 NotificationService 与同一限流；鉴权仍为 `Authorization: Bearer <sct_*>` + `notifications:send`。
+
+| 查询参数 | 说明 |
+| --- | --- |
+| `method` | 标题（对应 `title`），trim 后非空，≤ 200 字符 |
+| `message` | 正文（对应 `message`），trim 后非空，≤ 4096 bytes |
+| `logLevel` | 级别映射，忽略大小写：`warn`/`warning` → `warning`，`error`/`fatal` → `error`，`info`/空/`debug`/其他 → `info` |
+
+响应语义（非鉴权类错误一律 HTTP 200，以 `ret` 区分）：
+
+| 场景 | HTTP | 响应 | usage outcome |
+| --- | --- | --- | --- |
+| 成功 | 200 | `{"ret":1,"msg":"处理成功"}` | success |
+| method/message 缺失或空白 | 200 | `{"ret":0,"msg":"<安全归一化原因>"}`，**不发送** | denied |
+| method/message 超长 | 200 | `{"ret":0,"msg":"..."}`，**不发送** | denied |
+| 参数错误（如 level/channel 非法） | 200 | `{"ret":0,"msg":"invalid request parameters"}` | denied |
+| Webhook 未配置或 Provider 失败 | 200 | `{"ret":0,"msg":"notification send failed"}` | failure |
+| 鉴权错误（无 Token/无效/权限不足） | 401 / 403 | 标准错误 | denied |
+| 限流 | 429 | 标准错误 + `Retry-After` | denied |
+
+示例：
+
+```bash
+curl "$PRIMARY_API/notice?method=%E9%83%A8%E7%BD%B2%E5%AE%8C%E6%88%90&message=%E6%9E%84%E5%BB%BA%E6%88%90%E5%8A%9F&logLevel=warn" \
+  -H "Authorization: Bearer sct_<token>"
+```
+
+与旧 Flask 的安全不兼容点：旧实现把缺失 `message` 当作字符串 `"None"` 发送；新实现**缺失或空白 `method`/`message` 一律不发送**（HTTP 200/`ret=0`）。调用方回归要求见 [12_NOTIFICATION_MIGRATION.md](12_NOTIFICATION_MIGRATION.md) §3。
+
+### 13.3 权限目录 `GET /api/v1/api-tokens/permissions/catalog`
+
+管理员 Session + 主节点（子节点返回 403）。响应：
+
+```json
+{
+  "categories": [
+    {"category": "notifications", "label": "通知"},
+    {"category": "ai_credentials", "label": "AI 凭证"}
+  ],
+  "permissions": []
+}
+```
+
+静态权限目录共 7 项（分类/资源/动作/说明）：
+
+| 分类 | 权限 | 说明 |
+| --- | --- | --- |
+| notifications | `notifications:send` | 发送通知 |
+| ai_credentials | `nodes:read` | 节点发现（只读） |
+| ai_credentials | `ai.lease_requests:create` | 申请 AI Lease |
+| ai_credentials | `ai.lease_requests:read` | 查询本人发起的 Lease 申请 |
+| ai_credentials | `ai.leases:renew` | 续期本人持有的 Lease |
+| ai_credentials | `ai.leases:heartbeat` | 对本人持有的 Lease 发送心跳 |
+| ai_credentials | `ai.leases:disconnect` | 断开本人持有的 Lease |
+
+### 13.4 更新 Token 权限 `PUT /api/v1/api-tokens/{id}/permissions`
+
+管理员 Session + CSRF + 主节点。新 Token 创建即**零权限**（`{"version":1,"grants":[]}`），权限通过本接口显式授予。
+
+请求体（`permission_version` 必须等于当前 DB revision，否则 409）：
+
+```json
+{
+  "permission_version": 3,
+  "permissions": {
+    "version": 1,
+    "grants": [
+      {"resource": "notifications", "actions": ["send"]}
+    ]
+  }
+}
+```
+
+- `permissions.version`：权限 schema 版本（首版 = 1），与 DB `permission_version`（乐观锁 revision）是两回事。
+- 成功：revision +1，返回 `{"api_token":{...}}`（含结构化 `permissions`）。
+- `409`：revision 冲突（并发更新）、Token 已撤销或已过期。
+- Token 列表/详情/创建/更新响应统一返回结构化 `permissions` 对象（非法 JSON fail closed 为空授权集，绝不泄露原始 JSON）。
+- 权限更新写高风险审计：管理员、Token ID/前缀、修改前后 grants 与 revision；不记录明文/hash。

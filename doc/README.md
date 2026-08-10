@@ -19,6 +19,8 @@ ServerCLI 是一个“一台固定主服务器 + 多台节点服务器”的轻�
 | [08_SECURITY_AND_AUDIT.md](08_SECURITY_AND_AUDIT.md) | 安全基线、Secret 管理、命令与 SSH 审计、日志清理 |
 | [09_IMPLEMENTATION_PLAN.md](09_IMPLEMENTATION_PLAN.md) | 分阶段实施、测试策略、交付物与验收门禁 |
 | [10_CHANGE_TARGETS.md](10_CHANGE_TARGETS.md) | 本轮确认需求、目标变动、待确认事项和变更记录 |
+| [11_IMPLEMENTATION_CONTRACT.md](11_IMPLEMENTATION_CONTRACT.md) | 接口契约（权威）：目录、环境变量、API 端点、命令 Manifest 格式 |
+| [12_NOTIFICATION_MIGRATION.md](12_NOTIFICATION_MIGRATION.md) | 通知模块迁移与运维：旧 Flask 调用方回归、Webhook 重建、9103 下线与回滚 |
 
 ## 当前确认的核心约束
 

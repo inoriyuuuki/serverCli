@@ -26,6 +26,7 @@
 | AI 临时私钥 | AI 客户端临时内存/受限文件 | 绝不上传 ServerCLI |
 | AI 临时公钥 | Lease 数据与节点授权文件 | 到期及时删除 |
 | 会话/续期 Token | 客户端安全存储，服务端哈希 | 日志只留前缀/指纹 |
+| 通知 Webhook（`NOTIFICATION_FEISHU_WEBHOOK_URL`） | 部署机 0600 secrets 文件 | 不写 `.env.example` 真实值；不进日志、审计、usage log 与 API 响应；旧泄露 Webhook 需在飞书侧废弃重建 |
 
 用户已提供的 SSH 登录密码不得复制到任何仓库文件。建议在首次部署后轮换，并迁移到 SSH Key。
 
@@ -164,3 +165,38 @@
 - [ ] 日志、输出、数据库和报告不包含 Secret。
 - [ ] 清理不删除重要数据。
 - [ ] PostgreSQL 备份恢复演练通过。
+- [ ] 通知 Webhook 仅存在于部署机 0600 secrets 文件，仓库/日志/审计无真实值。
+- [ ] 新 Token 默认零权限；无 `notifications:send` 的 Token 调用通知接口被 403。
+- [ ] `GET /notice` 缺失或空白 `message` 时不发送（不产生旧 Flask 的 `"None"` 通知）。
+
+## 13. Access Token 权限模型（零权限默认 + 乐观锁）
+
+- 新 Token 创建即**零权限**：`permissions_json` 默认 `{"version":1,"grants":[]}`；权限只能由管理员通过 `PUT /api/v1/api-tokens/{id}/permissions` 按静态权限目录显式授予（接口见 [05_API_AND_COMMAND_PROTOCOL.md](05_API_AND_COMMAND_PROTOCOL.md) §13）。
+- 两个“version”是不同概念：
+  - `permissions.version`：权限 schema 版本，首版 = 1，由服务端常量定义；
+  - DB `permission_version`：乐观锁 revision，每次权限更新 +1；更新请求必须携带当前值，否则 `409`。
+- 历史 canonical 通配权限（`*:*`）由迁移 `0006_legacy_wildcard_permissions.sql` 改写为显式完整 AI 凭证权限（`nodes:read`、`ai.lease_requests:create/read`、`ai.leases:renew/heartbeat/disconnect`），**绝不授予通知权限**（详见 [04_DATA_MODEL.md](04_DATA_MODEL.md) §3.18.1）。
+- **Fail closed**：任何残留 wildcard / NULL / 空 / 非法 JSON 一律拒绝授权，并在启动扫描（`ScanInvalidPermissions`）时写高风险告警与审计；API 返回视图对非法 JSON 收敛为空授权集，不泄露原始内容。
+- 权限修改审计：记录管理员、Token ID/前缀、修改前后 grants 与 revision，不记录明文/hash（见 §15）。
+
+## 14. 通知 Secret 与 Redactor 防御
+
+- `NOTIFICATION_FEISHU_WEBHOOK_URL` 是唯一通知 Secret：**未配置时服务可正常启动**，发送返回 `503 NOT_CONFIGURED`。
+- 真实值只放部署机 `deploy/environments/<env>/<instance>.secrets.env`（权限 0600）；`.env.example` 只写键名与占位符（`<feishu-webhook-url>`），严禁提交真实值。
+- 旧 Flask Webhook 已泄露，需在飞书侧**废弃重建**后再填入新值（见 [12_NOTIFICATION_MIGRATION.md](12_NOTIFICATION_MIGRATION.md) §1）。
+- Redactor 敏感键新增 `webhook`、`hook_url`、`hook`（大小写不敏感、子串前缀匹配）；Feishu 风格 `https://.../hook/...` 整条 URL 掩码为 `[REDACTED_URL]`。
+- Provider 日志不打印 Webhook URL、请求体或响应体；审计与 usage log 不保存 Webhook/标题/正文/Token/Provider 响应。
+
+## 15. 通知审计白名单
+
+- 所有通知尝试（成功/失败/限流/参数拒绝）均写 `audit_event`；Token ID 同时放入 actor 与 resource 列。
+- `details_json` 只允许以下白名单键：`source`、`channel`、`level`、`title_length`、`message_length`、`outcome`、`request_id`。
+- **不保存**：标题/消息正文、Webhook URL、Token、Provider 响应。
+- `api_token_usage_log` 的 `route` 是规范化路由模板（`/api/v1/notifications/send`、`/notice`），不保存查询参数值；`GET /notice` 的 200/`ret=0` 场景通过 forced outcome 仍记录 `denied/failure` 使用行。
+- 通知限流（默认每 Token 30 次/分钟、全局 120 次/分钟，见部署 `.env.example`）：`429` + `Retry-After`，限流拒绝同样审计。
+
+## 16. GET 查询参数泄露风险（/notice）
+
+- `GET /notice?method=...&message=...&logLevel=...` 的查询参数会进入反向代理/网关访问日志、浏览器历史与 Referer 头。
+- 含敏感信息（密钥、内部路径、长文本、个人数据）的通知**必须使用 POST** `/api/v1/notifications/send`（请求体不会被代理日志记录查询参数）。
+- 审计与 usage log 只记录长度与路由，不回显正文；但**代理层与浏览器侧的泄露不在服务端控制范围内**，调用方迁移时需评估。
