@@ -185,7 +185,7 @@ jobs:
           cd backend
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.build=github-actions -X main.commit=${GITHUB_SHA}" \
             -o ../bin/servercli-control-plane ./cmd/control-plane
-          go build -trimpath -ldflags "-s -w" \
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.build=github-actions -X main.commit=${GITHUB_SHA}" \
             -o ../bin/servercli-node-agent ./cmd/node-agent
 
       - name: Package release bundle

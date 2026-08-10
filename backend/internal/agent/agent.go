@@ -21,8 +21,9 @@ import (
 	"servercli/internal/config"
 )
 
-// AgentVersion is reported in enrollments and heartbeats.
-const AgentVersion = "0.1.0"
+// AgentVersion is reported in enrollments and heartbeats. CI injects the
+// release tag via -X main.version, and node-agent sets this before starting.
+var AgentVersion = "0.1.0"
 
 // Agent orchestrates registration, heartbeat, tasks and lease keys.
 type Agent struct {

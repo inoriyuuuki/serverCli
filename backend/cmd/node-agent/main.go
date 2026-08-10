@@ -17,6 +17,11 @@ import (
 	"servercli/internal/logger"
 )
 
+// version is overridden at build time via -X main.version=${VERSION} (see
+// .github/workflows/build-binaries.yml) and reported as the agent version in
+// enrollments/heartbeats so the server list shows the real release tag.
+var version = "0.1.0"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "node-agent: fatal:", err)
@@ -43,6 +48,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	agent.AgentVersion = version
 	a := agent.NewAgent(cfg, log)
 	if err := a.Run(ctx); err != nil {
 		return err
