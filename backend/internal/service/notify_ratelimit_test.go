@@ -113,3 +113,39 @@ func TestLimiterConstructorPanicsOnNonPositiveGlobal(t *testing.T) {
 	}()
 	NewNotificationLimiter(10, 0)
 }
+
+func TestLimiterRetryAfter(t *testing.T) {
+	l := NewNotificationLimiter(1, 1000)
+	// Fresh token: no wait needed.
+	if _, ok := l.RetryAfter("fresh"); ok {
+		t.Fatal("fresh token should not need to wait")
+	}
+	// Exhaust the per-token bucket; RetryAfter must report ~60s and never
+	// debit anything (a second call returns the same wait).
+	if _, ok := l.TryAcquire("A"); !ok {
+		t.Fatal("first acquire should succeed")
+	}
+	ra1, ok := l.RetryAfter("A")
+	if !ok {
+		t.Fatal("exhausted token should need to wait")
+	}
+	if ra1 < 59*time.Second || ra1 > 61*time.Second {
+		t.Fatalf("expected ~60s retry for 1/min bucket, got %s", ra1)
+	}
+	ra2, _ := l.RetryAfter("A")
+	if ra1 != ra2 {
+		t.Fatalf("RetryAfter must not debit tokens: %s vs %s", ra1, ra2)
+	}
+	// Global exhaustion dominates: 2 tokens on a 1/min global bucket.
+	g := NewNotificationLimiter(1000, 1)
+	if _, ok := g.TryAcquire("X"); !ok {
+		t.Fatal("first global acquire should succeed")
+	}
+	if _, ok := g.TryAcquire("Y"); ok {
+		t.Fatal("global should be exhausted")
+	}
+	raG, ok := g.RetryAfter("X")
+	if !ok || raG < 59*time.Second || raG > 61*time.Second {
+		t.Fatalf("expected global-limited ~60s retry, got ok=%v %s", ok, raG)
+	}
+}

@@ -57,14 +57,21 @@
 | 6 | Webhook 已重建 | 飞书侧旧机器人已删除、新 URL 仅存于部署机 0600 secrets（§2）。 |
 | 7 | 回滚预案就绪 | 数据库已备份；明确回滚步骤与权限恢复方式（§6）。 |
 
-## 6. 回滚说明
+## 6. 限流语义与取舍（评审确认）
+
+- **403/400/502/503 消耗额度是需求强制行为**：通知路由在「Token Resolve 成功后、Authorize 前」原子取得 Token+全局额度，因此有效 Token 的无权限（403）、参数错误（400）、上游失败（502/503）请求都会消耗额度；429 不消耗。这是需求 5 的明确约定（防止限流被鉴权绕过），代价是持有多枚有效 Token 的调用方可更快耗尽共享全局桶（默认 120/分钟，内部调度通知与其共用）。
+- **进程内限流、多实例各自计数**：per-token 与 global 桶均为进程内计数（重启重置），多实例部署下全局上限实际为「实例数 × 配置值」，不是集群级硬上限。
+- **内部入口 `NotificationService.Send` 预留**：首版未接入任务/Lease/节点自动事件，仅建立统一内部调用入口（只占全局额度、写 system 审计、不写 Token usage、Provider 未配置时不消耗额度但写审计）；后续模块接入时直接调用即可。
+- **通知审计覆盖**：所有成功、失败、限流、参数错误（含请求体无法解析）的通知尝试均写 `audit_event`（Action：`notification.send` / `notification.ratelimited`）。
+
+## 7. 回滚说明
 
 - **回滚不会恢复发布窗口中新 Token 的权限**：权限是数据库数据而非代码。回滚二进制或迁移后，发布期间新建/改权的 Token 保持其已写入的 `permissions_json`/`permission_version`；若回滚到无权限模型的旧版本，这些 Token 的鉴权语义可能不兼容。
 - 必要时**人工重新授权或重建** Token：回滚后通过管理员界面/接口按静态权限目录重新授予所需权限，或删除并重建 Token（重建会生成新的明文，需重新分发给调用方）。
 - **迁移 0006 幂等可重放**：`0006_legacy_wildcard_permissions.sql` 只精确匹配两种历史 canonical wildcard JSON 形态；重复执行不会改写已显式化或非 canonical 的 JSON，可安全重放。
 - 回滚后建议运行权限启动扫描（`ScanInvalidPermissions`），确认无残留 wildcard / NULL / 空 / 非法 JSON，并核对审计中的权限变更记录。
 
-## 7. 相关文档
+## 8. 相关文档
 
 - 接口规范：[05_API_AND_COMMAND_PROTOCOL.md](05_API_AND_COMMAND_PROTOCOL.md) §13
 - 权限模型与审计：[08_SECURITY_AND_AUDIT.md](08_SECURITY_AND_AUDIT.md) §13–§16

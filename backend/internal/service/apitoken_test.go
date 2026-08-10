@@ -293,6 +293,10 @@ func TestValidatePermissionSet(t *testing.T) {
 		{"unknown permission", PermissionSet{Version: 1, Grants: []PermissionGrant{{Resource: "secret_stuff", Actions: []string{ActionRead}}}}},
 		{"unknown action", PermissionSet{Version: 1, Grants: []PermissionGrant{{Resource: ResourceNodes, Actions: []string{"delete"}}}}},
 		{"duplicate action", PermissionSet{Version: 1, Grants: []PermissionGrant{{Resource: ResourceLeaseRequests, Actions: []string{ActionRead, ActionRead}}}}},
+		{"cross-grant duplicate", PermissionSet{Version: 1, Grants: []PermissionGrant{
+			{Resource: ResourceNodes, Actions: []string{ActionRead}},
+			{Resource: ResourceNodes, Actions: []string{ActionRead}},
+		}}},
 		{"empty actions", PermissionSet{Version: 1, Grants: []PermissionGrant{{Resource: ResourceNodes, Actions: []string{}}}}},
 	}
 	for _, c := range invalid {

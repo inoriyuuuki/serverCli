@@ -120,7 +120,9 @@ func Load() (*Config, error) {
 		}
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return fmt.Errorf("config: %s must be an integer, got %q", key, v)
+			// Never echo the raw value: an operator may have pasted a secret
+			// into a numeric variable and the error goes to logs/stderr.
+			return fmt.Errorf("config: %s must be an integer", key)
 		}
 		*dst = n
 		return nil

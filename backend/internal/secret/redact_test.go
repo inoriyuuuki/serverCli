@@ -133,3 +133,18 @@ func TestRedactJSONWebhook(t *testing.T) {
 		t.Fatal("expected redaction count")
 	}
 }
+
+func TestRedactStringUppercaseSensitiveKeys(t *testing.T) {
+	r := NewRedactor()
+	cases := []struct{ in, marker string }{
+		{"AUTHORIZATION: Bearer sct_abc123def456", "[REDACTED_AUTH]"},
+		{"COOKIE: session=abc123", "[REDACTED_COOKIE]"},
+		{"HTTPS://OPEN.FEISHU.CN/OPEN-APIS/BOT/V2/HOOK/UPPER", "[REDACTED_URL]"},
+	}
+	for _, c := range cases {
+		out := r.RedactString(c.in)
+		if !strings.Contains(out, c.marker) {
+			t.Fatalf("input %q should produce %s, got %q", c.in, c.marker, out)
+		}
+	}
+}

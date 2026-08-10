@@ -81,9 +81,12 @@ func (s *NotificationService) registerProvider(channel string, p NotificationPro
 // validates, resolves the channel, sends and audits.
 func (s *NotificationService) Send(ctx context.Context, req NotificationRequest) (*NotificationResult, error) {
 	// Do not consume global quota when no provider is configured: the attempt
-	// would fail anyway and the quota is shared with external callers.
+	// would fail anyway and the quota is shared with external callers. The
+	// attempt is still audited so an unconfigured provider is never silent.
 	if p, ok := s.providers[defaultChannel]; ok {
 		if c, ok := p.(interface{ Configured() bool }); ok && !c.Configured() {
+			s.log.Warn("notification not configured", "source", strings.TrimSpace(req.Source), "request_id", logger.RequestID(ctx))
+			s.auditNotification(ctx, req, auditMeta{actorType: model.ActorSystem}, ResultFailure, "notification.send")
 			return nil, ErrNotConfigured
 		}
 	}

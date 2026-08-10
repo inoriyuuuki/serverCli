@@ -30,8 +30,12 @@ func (s *Server) notificationRateHook() func(w http.ResponseWriter, r *http.Requ
 			return false
 		}
 		// Rate limited: nothing was debited, so no quota was consumed. The
-		// response never echoes request content or the token.
+		// response never echoes request content or the token. Retry-After uses
+		// the longer of the per-token and global waits.
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusTooManyRequests}
+		if ra, ok := s.notifyLimiter.RetryAfter(p.TokenID); ok && ra > retryAfter {
+			retryAfter = ra
+		}
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
 		writeError(w, r, s.log, http.StatusTooManyRequests, "RATE_LIMITED",
 			"notification rate limit exceeded, retry later", nil)

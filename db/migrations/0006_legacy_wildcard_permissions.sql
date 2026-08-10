@@ -1,3 +1,5 @@
+-- 参考副本：运行时实际生效的是 backend/internal/db/migrations/0006_legacy_wildcard_permissions.sql（//go:embed）。
+-- 本文件仅用于 SQL 评审参考，修改请同步两处。
 -- ServerCLI: 0006 — 历史通配权限显式化
 -- 目的：0005 之前创建的 Access Token 创建即获得全权限，权限 JSON 为 canonical
 -- wildcard（{"version":1,"grants":[{"resource":"*","actions":["*"],"constraints":{}}]}
