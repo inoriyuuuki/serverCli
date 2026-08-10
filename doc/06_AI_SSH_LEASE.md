@@ -1,7 +1,9 @@
 # AI Agent 临时 SSH Lease 设计
 
-> 日期：2026-08-07  
+> 日期：2026-08-07（2026-08-10 更新：Access Token 自动审批）  
 > 目标：允许 AI Agent 在最小权限、短生命周期、可撤销、可审计的前提下登录指定服务器。
+>
+> 审批模型：外部 AI 自助 API 一律以 **Access Token（`sct_*`）** 作为凭证；有效 Token 的申请自动批准并签发 Lease，Lease 有效期受 Token 有效期约束。不再提供人工审批与设备+节点免审批规则。
 
 ## 1. 安全结论
 
@@ -31,11 +33,12 @@ AI Agent **不得使用管理员提供的长期 SSH 密码**。推荐流程是�
 核心约束：
 
 ```text
-new_expires_at = min(now + requested_extension, absolute_expires_at)
+lease_expires_at = min(申请时长, access_token.expires_at, absolute_expires_at)
+new_expires_at   = min(now + requested_extension, access_token.expires_at, absolute_expires_at)
 absolute_expires_at = issued_at + 24h
 ```
 
-续期不得改变 `issued_at` 或 `absolute_expires_at`。达到上限后必须创建新申请。
+续期不得改变 `issued_at` 或 `absolute_expires_at`；到达 Token 到期或绝对上限后必须创建新申请。永久 Token 不突破 `absolute_expires_at`。
 
 ## 3. Lease 生命周期
 
@@ -67,7 +70,7 @@ sequenceDiagram
     participant SSH as OpenSSH
 
     AI->>AI: 生成一次性 ed25519 密钥对
-    AI->>CP: 申请(node, public_key, profile, 1h, purpose)
+    AI->>CP: 申请(Bearer sct_* Token, node, public_key, profile, 1h, purpose)
     CP->>CP: 校验全局/节点开关、策略、幂等键
     CP->>NA: 安装 lease_id 对应临时公钥
     NA->>SSH: 原子更新受管 authorized_keys
@@ -103,7 +106,7 @@ sequenceDiagram
 每个 Lease 对应一条带约束的 key，例如概念形式：
 
 ```text
-restrict,command="/usr/local/libexec/servercli-lease-shell --lease <lease_id>" ssh-ed25519 AAAA... lease-<id>
+restrict,command="/usr/local/libexec/servercli-lease-shell --lease <lease_id> --token <lrt_运行时Token>" ssh-ed25519 AAAA... lease-<id>
 ```
 
 具体 OpenSSH 版本兼容性需在目标系统验证。可显式添加：
@@ -120,7 +123,7 @@ restrict,command="/usr/local/libexec/servercli-lease-shell --lease <lease_id>" s
 
 `servercli-lease-shell` 负责：
 
-1. 向 Node Agent 验证 Lease 仍为 active、未到期、未禁用。
+1. 携带控制面签发的短生命周期**运行时 Token**（`X-Lease-Runtime-Token` 头）调用内部状态接口，验证 Lease 仍为 active、未到期、未禁用。运行时 Token 绑定 `lease_id + node_id + expires_at`，由控制面主密钥 HMAC 签名，仅能查询对应 Lease 状态；即使调度器尚未写入 `expired`，到达 `expires_at` 后也无法建立新 SSH 会话。
 2. 创建 Lease 专属 cgroup 或记录进程树。
 3. 记录会话开始、连接信息和请求命令。
 4. 根据权限配置启动受限 shell、命令代理或审计终端。
@@ -129,25 +132,32 @@ restrict,command="/usr/local/libexec/servercli-lease-shell --lease <lease_id>" s
 
 若不实现会话进程跟踪，删除 authorized_keys 只能阻止新连接，**不能可靠终止已经建立的 SSH 会话**。因此“撤销即终止存量连接”必须作为单独验收项。
 
-## 6. 自动申请与审批策略
+## 6. 自动申请与审批策略（Access Token）
 
-建议支持三种模式：
+外部 AI 自助 API（申请、查询、续期、心跳、断开）全部要求 `Authorization: Bearer <sct_* Access Token>`：
 
-| 模式 | 行为 |
+| Token 状态 | 行为 |
 | --- | --- |
-| `manual` | 所有申请由管理员批准 |
-| `policy` | 低风险、短时长、允许节点和 profile 自动批准，其余人工 |
-| `disabled` | 拒绝所有新申请 |
+| 无 Token / 未识别 / 已撤销 / 已过期 | 一律返回 `401`，可识别 Token 写入使用日志 |
+| 有效 Token | 申请校验通过后立即 `approved` 并签发 Lease（自动审批） |
 
-首版建议：测试环境 `policy`，正式环境默认 `manual`。即使自动批准也必须记录完整决策依据。
+- Token 只保存 SHA-256 哈希与前缀；明文仅在创建时返回一次。
+- 固定有效期：`15m / 1h / 6h / 1d / 1w / never（永久）`。
+- Lease 到期 = `min(申请时长, Token 到期时间, 系统绝对上限)`；永久 Token 不突破绝对上限。
+- Token 到期或被撤销后：API 操作立即失败；关联活动 Lease 撤销；节点收到 `lease_keys_changed` 后删除公钥阻止新连接。
+- Token 撤销不可恢复且幂等；撤销在同一业务事务内级联更新关联 Lease，事务成功后推送节点刷新。
+- 每次可识别 Token 的请求写入 `api_token_usage_log`（方法、规范化路由、资源/操作、来源 IP、User-Agent、状态码、结果、关联申请/Lease、Token 当时状态）。
+- 权限模型预留 `resource + action + constraints`（如 `permission_profiles:["read-only"]`）；首版所有 Token 为全权限 `*:*`。
 
-### 6.1 设备+节点免审批规则
+审批顺序（不再有 manual/policy/disabled 模式与设备免审批规则）：
 
-- 管理员可从待审批申请执行「批准并免审批」，为该设备（`ai_agent_id`）访问指定节点创建最长 15 天的免审批规则。
-- 规则匹配 `(environment_id, ai_agent_id, node_id)`，不校验公钥或申请权限；命中后包括 `admin` 权限也自动批准。
-- 审批顺序：硬性限制（新申请开关、节点可用性）→ `disabled` 模式仍拒绝 → 命中有效规则自动批准 → 否则走 `manual/policy`。
-- 延长从当前到期时间累加，最终不超过「操作时刻 + 15 天」；过期规则可延长重新激活。
-- 规则创建、命中自动批准和延长均写入审计；规则删除随节点删除级联执行。
+1. 全局/节点「允许新申请」开关（紧急控制）；
+2. Token 有效性校验；
+3. 授权检查（`Authorize(principal, resource, action, attrs)`）；
+4. 参数与目标节点校验；
+5. 自动批准并签发 Lease。
+
+> 旧 `ai_approval_mode`、`ai_auto_approval` 数据保留用于历史追溯，但不再参与匹配；启动时一次性把遗留 `pending` 申请置为 `rejected`、把无 Token 的活动 Lease 置为 `revoked`。
 
 ## 7. 禁止凭证操作
 
@@ -185,7 +195,7 @@ UI 建议分开提供三个动作，避免语义模糊：
 
 - Lease 当前为 active；
 - 全局、节点、AI 和 Lease 均未禁止续期；
-- AI 客户端持有绑定 Lease 的续期令牌或签名能力；
+- AI 客户端使用绑定 Lease 的 Access Token（Token 未过期/未撤销且仍拥有 `ai.leases/renew` 权限）；
 - 公钥指纹、目标节点和权限配置未改变；
 - 未超过绝对 24 小时上限；
 - 节点仍在线并确认本地授权状态一致；
@@ -211,7 +221,7 @@ UI 建议分开提供三个动作，避免语义模糊：
 
 - SSH 仍以 `servercli-ai` 登录，但 `servercli-lease-shell` 检测到 `permission_profile=admin` 后经 `sudo -n` 提权到 root 执行（交互会话为 root 登录 shell）。
 - 前置条件：节点需为 `servercli-ai` 配置 NOPASSWD sudoers（init 仓库 `restore_serverCli.sh` 自动写入 `/etc/sudoers.d/servercli-ai`）；未配置时 admin 会话报错退出，不会静默降权。
-- 必须人工审批、极短时长、来源限制、会话录像、实时告警和强制终止能力缺一不可。
+- 必须有可溯源的 Access Token 来源、极短时长、来源限制、会话录像、实时告警和强制终止能力缺一不可。
 
 ## 11. 审计范围
 
@@ -221,6 +231,7 @@ UI 建议分开提供三个动作，避免语义模糊：
 - 自动/人工决策及原因；
 - 安装/删除 authorized_keys 的结果；
 - 续期请求、批准/拒绝和到期时间变化；
+- Access Token 的创建/撤销与每次使用日志（方法、路由、状态码、结果、来源）；
 - SSH 会话开始、结束、来源 IP、目标节点和退出状态；
 - 通过 wrapper 执行的远程命令；
 - sudo、文件变更和服务管理等关键事件；

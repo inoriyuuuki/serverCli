@@ -30,6 +30,7 @@ type Server struct {
 	nodes    *service.NodeService
 	tasks    *service.TaskService
 	leases   *service.LeaseService
+	tokens   *service.TokenService
 	settings *service.SettingsService
 	auditor  *service.Auditor
 	cleanup  *service.CleanupService
@@ -37,6 +38,8 @@ type Server struct {
 	version    string
 	build      string
 	commit     string
+	envID      string
+	routes     []RouteSpec
 	childScope atomic.Value // string node_id when NODE_ROLE=child
 	childProxy *childProxy  // forwards child self-view requests to the primary
 
@@ -118,6 +121,7 @@ func New(opts Options) (*Server, error) {
 	auth := service.NewAuthService(opts.Store, opts.Log, auditor, master)
 	tasks := service.NewTaskService(opts.Store, opts.Config, opts.Log, auditor, nodes)
 	leases := service.NewLeaseService(opts.Store, opts.Config, opts.Log, auditor, nodes, settings)
+	tokens := service.NewTokenService(opts.Store, opts.Config, opts.Log, auditor, nodes)
 	cleanup := service.NewCleanupService(opts.Store, opts.Config, opts.Log, auditor, settings)
 	srv := &Server{
 		cfg:      opts.Config,
@@ -128,12 +132,14 @@ func New(opts Options) (*Server, error) {
 		nodes:    nodes,
 		tasks:    tasks,
 		leases:   leases,
+		tokens:   tokens,
 		settings: settings,
 		auditor:  auditor,
 		cleanup:  cleanup,
 		version:  opts.Version,
 		build:    opts.Build,
 		commit:   opts.Commit,
+		envID:    opts.Config.InstanceName + "-env",
 		events:   newEventBroker(),
 	}
 	if opts.ChildNodeID != "" {
@@ -166,90 +172,95 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	// Health and system (no auth).
-	mux.HandleFunc("GET /health/live", s.handleLive)
-	mux.HandleFunc("GET /health/ready", s.handleReady)
-	mux.HandleFunc("GET /version", s.handleVersion)
-	mux.HandleFunc("GET /api/v1/system/info", s.handleSystemInfo)
+	s.register(mux, RouteSpec{Method: "GET", Path: "/health/live", Group: "健康检查", Auth: AuthNone, Summary: "存活探针", Debug: false}, s.handleLive)
+	s.register(mux, RouteSpec{Method: "GET", Path: "/health/ready", Group: "健康检查", Auth: AuthNone, Summary: "就绪探针", Debug: false}, s.handleReady)
+	s.register(mux, RouteSpec{Method: "GET", Path: "/version", Group: "系统", Auth: AuthNone, Summary: "版本信息", Debug: false}, s.handleVersion)
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/system/info", Group: "系统", Auth: AuthNone, Summary: "系统信息（环境/角色/实例）", Debug: false}, s.handleSystemInfo)
 
 	// Auth.
-	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
-	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAdmin(s.handleLogout))
-	mux.HandleFunc("GET /api/v1/auth/session", s.handleSession)
-	mux.HandleFunc("POST /api/v1/auth/password", s.handleChangePassword)
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/auth/login", Group: "认证", Auth: AuthNone, Summary: "管理员登录", Body: `{"username":"admin","password":"..."}`, Errors: []string{"401"}, Debug: false}, s.handleLogin)
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/auth/logout", Group: "认证", Auth: AuthAdmin, Summary: "注销", Debug: false}, s.requireAdmin(s.handleLogout))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/auth/session", Group: "认证", Auth: AuthNone, Summary: "当前会话与 CSRF", Debug: false}, s.handleSession)
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/auth/password", Group: "认证", Auth: AuthAdmin, Summary: "修改密码", Debug: false}, s.handleChangePassword)
 
 	// Nodes.
-	mux.HandleFunc("GET /api/v1/nodes", s.requireAdmin(s.handleListNodes))
-	mux.HandleFunc("GET /api/v1/nodes/{id}", s.requireAdmin(s.handleGetNode))
-	mux.HandleFunc("PATCH /api/v1/nodes/{id}", s.requireAdmin(s.handlePatchNode))
-	mux.HandleFunc("DELETE /api/v1/nodes/{id}", s.requireAdmin(s.handleDeleteNode))
-	mux.HandleFunc("GET /api/v1/node-enrollments", s.requireAdmin(s.handleListEnrollments))
-	mux.HandleFunc("POST /api/v1/node-enrollments/{id}/approve", s.requireAdmin(s.handleApproveEnrollment))
-	mux.HandleFunc("POST /api/v1/node-enrollments/{id}/reject", s.requireAdmin(s.handleRejectEnrollment))
-	mux.HandleFunc("GET /api/v1/nodes/{id}/metrics", s.requireAdmin(s.handleNodeMetrics))
-	mux.HandleFunc("GET /api/v1/nodes/{id}/commands", s.requireAdmin(s.handleNodeCommands))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes", Group: "节点", Auth: AuthAdmin, Summary: "节点列表", Params: []RouteParam{{Name: "limit", In: "query", Type: "integer"}}, Debug: true}, s.requireAdmin(s.handleListNodes))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes/{id}", Group: "节点", Auth: AuthAdmin, Summary: "节点详情", Debug: true}, s.requireAdmin(s.handleGetNode))
+	s.register(mux, RouteSpec{Method: "PATCH", Path: "/api/v1/nodes/{id}", Group: "节点", Auth: AuthAdmin, Summary: "更新节点（启用/停用/别名等）", Debug: true}, s.requireAdmin(s.handlePatchNode))
+	s.register(mux, RouteSpec{Method: "DELETE", Path: "/api/v1/nodes/{id}", Group: "节点", Auth: AuthAdmin, Summary: "删除节点（级联清理）", Errors: []string{"409"}, Debug: true}, s.requireAdmin(s.handleDeleteNode))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/node-enrollments", Group: "节点", Auth: AuthAdmin, Summary: "注册申请列表", Debug: true}, s.requireAdmin(s.handleListEnrollments))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/node-enrollments/{id}/approve", Group: "节点", Auth: AuthAdmin, Summary: "批准节点注册", Debug: true}, s.requireAdmin(s.handleApproveEnrollment))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/node-enrollments/{id}/reject", Group: "节点", Auth: AuthAdmin, Summary: "拒绝节点注册", Debug: true}, s.requireAdmin(s.handleRejectEnrollment))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes/{id}/metrics", Group: "节点", Auth: AuthAdmin, Summary: "节点指标", Debug: true}, s.requireAdmin(s.handleNodeMetrics))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes/{id}/commands", Group: "节点", Auth: AuthAdmin, Summary: "节点命令注册表", Debug: true}, s.requireAdmin(s.handleNodeCommands))
 
 	// Agent (signature-authenticated, except enrollment).
-	mux.HandleFunc("POST /api/v1/agent/enrollments", s.handleAgentEnroll)
-	mux.HandleFunc("GET /api/v1/agent/enrollments/{id}", s.handleAgentEnrollmentStatus)
-	mux.HandleFunc("POST /api/v1/agent/enrollments/{id}/claim", s.handleAgentClaim)
-	mux.HandleFunc("POST /api/v1/agent/heartbeat", s.agentAuth(s.handleAgentHeartbeat))
-	mux.HandleFunc("POST /api/v1/agent/commands/snapshot", s.agentAuth(s.handleAgentCommandsSnapshot))
-	mux.HandleFunc("GET /api/v1/agent/tasks/poll", s.agentAuth(s.handleAgentTaskPoll))
-	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/events", s.agentAuth(s.handleAgentTaskEvent))
-	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/result", s.agentAuth(s.handleAgentTaskResult))
-	mux.HandleFunc("POST /api/v1/agent/leases/{id}/events", s.agentAuth(s.handleAgentLeaseEvent))
-	mux.HandleFunc("GET /api/v1/agent/ws", s.agentAuth(s.handleAgentWS))
-	mux.HandleFunc("GET /api/v1/ws", s.handleAdminWS)
-	// Agent self-service (scoped to the calling node): lets a child control
-	// plane mirror its own commands/tasks/leases/audit from the primary.
-	mux.HandleFunc("GET /api/v1/agent/commands", s.agentAuth(s.handleAgentListCommands))
-	mux.HandleFunc("GET /api/v1/agent/tasks", s.agentAuth(s.handleAgentListTasks))
-	mux.HandleFunc("GET /api/v1/agent/tasks/{id}", s.agentAuth(s.handleAgentGetTask))
-	mux.HandleFunc("POST /api/v1/agent/tasks", s.agentAuth(s.handleAgentCreateTask))
-	mux.HandleFunc("POST /api/v1/agent/tasks/{id}/cancel", s.agentAuth(s.handleAgentCancelTask))
-	mux.HandleFunc("GET /api/v1/agent/leases", s.agentAuth(s.handleAgentListLeases))
-	mux.HandleFunc("GET /api/v1/agent/lease-requests", s.agentAuth(s.handleAgentListLeaseRequests))
-	mux.HandleFunc("GET /api/v1/agent/audit-events", s.agentAuth(s.handleAgentListAuditEvents))
-	mux.HandleFunc("GET /api/v1/agent/task-parameter-histories", s.agentAuth(s.handleAgentListTaskParameterHistories))
-	mux.HandleFunc("DELETE /api/v1/agent/task-parameter-histories/{id}", s.agentAuth(s.handleAgentDeleteTaskParameterHistory))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/enrollments", Group: "Agent", Auth: AuthNone, Summary: "节点注册申请", Debug: false}, s.handleAgentEnroll)
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/enrollments/{id}", Group: "Agent", Auth: AuthNone, Summary: "注册申请状态", Debug: false}, s.handleAgentEnrollmentStatus)
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/enrollments/{id}/claim", Group: "Agent", Auth: AuthNone, Summary: "认领节点身份", Debug: false}, s.handleAgentClaim)
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/heartbeat", Group: "Agent", Auth: AuthAgent, Summary: "节点心跳（含 Lease 密钥指令）", Debug: false}, s.agentAuth(s.handleAgentHeartbeat))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/commands/snapshot", Group: "Agent", Auth: AuthAgent, Summary: "命令注册表快照", Debug: false}, s.agentAuth(s.handleAgentCommandsSnapshot))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/tasks/poll", Group: "Agent", Auth: AuthAgent, Summary: "任务拉取", Debug: false}, s.agentAuth(s.handleAgentTaskPoll))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/tasks/{id}/events", Group: "Agent", Auth: AuthAgent, Summary: "任务事件上报", Debug: false}, s.agentAuth(s.handleAgentTaskEvent))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/tasks/{id}/result", Group: "Agent", Auth: AuthAgent, Summary: "任务结果上报", Debug: false}, s.agentAuth(s.handleAgentTaskResult))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/leases/{id}/events", Group: "Agent", Auth: AuthAgent, Summary: "Lease 生命周期事件上报", Debug: false}, s.agentAuth(s.handleAgentLeaseEvent))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/ws", Group: "Agent", Auth: AuthAgent, Summary: "Agent 实时通道（WebSocket）", Debug: false}, s.agentAuth(s.handleAgentWS))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/ws", Group: "Agent", Auth: AuthAdmin, Summary: "管理端实时通道（WebSocket）", Debug: false}, s.handleAdminWS)
+	// Agent self-service (scoped to the calling node).
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/commands", Group: "Agent", Auth: AuthAgent, Summary: "本节点命令列表", Debug: false}, s.agentAuth(s.handleAgentListCommands))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/tasks", Group: "Agent", Auth: AuthAgent, Summary: "本节点任务列表", Debug: false}, s.agentAuth(s.handleAgentListTasks))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/tasks/{id}", Group: "Agent", Auth: AuthAgent, Summary: "本节点任务详情", Debug: false}, s.agentAuth(s.handleAgentGetTask))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/tasks", Group: "Agent", Auth: AuthAgent, Summary: "本节点创建任务", Debug: false}, s.agentAuth(s.handleAgentCreateTask))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/tasks/{id}/cancel", Group: "Agent", Auth: AuthAgent, Summary: "取消本节点任务", Debug: false}, s.agentAuth(s.handleAgentCancelTask))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/leases", Group: "Agent", Auth: AuthAgent, Summary: "本节点 Lease 列表", Debug: false}, s.agentAuth(s.handleAgentListLeases))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/lease-requests", Group: "Agent", Auth: AuthAgent, Summary: "本节点 Lease 申请列表", Debug: false}, s.agentAuth(s.handleAgentListLeaseRequests))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/audit-events", Group: "Agent", Auth: AuthAgent, Summary: "本节点审计", Debug: false}, s.agentAuth(s.handleAgentListAuditEvents))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/task-parameter-histories", Group: "Agent", Auth: AuthAgent, Summary: "本节点参数历史", Debug: false}, s.agentAuth(s.handleAgentListTaskParameterHistories))
+	s.register(mux, RouteSpec{Method: "DELETE", Path: "/api/v1/agent/task-parameter-histories/{id}", Group: "Agent", Auth: AuthAgent, Summary: "删除参数历史", Debug: false}, s.agentAuth(s.handleAgentDeleteTaskParameterHistory))
 
 	// Commands discovery.
-	mux.HandleFunc("GET /api/v1/commands", s.requireAdmin(s.handleListCommands))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/commands", Group: "命令", Auth: AuthAdmin, Summary: "命令目录", Debug: true}, s.requireAdmin(s.handleListCommands))
 
 	// Tasks.
-	mux.HandleFunc("POST /api/v1/nodes/{node_id}/tasks", s.requireAdmin(s.handleCreateTask))
-	mux.HandleFunc("GET /api/v1/tasks", s.requireAdmin(s.handleListTasks))
-	mux.HandleFunc("GET /api/v1/tasks/{id}", s.requireAdmin(s.handleGetTask))
-	mux.HandleFunc("POST /api/v1/tasks/{id}/cancel", s.requireAdmin(s.handleCancelTask))
-	mux.HandleFunc("GET /api/v1/task-parameter-histories", s.requireAdmin(s.handleListTaskParameterHistories))
-	mux.HandleFunc("DELETE /api/v1/task-parameter-histories/{id}", s.requireAdmin(s.handleDeleteTaskParameterHistory))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/nodes/{node_id}/tasks", Group: "任务", Auth: AuthAdmin, Summary: "创建任务", Debug: true}, s.requireAdmin(s.handleCreateTask))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/tasks", Group: "任务", Auth: AuthAdmin, Summary: "任务列表", Debug: true}, s.requireAdmin(s.handleListTasks))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/tasks/{id}", Group: "任务", Auth: AuthAdmin, Summary: "任务详情", Debug: true}, s.requireAdmin(s.handleGetTask))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/tasks/{id}/cancel", Group: "任务", Auth: AuthAdmin, Summary: "取消任务", Debug: true}, s.requireAdmin(s.handleCancelTask))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/task-parameter-histories", Group: "任务", Auth: AuthAdmin, Summary: "参数历史列表", Debug: true}, s.requireAdmin(s.handleListTaskParameterHistories))
+	s.register(mux, RouteSpec{Method: "DELETE", Path: "/api/v1/task-parameter-histories/{id}", Group: "任务", Auth: AuthAdmin, Summary: "删除参数历史", Debug: true}, s.requireAdmin(s.handleDeleteTaskParameterHistory))
 
-	// AI leases.
-	mux.HandleFunc("POST /api/v1/ai/lease-requests", s.handleCreateLeaseRequest)
-	mux.HandleFunc("GET /api/v1/ai/lease-requests/{id}", s.handleGetLeaseRequest)
-	mux.HandleFunc("GET /api/v1/ai/leases/{id}/status", s.handleGetLeaseStatus)
-	mux.HandleFunc("GET /api/v1/ai/lease-requests", s.requireAdmin(s.handleListLeaseRequests))
-	mux.HandleFunc("POST /api/v1/ai/lease-requests/{id}/approve", s.requireAdmin(s.handleApproveLeaseRequest))
-	mux.HandleFunc("POST /api/v1/ai/lease-requests/{id}/auto-approval", s.requireAdmin(s.handleCreateAutoApproval))
-	mux.HandleFunc("GET /api/v1/ai/auto-approvals", s.requireAdmin(s.handleListAutoApprovals))
-	mux.HandleFunc("POST /api/v1/ai/auto-approvals/{id}/extend", s.requireAdmin(s.handleExtendAutoApproval))
-	mux.HandleFunc("POST /api/v1/ai/lease-requests/{id}/reject", s.requireAdmin(s.handleRejectLeaseRequest))
-	mux.HandleFunc("POST /api/v1/ai/leases/{id}/renew", s.handleLeaseRenew)
-	mux.HandleFunc("POST /api/v1/ai/leases/{id}/heartbeat", s.handleLeaseHeartbeat)
-	mux.HandleFunc("POST /api/v1/ai/leases/{id}/disconnect", s.handleLeaseDisconnect)
-	mux.HandleFunc("POST /api/v1/ai/leases/{id}/revoke", s.requireAdmin(s.handleLeaseRevoke))
-	mux.HandleFunc("POST /api/v1/ai/leases/{id}/disable-renewal", s.requireAdmin(s.handleLeaseDisableRenewal))
-	mux.HandleFunc("POST /api/v1/ai/leases/{id}/protect", s.requireAdmin(s.handleLeaseProtect))
-	mux.HandleFunc("POST /api/v1/ai/leases/revoke-all", s.requireAdmin(s.handleLeaseRevokeAll))
-	mux.HandleFunc("GET /api/v1/ai/leases", s.requireAdmin(s.handleListLeases))
-	mux.HandleFunc("PATCH /api/v1/settings/ai-access", s.requireAdmin(s.handleAIAccess))
+	// AI leases (external AI self-service is access-token authenticated; the
+	// remaining admin routes manage leases/requests).
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/ai/lease-requests", Group: "AI Lease", Auth: AuthToken, Summary: "申请 Lease（自动审批）", Body: `{"node_selector":"<node_id>","public_key":"ssh-ed25519 AAAA...","permission_profile":"read-only","requested_duration_seconds":3600,"purpose":"...","client_request_id":"..."}`, Errors: []string{"401", "403"}, Debug: true}, s.tokenAuth(service.ResourceLeaseRequests, service.ActionCreate, "/api/v1/ai/lease-requests")(s.handleCreateLeaseRequest))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/ai/lease-requests/{id}", Group: "AI Lease", Auth: AuthToken, Summary: "查询本人申请", Errors: []string{"401", "404"}, Debug: true}, s.tokenAuth(service.ResourceLeaseRequests, service.ActionRead, "/api/v1/ai/lease-requests/{id}")(s.handleGetLeaseRequest))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/ai/leases/{id}/renew", Group: "AI Lease", Auth: AuthToken, Summary: "续期本人 Lease", Body: `{"requested_duration_seconds":3600}`, Errors: []string{"401", "403", "404"}, Debug: true}, s.tokenAuth(service.ResourceLeases, service.ActionRenew, "/api/v1/ai/leases/{id}/renew")(s.handleLeaseRenew))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/ai/leases/{id}/heartbeat", Group: "AI Lease", Auth: AuthToken, Summary: "Lease 心跳", Errors: []string{"401", "404"}, Debug: true}, s.tokenAuth(service.ResourceLeases, service.ActionHeartbeat, "/api/v1/ai/leases/{id}/heartbeat")(s.handleLeaseHeartbeat))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/ai/leases/{id}/disconnect", Group: "AI Lease", Auth: AuthToken, Summary: "正常断开 Lease", Errors: []string{"401", "404"}, Debug: true}, s.tokenAuth(service.ResourceLeases, service.ActionDisconnect, "/api/v1/ai/leases/{id}/disconnect")(s.handleLeaseDisconnect))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/ai/leases/{id}/status", Group: "AI Lease", Auth: AuthRuntime, Summary: "Lease 运行时状态（签名令牌）", Debug: false}, s.handleLeaseRuntimeStatus)
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/ai/lease-requests", Group: "AI Lease", Auth: AuthAdmin, Summary: "申请列表（管理）", Debug: true}, s.requireAdmin(s.handleListLeaseRequests))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/ai/leases/{id}/revoke", Group: "AI Lease", Auth: AuthAdmin, Summary: "撤销 Lease", Debug: true}, s.requireAdmin(s.handleLeaseRevoke))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/ai/leases/{id}/disable-renewal", Group: "AI Lease", Auth: AuthAdmin, Summary: "禁止续期", Debug: true}, s.requireAdmin(s.handleLeaseDisableRenewal))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/ai/leases/{id}/protect", Group: "AI Lease", Auth: AuthAdmin, Summary: "标记重要", Debug: true}, s.requireAdmin(s.handleLeaseProtect))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/ai/leases/revoke-all", Group: "AI Lease", Auth: AuthAdmin, Summary: "紧急撤销（全局/节点）", Debug: true}, s.requireAdmin(s.handleLeaseRevokeAll))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/ai/leases", Group: "AI Lease", Auth: AuthAdmin, Summary: "Lease 列表（管理）", Debug: true}, s.requireAdmin(s.handleListLeases))
+	s.register(mux, RouteSpec{Method: "PATCH", Path: "/api/v1/settings/ai-access", Group: "AI Lease", Auth: AuthAdmin, Summary: "AI 申请/续期开关", Debug: true}, s.requireAdmin(s.handleAIAccess))
+
+	// Access token management (primary only).
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/api-tokens", Group: "Token", Auth: AuthAdmin, Summary: "创建 Access Token（仅返回一次明文）", Body: `{"name":"my-agent","ttl":"1h"}`, Errors: []string{"400"}, Debug: true}, s.requireAdmin(s.handleCreateAPIToken))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/api-tokens", Group: "Token", Auth: AuthAdmin, Summary: "Token 列表", Debug: true}, s.requireAdmin(s.handleListAPITokens))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/api-tokens/{id}", Group: "Token", Auth: AuthAdmin, Summary: "Token 详情", Debug: true}, s.requireAdmin(s.handleGetAPIToken))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/api-tokens/{id}/revoke", Group: "Token", Auth: AuthAdmin, Summary: "撤销 Token（级联撤销 Lease）", Body: `{"reason":"..."}`, Debug: true}, s.requireAdmin(s.handleRevokeAPIToken))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/api-tokens/{id}/usage-logs", Group: "Token", Auth: AuthAdmin, Summary: "Token 使用日志", Params: []RouteParam{{Name: "outcome", In: "query", Type: "string"}}, Debug: true}, s.requireAdmin(s.handleListTokenUsageLogs))
+
+	// Interface directory / OpenAPI.
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/meta/openapi", Group: "系统", Auth: AuthAdmin, Summary: "全接口目录（OpenAPI）", Debug: true}, s.requireAdmin(s.handleOpenAPI))
 
 	// Audit / settings / cleanup.
-	mux.HandleFunc("GET /api/v1/audit-events", s.requireAdmin(s.handleListAuditEvents))
-	mux.HandleFunc("GET /api/v1/settings", s.requireAdmin(s.handleGetSettings))
-	mux.HandleFunc("PATCH /api/v1/settings", s.requireAdmin(s.handlePatchSettings))
-	mux.HandleFunc("POST /api/v1/cleanup/run", s.requireAdmin(s.handleCleanupRun))
-	mux.HandleFunc("GET /api/v1/cleanup/runs", s.requireAdmin(s.handleCleanupRuns))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/audit-events", Group: "审计", Auth: AuthAdmin, Summary: "审计日志", Debug: true}, s.requireAdmin(s.handleListAuditEvents))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/settings", Group: "设置", Auth: AuthAdmin, Summary: "系统设置", Debug: true}, s.requireAdmin(s.handleGetSettings))
+	s.register(mux, RouteSpec{Method: "PATCH", Path: "/api/v1/settings", Group: "设置", Auth: AuthAdmin, Summary: "更新系统设置", Debug: true}, s.requireAdmin(s.handlePatchSettings))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/cleanup/run", Group: "设置", Auth: AuthAdmin, Summary: "手动触发清理", Debug: true}, s.requireAdmin(s.handleCleanupRun))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/cleanup/runs", Group: "设置", Auth: AuthAdmin, Summary: "清理记录", Debug: true}, s.requireAdmin(s.handleCleanupRuns))
 
 	// Static frontend + SPA fallback. On child control planes the scoped
 	// self-view requests are proxied to the primary before reaching the mux.

@@ -344,12 +344,14 @@ type HeartbeatInput struct {
 	CommandsHash     string         `json:"commands_hash"`
 }
 
-// LeaseInstallOp is a pending key install instruction.
+// LeaseInstallOp is a pending key install instruction. RuntimeToken is the
+// short-lived signed token the lease-shell passes to the status endpoint.
 type LeaseInstallOp struct {
 	LeaseID           string    `json:"lease_id"`
 	PublicKey         string    `json:"public_key"`
 	PermissionProfile string    `json:"permission_profile"`
 	ExpiresAt         time.Time `json:"expires_at"`
+	RuntimeToken      string    `json:"runtime_token,omitempty"`
 }
 
 // LeaseRemoveOp is a pending key removal instruction.
@@ -485,12 +487,18 @@ func (s *NodeService) leaseOps(ctx context.Context, nodeID string) ([]LeaseInsta
 	for _, l := range all {
 		switch {
 		case l.Status == model.LeaseActive && !l.KeyInstalled:
-			install = append(install, LeaseInstallOp{
+			op := LeaseInstallOp{
 				LeaseID:           l.ID,
 				PublicKey:         l.PublicKey,
 				PermissionProfile: l.PermissionProfile,
 				ExpiresAt:         l.ExpiresAt,
-			})
+			}
+			if rt, err := SignLeaseRuntimeToken(s.master, l.ID, nodeID, l.ExpiresAt); err == nil {
+				op.RuntimeToken = rt
+			} else {
+				s.log.Warn("runtime token signing failed", "error", err, "lease_id", l.ID)
+			}
+			install = append(install, op)
 		case l.KeyInstalled && (l.Status == model.LeaseRevoked || l.Status == model.LeaseExpired ||
 			l.Status == model.LeaseDisconnected || l.Status == model.LeaseFailed):
 			reason := "lease " + l.Status
@@ -501,6 +509,12 @@ func (s *NodeService) leaseOps(ctx context.Context, nodeID string) ([]LeaseInsta
 		}
 	}
 	return install, remove, nil
+}
+
+// LeaseInstallOpsForNode exposes the pending lease key ops for a node (used by
+// tests and diagnostics).
+func (s *NodeService) LeaseInstallOpsForNode(ctx context.Context, nodeID string) ([]LeaseInstallOp, []LeaseRemoveOp, error) {
+	return s.leaseOps(ctx, nodeID)
 }
 
 // CommandsSnapshotInput is one command record from the agent.

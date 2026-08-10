@@ -387,17 +387,36 @@ if [ -n "$TASK_ID" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 8/11 AI Lease 申请 / 续期 / 断开
+# 8/11 AI Lease 申请 / 续期 / 断开（Access Token 自动审批）
 # ---------------------------------------------------------------------------
 step "8/11 AI Lease 申请 / 续期 / 断开"
 LEASE_ID=""
-RENEW_TOKEN=""
+ACCESS_TOKEN=""
 if [ -n "$child_id" ]; then
+  # 1) 无 Token 申请必须 401。
+  tmp="$(mktemp "${TMPDIR:-/tmp}/servercli-smoke-notoken.XXXXXX")"
+  CURL_CODE="$(curl -sS --max-time 20 -X POST -H 'Content-Type: application/json'     -o "$tmp" -w '%{http_code}' --data '{"node_selector":"x","public_key":"x"}'     "$PRIMARY_API/ai/lease-requests" 2>/dev/null)"
+  rm -f "$tmp"
+  if [ "$CURL_CODE" = "401" ]; then
+    ok "无 Access Token 的申请被拒绝（401）"
+  else
+    fail "无 Token 申请应返回 401，实际 $CURL_CODE"
+  fi
+
+  # 2) 管理员创建 Access Token（仅本次返回明文）。
+  http_json POST "$PRIMARY_API/api-tokens" '{"name":"smoke-test","ttl":"1h"}'
+  ACCESS_TOKEN="$(jget "$CURL_BODY" 'd.get("token","")')"
+  SMOKE_TOKEN_ID="$(jget "$CURL_BODY" 'd.get("api_token",{}).get("id","")')"
+  if [ "$CURL_CODE" = "201" ] && [ -n "$ACCESS_TOKEN" ]; then
+    ok "Access Token 创建成功（前缀 $(jget "$CURL_BODY" 'd.get("api_token",{}).get("token_prefix","")')）"
+  else
+    fail "Access Token 创建失败 (HTTP $CURL_CODE): $(redact "$CURL_BODY")"
+  fi
+
   KEYFILE="$TMP_DIR/lease_key"
   PUBKEY=""
   if command -v ssh-keygen >/dev/null 2>&1; then
-    ssh-keygen -q -t ed25519 -N "" -f "$KEYFILE" -C "servercli-smoke" >/dev/null 2>&1 \
-      && PUBKEY="$(cat "$KEYFILE.pub" 2>/dev/null || true)"
+    ssh-keygen -q -t ed25519 -N "" -f "$KEYFILE" -C "servercli-smoke" >/dev/null 2>&1       && PUBKEY="$(cat "$KEYFILE.pub" 2>/dev/null || true)"
   fi
   if [ -z "$PUBKEY" ]; then
     # 无 ssh-keygen 时生成占位公钥（仅用于 API 流程验证）
@@ -413,56 +432,65 @@ print(json.dumps({
   "purpose": "smoke-test",
   "client_request_id": "smoke-lease-" + sys.argv[3]
 }))' "$child_id" "$PUBKEY" "$$")"
-  http_json POST "$PRIMARY_API/ai/lease-requests" "$LEASE_BODY"
-  if [ "$CURL_CODE" = "200" ] || [ "$CURL_CODE" = "201" ]; then
-    LEASE_ID="$(jget "$CURL_BODY" 'd.get("lease",{}).get("id", d.get("lease_request",{}).get("id",""))')"
-    lstatus="$(jget "$CURL_BODY" 'd.get("lease",{}).get("status", d.get("lease_request",{}).get("status",""))')"
-    RENEW_TOKEN="$(jget "$CURL_BODY" 'd.get("ai_renewal_token") or d.get("renewal_token") or d.get("lease",{}).get("renewal_token") or d.get("lease",{}).get("ai_renewal_token") or ""')"
-    if [ -n "$LEASE_ID" ]; then
-      ok "Lease 申请成功 (id=$LEASE_ID, status=${lstatus:-n/a})"
+  if [ -n "$ACCESS_TOKEN" ]; then
+    tmp="$(mktemp "${TMPDIR:-/tmp}/servercli-smoke-lease.XXXXXX")"
+    CURL_CODE="$(curl -sS --max-time 20 -X POST -H 'Content-Type: application/json'       -H "Authorization: Bearer $ACCESS_TOKEN" -H "Idempotency-Key: smoke-lease-$$"       -o "$tmp" -w '%{http_code}' --data "$LEASE_BODY" "$PRIMARY_API/ai/lease-requests" 2>/dev/null)"
+    CURL_BODY="$(cat "$tmp" 2>/dev/null || true)"
+    rm -f "$tmp"
+    if [ "$CURL_CODE" = "200" ] || [ "$CURL_CODE" = "201" ]; then
+      LEASE_ID="$(jget "$CURL_BODY" 'd.get("lease",{}).get("id", d.get("lease_request",{}).get("id",""))')"
+      lstatus="$(jget "$CURL_BODY" 'd.get("lease",{}).get("status", d.get("lease_request",{}).get("status",""))')"
+      if [ -n "$LEASE_ID" ]; then
+        ok "Lease 申请自动审批成功 (id=$LEASE_ID, status=${lstatus:-n/a})"
+      else
+        fail "Lease 申请响应缺少 id: $(redact "$CURL_BODY")"
+      fi
     else
-      fail "Lease 申请响应缺少 id: $(redact "$CURL_BODY")"
+      fail "Lease 申请失败 (HTTP $CURL_CODE): $(redact "$CURL_BODY")"
     fi
-  else
-    fail "Lease 申请失败 (HTTP $CURL_CODE): $(redact "$CURL_BODY")"
   fi
 else
   fail "缺少子节点 node_id，跳过 Lease 测试"
 fi
 
-if [ -n "$LEASE_ID" ]; then
-  if [ -n "$RENEW_TOKEN" ]; then
-    http_json POST "$PRIMARY_API/ai/leases/$LEASE_ID/renew" "{}"
-    # 续期需要 AI 签名头；若 401/403 则重试带 Bearer
-    if [ "$CURL_CODE" = "401" ] || [ "$CURL_CODE" = "403" ]; then
-      tmp="$(mktemp "${TMPDIR:-/tmp}/servercli-smoke-renew.XXXXXX")"
-      CURL_CODE="$(curl -sS --max-time 20 -X POST -H 'Content-Type: application/json' \
-        -H "Authorization: Bearer $RENEW_TOKEN" -o "$tmp" -w '%{http_code}' \
-        --data '{}' "$PRIMARY_API/ai/leases/$LEASE_ID/renew" 2>/dev/null)"
-      rm -f "$tmp"
-    fi
-    if [ "$CURL_CODE" = "200" ]; then
-      ok "Lease 续期成功"
-    else
-      fail "Lease 续期失败 (HTTP $CURL_CODE)"
-    fi
-    tmp="$(mktemp "${TMPDIR:-/tmp}/servercli-smoke-disc.XXXXXX")"
-    CURL_CODE="$(curl -sS --max-time 20 -X POST \
-      -H 'Content-Type: application/json' \
-      -H "Authorization: Bearer $RENEW_TOKEN" \
-      -o "$tmp" -w '%{http_code}' --data '{}' "$PRIMARY_API/ai/leases/$LEASE_ID/disconnect" 2>/dev/null)"
-    rm -f "$tmp"
-    if [ "$CURL_CODE" = "200" ]; then
-      ok "Lease 断开成功"
-    else
-      fail "Lease 断开失败 (HTTP $CURL_CODE)"
-    fi
+if [ -n "$LEASE_ID" ] && [ -n "$ACCESS_TOKEN" ]; then
+  tmp="$(mktemp "${TMPDIR:-/tmp}/servercli-smoke-renew.XXXXXX")"
+  CURL_CODE="$(curl -sS --max-time 20 -X POST -H 'Content-Type: application/json'     -H "Authorization: Bearer $ACCESS_TOKEN" -o "$tmp" -w '%{http_code}'     --data '{"requested_duration_seconds":600}' "$PRIMARY_API/ai/leases/$LEASE_ID/renew" 2>/dev/null)"
+  rm -f "$tmp"
+  if [ "$CURL_CODE" = "200" ]; then
+    ok "Lease 续期成功（Access Token）"
   else
-    fail "未获得 renewal token，跳过续期/断开（Lease 可能需人工审批）"
+    fail "Lease 续期失败 (HTTP $CURL_CODE)"
+  fi
+  tmp="$(mktemp "${TMPDIR:-/tmp}/servercli-smoke-disc.XXXXXX")"
+  CURL_CODE="$(curl -sS --max-time 20 -X POST     -H 'Content-Type: application/json'     -H "Authorization: Bearer $ACCESS_TOKEN"     -o "$tmp" -w '%{http_code}' --data '{}' "$PRIMARY_API/ai/leases/$LEASE_ID/disconnect" 2>/dev/null)"
+  rm -f "$tmp"
+  if [ "$CURL_CODE" = "200" ]; then
+    ok "Lease 断开成功（Access Token）"
+  else
+    fail "Lease 断开失败 (HTTP $CURL_CODE)"
+  fi
+elif [ -n "$LEASE_ID" ]; then
+  fail "未获得 Access Token，跳过续期/断开"
+fi
+
+# 撤销 smoke Token（按本次创建的 id，避免误撤销上一轮遗留；级联清理避免遗留）。
+if [ -n "$ACCESS_TOKEN" ]; then
+  TOKEN_ID="$SMOKE_TOKEN_ID"
+  if [ -z "$TOKEN_ID" ]; then
+    http_json GET "$PRIMARY_API/api-tokens"
+    TOKEN_ID="$(jget "$CURL_BODY" "[x for x in d.get('api_tokens',[]) if x.get('name')=='smoke-test'][0].get('id','')")"
+  fi
+  if [ -n "$TOKEN_ID" ]; then
+    http_json POST "$PRIMARY_API/api-tokens/$TOKEN_ID/revoke" '{"reason":"smoke-test cleanup"}'
+    if [ "$CURL_CODE" = "200" ]; then
+      ok "smoke Access Token 已撤销"
+    else
+      fail "smoke Token 撤销失败 (HTTP $CURL_CODE): $(redact "$CURL_BODY")"
+    fi
   fi
 fi
 
-# ---------------------------------------------------------------------------
 # 9/11 审计查询
 # ---------------------------------------------------------------------------
 step "9/11 审计查询"

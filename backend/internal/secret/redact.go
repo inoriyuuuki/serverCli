@@ -47,7 +47,7 @@ var (
 	cookieRe     = regexp.MustCompile(`(?i)(session|token|auth|credential)[^=;,\s]*=[^;,\s]+`)
 	dsnRe        = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^:/\s]+):([^@/\s]+)@`)
 	// commonSecretValueRe matches typical high-entropy secret values inside JSON.
-	commonSecretValueRe = regexp.MustCompile(`(?i)(sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})`)
+	commonSecretValueRe = regexp.MustCompile(`(?i)(sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sct_[A-Za-z0-9_-]+|lrt_[A-Za-z0-9_.-]+)`)
 )
 
 // MaskSecret replaces the given value with a safe placeholder, counting it.

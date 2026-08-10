@@ -3,20 +3,26 @@
 # servercli-lease-shell - AI Lease 会话包装器
 # 由 init 的 restore_after_serverCli 安装到各实例 LEASE_SHELL_BIN（自动替换
 # __PRIMARY_BACKEND_URL__ 为正式主控地址）。OpenSSH 通过 authorized_keys 的
-# command= 调用本包装器；先向控制面校验 Lease 仍 active，再执行受限命令。
+# command= 调用本包装器；先携带短生命周期签名运行时 Token 向控制面校验 Lease
+# 仍 active，再执行受限命令。
 #
 # 权限档位（与申请时的 permission_profile 对应，由控制面 /status 返回）：
 #   read-only / operator : 以 servercli-ai 普通用户执行（无提权）
 #   admin                : 经 sudo -n 提权到 root 执行（需节点配置 NOPASSWD sudoers）
-# 用法: servercli-lease-shell --lease <lease_id> [command...]
+# 用法: servercli-lease-shell --lease <lease_id> --token <runtime_token> [command...]
 # =============================================================================
 PRIMARY_BACKEND_URL="__PRIMARY_BACKEND_URL__"
 LEASE_ID=""
+RUNTIME_TOKEN=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --lease)
             LEASE_ID="${2:-}"
+            shift 2
+            ;;
+        --token)
+            RUNTIME_TOKEN="${2:-}"
             shift 2
             ;;
         --)
@@ -33,10 +39,16 @@ if [ -z "$LEASE_ID" ]; then
     echo "servercli-lease-shell: missing --lease <id>" >&2
     exit 1
 fi
+if [ -z "$RUNTIME_TOKEN" ]; then
+    echo "servercli-lease-shell: missing --token <runtime_token>" >&2
+    exit 1
+fi
 
-# 1) 校验 Lease 仍 active（GET /api/v1/ai/leases/{id}/status 为公开接口）
-resp=$(curl -fsS --max-time 5 "$PRIMARY_BACKEND_URL/api/v1/ai/leases/$LEASE_ID/status" 2>/dev/null) || {
-    echo "servercli-lease-shell: lease 校验失败（控制面不可达）" >&2
+# 1) 校验 Lease 仍 active（签名运行时 Token，接口仅接受带 X-Lease-Runtime-Token 的请求）
+resp=$(curl -fsS --max-time 5 \
+  -H "X-Lease-Runtime-Token: $RUNTIME_TOKEN" \
+  "$PRIMARY_BACKEND_URL/api/v1/ai/leases/$LEASE_ID/status" 2>/dev/null) || {
+    echo "servercli-lease-shell: lease 校验失败（控制面不可达或运行时 Token 无效）" >&2
     exit 1
 }
 status=$(printf '%s' "$resp" | python3 -c '

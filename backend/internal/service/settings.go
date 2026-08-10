@@ -17,6 +17,8 @@ const (
 	KeyLeaseDefaultMinutes = "ai_lease_default_minutes"
 	KeyLeaseMaxHours       = "ai_lease_max_hours"
 	KeyLeaseGraceSeconds   = "ai_lease_disconnect_grace_seconds"
+	// KeyApprovalMode is deprecated: the token-based auto-approval flow no
+	// longer reads it. Kept only so legacy rows remain queryable.
 	KeyApprovalMode        = "ai_approval_mode"
 	KeyNewRequestsEnabled  = "ai_new_requests_enabled"
 	KeyRenewalsEnabled     = "ai_renewals_enabled"
@@ -41,17 +43,12 @@ func NewSettingsService(st *store.Store, cfg *config.Config) *SettingsService {
 
 // Defaults returns the seed values for system settings.
 func (s *SettingsService) Defaults() map[string]string {
-	mode := "manual"
-	if s.cfg.AppEnv == "test" {
-		mode = "policy"
-	}
 	return map[string]string{
 		KeyHeartbeatInterval:   strconv.Itoa(s.cfg.HeartbeatIntervalSeconds),
 		KeyOfflineThreshold:    strconv.Itoa(s.cfg.OfflineThresholdSeconds),
 		KeyLeaseDefaultMinutes: strconv.Itoa(s.cfg.AILeaseDefaultMinutes),
 		KeyLeaseMaxHours:       strconv.Itoa(s.cfg.AILeaseMaxHours),
 		KeyLeaseGraceSeconds:   strconv.Itoa(s.cfg.AILeaseDisconnectGraceSecs),
-		KeyApprovalMode:        mode,
 		KeyNewRequestsEnabled:  "true",
 		KeyRenewalsEnabled:     "true",
 		KeyAIAccessScope:       "global",
@@ -67,7 +64,16 @@ func (s *SettingsService) Seed(ctx context.Context) error {
 	return s.store.SeedSettings(ctx, s.Defaults())
 }
 
-// All returns all settings as typed values.
+// deprecatedSettings are legacy keys kept in the DB for history but no longer
+// exposed or editable (the token-based auto-approval flow replaced them).
+var deprecatedSettings = map[string]bool{
+	KeyApprovalMode:        true,
+	"ai_auto_approval_policy": true,
+	"auto_approval_policy":    true,
+}
+
+// All returns all settings as typed values, hiding deprecated keys so the UI
+// cannot render stale approval-mode controls whose save would be rejected.
 func (s *SettingsService) All(ctx context.Context) (map[string]any, error) {
 	raw, err := s.store.AllSettings(ctx)
 	if err != nil {
@@ -75,6 +81,9 @@ func (s *SettingsService) All(ctx context.Context) (map[string]any, error) {
 	}
 	out := map[string]any{}
 	for k, v := range raw {
+		if deprecatedSettings[k] {
+			continue
+		}
 		out[k] = parseSettingValue(k, v)
 	}
 	return out, nil
@@ -130,7 +139,6 @@ var validKeys = map[string]string{
 	KeyLeaseDefaultMinutes: "integer",
 	KeyLeaseMaxHours:       "integer",
 	KeyLeaseGraceSeconds:   "integer",
-	KeyApprovalMode:        "enum",
 	KeyNewRequestsEnabled:  "boolean",
 	KeyRenewalsEnabled:     "boolean",
 	KeyAIAccessScope:       "string",
@@ -170,11 +178,6 @@ func (s *SettingsService) Patch(ctx context.Context, updates map[string]any) (ma
 			str, ok := v.(string)
 			if !ok {
 				return nil, fmt.Errorf("setting %q must be a string", k)
-			}
-			if k == KeyApprovalMode {
-				if str != "manual" && str != "policy" && str != "disabled" {
-					return nil, fmt.Errorf("setting %q must be manual|policy|disabled", k)
-				}
 			}
 			if k == KeyCleanupSchedule {
 				if str != "weekly" && str != "daily" && str != "disabled" {

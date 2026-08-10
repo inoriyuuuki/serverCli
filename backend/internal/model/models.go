@@ -279,6 +279,9 @@ type AILeaseRequest struct {
 	ID                       string     `json:"id"`
 	ClientRequestID          string     `json:"client_request_id"`
 	EnvironmentID            string     `json:"environment_id"`
+	AccessTokenID            string     `json:"access_token_id,omitempty"`
+	AccessTokenName          string     `json:"access_token_name,omitempty"`
+	AccessTokenPrefix        string     `json:"access_token_prefix,omitempty"`
 	AIAgentID                string     `json:"ai_agent_id"`
 	AIAgentName              string     `json:"ai_agent_name"`
 	NodeID                   string     `json:"node_id"`
@@ -301,6 +304,9 @@ type AILeaseRequest struct {
 type AILease struct {
 	ID                   string     `json:"id"`
 	RequestID            string     `json:"request_id"`
+	AccessTokenID        string     `json:"access_token_id,omitempty"`
+	AccessTokenName      string     `json:"access_token_name,omitempty"`
+	AccessTokenPrefix    string     `json:"access_token_prefix,omitempty"`
 	NodeID               string     `json:"node_id"`
 	AIAgentID            string     `json:"ai_agent_id"`
 	PermissionProfile    string     `json:"permission_profile"`
@@ -316,7 +322,7 @@ type AILease struct {
 	RevokeReason         string     `json:"revoke_reason"`
 	RenewalDisabled      bool       `json:"renewal_disabled"`
 	RenewalTokenHash     string     `json:"-"`
-	RenewalTokenPrefix   string     `json:"renewal_token_prefix"`
+	RenewalTokenPrefix   string     `json:"-"` // legacy schema column; never returned
 	ActiveSessionCount   int        `json:"active_session_count"`
 	LastHeartbeatAt      *time.Time `json:"last_heartbeat_at"`
 	KeyInstalled         bool       `json:"key_installed"`
@@ -354,6 +360,69 @@ type AISSHSession struct {
 	RecordingRef  string     `json:"recording_ref"`
 	IsProtected   bool       `json:"is_protected"`
 	ProtectedAt   *time.Time `json:"protected_at"`
+}
+
+// TokenExpiry enumerates the fixed access token lifetimes.
+const (
+	TokenTTL15m   = "15m"
+	TokenTTL1h    = "1h"
+	TokenTTL6h    = "6h"
+	TokenTTL1d    = "1d"
+	TokenTTL1w    = "1w"
+	TokenTTLNever = "never"
+)
+
+// TokenUsageOutcome values for api_token_usage_log.outcome.
+const (
+	TokenUsageSuccess = "success"
+	TokenUsageDenied  = "denied"
+	TokenUsageFailure = "failure"
+)
+
+// TokenState values for api_token_usage_log.token_state.
+const (
+	TokenStateValid   = "valid"
+	TokenStateExpired = "expired"
+	TokenStateRevoked = "revoked"
+)
+
+// APIAccessToken mirrors api_access_token.
+type APIAccessToken struct {
+	ID                string     `json:"id"`
+	EnvironmentID     string     `json:"environment_id"`
+	Name              string     `json:"name"`
+	TokenHash         string     `json:"-"`
+	TokenPrefix       string     `json:"token_prefix"`
+	CreatedBy         string     `json:"created_by,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	ExpiresAt         *time.Time `json:"expires_at"`
+	RevokedAt         *time.Time `json:"revoked_at"`
+	RevokedBy         string     `json:"revoked_by,omitempty"`
+	LastUsedAt        *time.Time `json:"last_used_at"`
+	LastUsedIP        string     `json:"last_used_ip,omitempty"`
+	UsageCount        int64      `json:"usage_count"`
+	PermissionVersion int        `json:"permission_version"`
+	PermissionsJSON   string     `json:"-"`
+}
+
+// APITokenUsageLog mirrors api_token_usage_log.
+type APITokenUsageLog struct {
+	ID             string    `json:"id"`
+	TokenID        string    `json:"token_id"`
+	EnvironmentID  string    `json:"environment_id"`
+	RequestID      string    `json:"request_id,omitempty"`
+	OccurredAt     time.Time `json:"occurred_at"`
+	Method         string    `json:"method"`
+	Route          string    `json:"route"`
+	Resource       string    `json:"resource,omitempty"`
+	Action         string    `json:"action,omitempty"`
+	SourceIP       string    `json:"source_ip,omitempty"`
+	UserAgent      string    `json:"user_agent,omitempty"`
+	StatusCode     int       `json:"status_code"`
+	Outcome        string    `json:"outcome"`
+	LeaseRequestID string    `json:"lease_request_id,omitempty"`
+	LeaseID        string    `json:"lease_id,omitempty"`
+	TokenState     string    `json:"token_state"`
 }
 
 // AuditEvent mirrors audit_event.

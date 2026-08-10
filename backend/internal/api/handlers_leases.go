@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"servercli/internal/model"
 	"servercli/internal/service"
@@ -28,18 +29,21 @@ func (s *Server) handleCreateLeaseRequest(w http.ResponseWriter, r *http.Request
 	if in.AIAgentID == "" {
 		in.AIAgentID = "ai-agent"
 	}
-	res, err := s.leases.CreateLeaseRequest(r.Context(), in, remoteIP(r))
+	principal := tokenPrincipalFrom(r.Context())
+	res, err := s.leases.CreateLeaseRequest(r.Context(), in, remoteIP(r), principal)
 	if err != nil {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
 	status := http.StatusCreated
+	if res.Replayed {
+		status = http.StatusOK
+	}
 	out := map[string]any{"lease_request": res.LeaseRequest}
 	s.publishLeaseKeys(res.Lease)
 	if res.Lease != nil {
 		host, port := s.sshTarget(r, res.Lease.NodeID)
 		out["lease"] = res.Lease
-		out["renewal_token"] = res.RenewalToken
 		out["host"] = host
 		out["ssh_port"] = port
 		out["user"] = "servercli-ai"
@@ -48,7 +52,7 @@ func (s *Server) handleCreateLeaseRequest(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleGetLeaseRequest(w http.ResponseWriter, r *http.Request) {
-	req, err := s.leases.LeaseRequest(r.Context(), r.PathValue("id"))
+	req, err := s.leases.LeaseRequest(r.Context(), r.PathValue("id"), tokenPrincipalFrom(r.Context()))
 	if err != nil {
 		writeServiceError(w, r, s.log, err)
 		return
@@ -68,49 +72,24 @@ func (s *Server) handleListLeaseRequests(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"lease_requests": reqs})
 }
 
-func (s *Server) handleApproveLeaseRequest(w http.ResponseWriter, r *http.Request) {
-	admin := adminFrom(r.Context())
-	res, err := s.leases.ApproveLeaseRequest(r.Context(), r.PathValue("id"), admin.ID)
-	if err != nil {
-		writeServiceError(w, r, s.log, err)
-		return
-	}
-	out := map[string]any{"lease_request": res.LeaseRequest}
-	s.publishLeaseKeys(res.Lease)
-	if res.Lease != nil {
-		out["lease"] = res.Lease
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleRejectLeaseRequest(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Reason string `json:"reason"`
-	}
-	_ = decodeJSON(w, r, s.log, &req)
-	admin := adminFrom(r.Context())
-	if err := s.leases.RejectLeaseRequest(r.Context(), r.PathValue("id"), admin.ID, req.Reason); err != nil {
-		writeServiceError(w, r, s.log, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "rejected"})
-}
-
 func (s *Server) handleLeaseRenew(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RequestedDurationSeconds int `json:"requested_duration_seconds"`
 	}
 	_ = decodeJSON(w, r, s.log, &req)
-	lease, err := s.leases.Renew(r.Context(), r.PathValue("id"), bearerToken(r), req.RequestedDurationSeconds)
+	lease, err := s.leases.Renew(r.Context(), r.PathValue("id"), tokenPrincipalFrom(r.Context()), req.RequestedDurationSeconds)
 	if err != nil {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	// Renewal moved the lease expiry; the node must re-install the key with a
+	// freshly signed runtime token and expiry marker.
+	s.publishLeaseKeys(lease)
 	writeJSON(w, http.StatusOK, map[string]any{"lease": lease})
 }
 
 func (s *Server) handleLeaseHeartbeat(w http.ResponseWriter, r *http.Request) {
-	lease, err := s.leases.Heartbeat(r.Context(), r.PathValue("id"), bearerToken(r))
+	lease, err := s.leases.Heartbeat(r.Context(), r.PathValue("id"), tokenPrincipalFrom(r.Context()))
 	if err != nil {
 		writeServiceError(w, r, s.log, err)
 		return
@@ -119,7 +98,7 @@ func (s *Server) handleLeaseHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLeaseDisconnect(w http.ResponseWriter, r *http.Request) {
-	lease, err := s.leases.Disconnect(r.Context(), r.PathValue("id"), bearerToken(r))
+	lease, err := s.leases.Disconnect(r.Context(), r.PathValue("id"), tokenPrincipalFrom(r.Context()))
 	if err != nil {
 		writeServiceError(w, r, s.log, err)
 		return
@@ -259,21 +238,58 @@ func (s *Server) handleLeaseRevokeAll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, s.log, http.StatusBadRequest, "BAD_REQUEST", "scope must be global or node_id", nil)
 		return
 	}
-	count, err := s.leases.RevokeAll(r.Context(), nodeID, admin.ID, req.Reason, req.TerminateSessions)
+	count, revoked, err := s.leases.RevokeAll(r.Context(), nodeID, admin.ID, req.Reason, req.TerminateSessions)
 	if err != nil {
 		writeServiceError(w, r, s.log, err)
 		return
 	}
+	for _, l := range revoked {
+		s.publishLeaseKeys(l)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "revoked", "revoked_count": count})
 }
 
-// handleGetLeaseStatus returns minimal public lease status for the
-// servercli-lease-shell wrapper to validate an active lease by lease ID.
-func (s *Server) handleGetLeaseStatus(w http.ResponseWriter, r *http.Request) {
-	lease, err := s.leases.Lease(r.Context(), "", r.PathValue("id"))
+// handleLeaseRuntimeStatus validates a lease runtime token and returns the
+// lease state for the servercli-lease-shell wrapper. The signed token binds
+// lease + node + expiry, so even before the scheduler marks a lease expired,
+// a past expires_at rejects the check.
+func (s *Server) handleLeaseRuntimeStatus(w http.ResponseWriter, r *http.Request) {
+	master, err := service.MasterKey(s.cfg)
 	if err != nil {
-		writeServiceError(w, r, s.log, err)
+		writeError(w, r, s.log, http.StatusInternalServerError, "INTERNAL_ERROR", "runtime status unavailable", nil)
 		return
+	}
+	token := r.Header.Get("X-Lease-Runtime-Token")
+	leaseID, nodeID, tokenExpires, ok := service.VerifyLeaseRuntimeToken(master, token)
+	if !ok || leaseID != r.PathValue("id") {
+		s.auditor.Denied(r.Context(), service.AuditInput{
+			ActorType: model.ActorNode, Action: "ai.lease_runtime_status", SourceIP: remoteIP(r),
+			Summary: "lease runtime token invalid", RiskLevel: service.RiskHigh,
+		})
+		writeError(w, r, s.log, http.StatusUnauthorized, "UNAUTHENTICATED", "invalid lease runtime token", nil)
+		return
+	}
+	if time.Now().UTC().After(tokenExpires) {
+		writeError(w, r, s.log, http.StatusUnauthorized, "LEASE_EXPIRED", "lease runtime token expired", nil)
+		return
+	}
+	lease, err := s.leases.Lease(r.Context(), "", leaseID)
+	if err != nil {
+		writeError(w, r, s.log, http.StatusNotFound, "NOT_FOUND", "lease not found", nil)
+		return
+	}
+	if lease.NodeID != nodeID || lease.Status != model.LeaseActive || !lease.ExpiresAt.After(time.Now().UTC()) {
+		writeError(w, r, s.log, http.StatusForbidden, "LEASE_UNAVAILABLE", "lease is not active", nil)
+		return
+	}
+	// Defense in depth: even if the cascade somehow missed a lease, a revoked or
+	// expired bound access token must reject new SSH connections immediately.
+	if lease.AccessTokenID != "" {
+		if tok, err := s.store.AccessTokenByID(r.Context(), lease.AccessTokenID); err == nil &&
+			(tok.RevokedAt != nil || (tok.ExpiresAt != nil && !tok.ExpiresAt.After(time.Now().UTC()))) {
+			writeError(w, r, s.log, http.StatusForbidden, "LEASE_UNAVAILABLE", "lease token revoked or expired", nil)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"lease": map[string]any{
@@ -284,70 +300,4 @@ func (s *Server) handleGetLeaseStatus(w http.ResponseWriter, r *http.Request) {
 			"expires_at":         lease.ExpiresAt,
 		},
 	})
-}
-
-// handleCreateAutoApproval approves a pending request and creates (or
-// extends) the device-node auto-approval rule in one atomic operation.
-func (s *Server) handleCreateAutoApproval(w http.ResponseWriter, r *http.Request) {
-	if s.scope() != "" {
-		writeError(w, r, s.log, http.StatusForbidden, "FORBIDDEN", "auto-approval rules are managed by the primary node", nil)
-		return
-	}
-	var req struct {
-		DurationDays int `json:"duration_days"`
-	}
-	if !decodeJSON(w, r, s.log, &req) {
-		return
-	}
-	admin := adminFrom(r.Context())
-	res, err := s.leases.AutoApproveWithDuration(r.Context(), r.PathValue("id"), admin.ID, req.DurationDays)
-	if err != nil {
-		writeServiceError(w, r, s.log, err)
-		return
-	}
-	out := map[string]any{
-		"auto_approval": res.AutoApproval,
-		"lease_request": res.LeaseRequest,
-	}
-	s.publishLeaseKeys(res.Lease)
-	if res.Lease != nil {
-		out["lease"] = res.Lease
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleListAutoApprovals(w http.ResponseWriter, r *http.Request) {
-	if s.scope() != "" {
-		writeError(w, r, s.log, http.StatusForbidden, "FORBIDDEN", "auto-approval rules are managed by the primary node", nil)
-		return
-	}
-	q := r.URL.Query()
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	offset, _ := strconv.Atoi(q.Get("offset"))
-	rules, err := s.leases.ListAutoApprovals(r.Context(), "", q.Get("node_id"), q.Get("status"), limit, offset)
-	if err != nil {
-		writeServiceError(w, r, s.log, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"auto_approvals": rules})
-}
-
-func (s *Server) handleExtendAutoApproval(w http.ResponseWriter, r *http.Request) {
-	if s.scope() != "" {
-		writeError(w, r, s.log, http.StatusForbidden, "FORBIDDEN", "auto-approval rules are managed by the primary node", nil)
-		return
-	}
-	var req struct {
-		DurationDays int `json:"duration_days"`
-	}
-	if !decodeJSON(w, r, s.log, &req) {
-		return
-	}
-	admin := adminFrom(r.Context())
-	rule, err := s.leases.ExtendAutoApproval(r.Context(), r.PathValue("id"), admin.ID, req.DurationDays)
-	if err != nil {
-		writeServiceError(w, r, s.log, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"auto_approval": rule})
 }

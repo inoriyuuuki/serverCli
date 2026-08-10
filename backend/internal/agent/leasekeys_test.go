@@ -18,7 +18,10 @@ func TestLeaseKeyManagerApplyAndSweep(t *testing.T) {
 	m := NewLeaseKeyManager(path, "/opt/bin/servercli-lease-shell", log)
 
 	pub := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyValueForTesting12345 fake"
-	installs := []LeaseInstall{{LeaseID: "lease-1", PublicKey: pub, ExpiresAt: time.Now().Add(time.Hour)}}
+	installs := []LeaseInstall{{
+		LeaseID: "lease-1", PublicKey: pub, ExpiresAt: time.Now().Add(time.Hour),
+		RuntimeToken: "lrt_abc123.def456",
+	}}
 	if err := m.Apply(installs, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -34,8 +37,8 @@ func TestLeaseKeyManagerApplyAndSweep(t *testing.T) {
 		!strings.Contains(content, "no-X11-forwarding") || !strings.Contains(content, "no-user-rc") {
 		t.Fatal("missing forwarding restrictions")
 	}
-	if !strings.Contains(content, `command="/opt/bin/servercli-lease-shell --lease lease-1"`) {
-		t.Fatalf("missing command wrapper: %s", content)
+	if !strings.Contains(content, `command="/opt/bin/servercli-lease-shell --lease lease-1 --token lrt_abc123.def456"`) {
+		t.Fatalf("missing command wrapper with runtime token: %s", content)
 	}
 	// File perms 0600.
 	info, _ := os.Stat(path)

@@ -381,26 +381,46 @@ func TestAPIFullFlow(t *testing.T) {
 		t.Fatal("health ready failed")
 	}
 
-	// Lease request flow via API (policy auto-approve).
+	// Lease request flow via API: an access token is required and the request
+	// is auto-approved and bound to the token.
 	status, out = env.serve("POST", "/api/v1/ai/lease-requests", map[string]any{
 		"node_selector": env.nodeID, "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",
 		"permission_profile": "read-only", "requested_duration_seconds": 3600, "purpose": "test", "client_request_id": "lr-1",
 	}, nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("lease request without token should be 401, got %d: %s", status, out)
+	}
+	// Create a token as admin.
+	status, out = env.post("/api/v1/api-tokens", map[string]any{"name": "test-agent", "ttl": "6h"}, env.adminHeaders())
+	if status != http.StatusCreated {
+		t.Fatalf("create token status %d: %s", status, out)
+	}
+	var tokenResp struct {
+		APIToken map[string]any `json:"api_token"`
+		Token    string         `json:"token"`
+	}
+	_ = json.Unmarshal(out, &tokenResp)
+	if tokenResp.Token == "" || !strings.HasPrefix(tokenResp.Token, "sct_") {
+		t.Fatalf("token not created: %s", out)
+	}
+	auth := map[string]string{"Authorization": "Bearer " + tokenResp.Token}
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", map[string]any{
+		"node_selector": env.nodeID, "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",
+		"permission_profile": "read-only", "requested_duration_seconds": 3600, "purpose": "test", "client_request_id": "lr-1",
+	}, auth)
 	if status != http.StatusCreated {
 		t.Fatalf("lease request status %d: %s", status, out)
 	}
 	var lrResp struct {
-		Lease        map[string]any `json:"lease"`
-		RenewalToken string         `json:"renewal_token"`
+		Lease map[string]any `json:"lease"`
 	}
 	_ = json.Unmarshal(out, &lrResp)
-	if lrResp.Lease == nil || lrResp.RenewalToken == "" {
+	if lrResp.Lease == nil {
 		t.Fatalf("lease not auto-approved: %s", out)
 	}
 	leaseID := lrResp.Lease["id"].(string)
-	// Renew with the AI bearer token.
-	status, out = env.serve("POST", "/api/v1/ai/leases/"+leaseID+"/renew", map[string]any{"requested_duration_seconds": 3600},
-		map[string]string{"Authorization": "Bearer " + lrResp.RenewalToken})
+	// Renew with the access token.
+	status, out = env.serve("POST", "/api/v1/ai/leases/"+leaseID+"/renew", map[string]any{"requested_duration_seconds": 3600}, auth)
 	if status != http.StatusOK {
 		t.Fatalf("renew status %d: %s", status, out)
 	}

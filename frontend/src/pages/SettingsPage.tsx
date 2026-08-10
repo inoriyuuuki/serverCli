@@ -30,8 +30,6 @@ const KNOWN_FIELDS: ScalarSetting[] = [
   { key: 'ai_lease_default_minutes', label: 'AI Lease 默认时长（分钟）', kind: 'number' },
   { key: 'ai_lease_max_hours', label: 'AI Lease 绝对上限（小时）', kind: 'number' },
   { key: 'ai_lease_disconnect_grace_seconds', label: '断连宽限（秒）', kind: 'number' },
-  { key: 'ai_auto_approval_policy', label: 'AI 自动审批策略', kind: 'select', options: ['manual', 'policy', 'disabled'] },
-  { key: 'auto_approval_policy', label: '自动审批策略', kind: 'select', options: ['manual', 'policy', 'disabled'] },
   { key: 'ai_new_requests_enabled', label: '允许新 AI 申请', kind: 'boolean' },
   { key: 'new_requests_enabled', label: '允许新申请', kind: 'boolean' },
   { key: 'ai_renewals_enabled', label: '允许 AI 续期', kind: 'boolean' },
@@ -52,7 +50,11 @@ function humanize(key: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** 已废弃设置键：不展示、不可编辑（后端已不再接受这些键的保存）。 */
+const DEPRECATED_KEYS = new Set(['ai_approval_mode', 'ai_auto_approval_policy', 'auto_approval_policy']);
+
 function kindFor(key: string, value: unknown): ScalarSetting {
+  if (DEPRECATED_KEYS.has(key)) return { key, label: '', kind: 'text' };
   const known = KNOWN_FIELDS.find((f) => f.key === key);
   if (known) return known;
   if (typeof value === 'boolean') return { key, label: humanize(key), kind: 'boolean' };
@@ -78,7 +80,7 @@ export default function SettingsPage() {
   const scalarEntries = useMemo(() => {
     if (!settings) return [];
     return Object.entries(settings)
-      .filter(([, v]) => typeof v !== 'object' || v === null)
+      .filter(([key, v]) => !DEPRECATED_KEYS.has(key) && (typeof v !== 'object' || v === null))
       .map(([key, value]) => ({ key, value, def: kindFor(key, value) }));
   }, [settings]);
 

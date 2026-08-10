@@ -10,22 +10,30 @@ import (
 	"servercli/internal/model"
 )
 
-const leaseRequestColumns = `id, client_request_id, environment_id, ai_agent_id, ai_agent_name, node_id,
-	requested_profile, requested_duration_seconds, public_key, public_key_fingerprint, purpose, status,
-	decision_reason, source_ip, client_metadata_json, created_at, decided_at, is_protected, protected_at`
+const leaseRequestColumns = `lr.id, lr.client_request_id, lr.environment_id, lr.ai_agent_id, lr.ai_agent_name, lr.node_id,
+	lr.requested_profile, lr.requested_duration_seconds, lr.public_key, lr.public_key_fingerprint, lr.purpose, lr.status,
+	lr.decision_reason, lr.source_ip, lr.client_metadata_json, lr.created_at, lr.decided_at, lr.is_protected, lr.protected_at,
+	lr.access_token_id, t.name, t.token_prefix`
+
+const leaseRequestFrom = ` FROM ai_lease_request lr
+	LEFT JOIN api_access_token t ON t.id = lr.access_token_id`
 
 func scanLeaseRequest(row interface{ Scan(...any) error }) (*model.AILeaseRequest, error) {
 	var r model.AILeaseRequest
-	var agentID, agentName, fp, purpose, decisionReason, sourceIP, meta, created, decided, protected sql.NullString
+	var agentID, agentName, fp, purpose, decisionReason, sourceIP, meta, created, decided, protected, tokenID, tokenName, tokenPrefix sql.NullString
 	var duration int64
 	var prot int64
 	if err := row.Scan(&r.ID, &r.ClientRequestID, &r.EnvironmentID, &agentID, &agentName, &r.NodeID,
 		&r.RequestedProfile, &duration, &r.PublicKey, &fp, &purpose, &r.Status,
-		&decisionReason, &sourceIP, &meta, &created, &decided, &prot, &protected); err != nil {
+		&decisionReason, &sourceIP, &meta, &created, &decided, &prot, &protected,
+		&tokenID, &tokenName, &tokenPrefix); err != nil {
 		return nil, err
 	}
 	r.AIAgentID = agentID.String
 	r.AIAgentName = agentName.String
+	r.AccessTokenID = tokenID.String
+	r.AccessTokenName = tokenName.String
+	r.AccessTokenPrefix = tokenPrefix.String
 	r.PublicKeyFingerprint = fp.String
 	r.Purpose = purpose.String
 	r.DecisionReason = decisionReason.String
@@ -49,21 +57,24 @@ func scanLeaseRequest(row interface{ Scan(...any) error }) (*model.AILeaseReques
 // CreateLeaseRequest inserts a lease request.
 func (s *Store) CreateLeaseRequest(ctx context.Context, r *model.AILeaseRequest) error {
 	r.CreatedAt = now()
-	r.Status = model.LeaseRequestPending
+	if r.Status == "" {
+		r.Status = model.LeaseRequestPending
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_lease_request
 		(id, client_request_id, environment_id, ai_agent_id, ai_agent_name, node_id,
 		 requested_profile, requested_duration_seconds, public_key, public_key_fingerprint, purpose, status,
-		 decision_reason, source_ip, client_metadata_json, created_at, decided_at, is_protected, protected_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+		 decision_reason, source_ip, client_metadata_json, created_at, decided_at, is_protected, protected_at, access_token_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
 		r.ID, r.ClientRequestID, r.EnvironmentID, r.AIAgentID, r.AIAgentName, r.NodeID,
 		r.RequestedProfile, r.RequestedDurationSeconds, r.PublicKey, r.PublicKeyFingerprint, r.Purpose, r.Status,
-		r.DecisionReason, r.SourceIP, r.ClientMetadataJSON, ts(r.CreatedAt), nullTime(r.DecidedAt), boolInt(r.IsProtected), nullTime(r.ProtectedAt))
+		r.DecisionReason, r.SourceIP, r.ClientMetadataJSON, ts(r.CreatedAt), nullTime(r.DecidedAt), boolInt(r.IsProtected), nullTime(r.ProtectedAt),
+		nullString(r.AccessTokenID))
 	return err
 }
 
 // LeaseRequestByID finds a lease request.
 func (s *Store) LeaseRequestByID(ctx context.Context, id string) (*model.AILeaseRequest, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+leaseRequestColumns+` FROM ai_lease_request WHERE id=$1`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+leaseRequestColumns+leaseRequestFrom+` WHERE lr.id=$1`, id)
 	r, err := scanLeaseRequest(row)
 	if err != nil {
 		return nil, sqlErr(err)
@@ -73,8 +84,8 @@ func (s *Store) LeaseRequestByID(ctx context.Context, id string) (*model.AILease
 
 // LeaseRequestByIdempotency finds by (environment_id, client_request_id).
 func (s *Store) LeaseRequestByIdempotency(ctx context.Context, envID, clientRequestID string) (*model.AILeaseRequest, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+leaseRequestColumns+` FROM ai_lease_request
-		WHERE environment_id=$1 AND client_request_id=$2`, envID, clientRequestID)
+	row := s.db.QueryRowContext(ctx, `SELECT `+leaseRequestColumns+leaseRequestFrom+`
+		WHERE lr.environment_id=$1 AND lr.client_request_id=$2`, envID, clientRequestID)
 	r, err := scanLeaseRequest(row)
 	if err != nil {
 		return nil, sqlErr(err)
@@ -91,40 +102,23 @@ func (s *Store) UpdateLeaseRequest(ctx context.Context, r *model.AILeaseRequest)
 	return err
 }
 
-// ApproveLeaseRequestIfPending persists an approval only while the request is
-// still pending; it returns ErrStateTransition otherwise. This guards against
-// concurrent double-approval issuing two leases for one request.
-func (s *Store) ApproveLeaseRequestIfPending(ctx context.Context, r *model.AILeaseRequest) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE ai_lease_request SET
-		status=$1, decision_reason=$2, decided_at=$3 WHERE id=$4 AND status=$5`,
-		r.Status, r.DecisionReason, nullTime(r.DecidedAt), r.ID, model.LeaseRequestPending)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrStateTransition
-	}
-	return nil
-}
-
 // ListLeaseRequests returns requests with filters, newest first.
 func (s *Store) ListLeaseRequests(ctx context.Context, nodeID, status string, limit, offset int) ([]*model.AILeaseRequest, error) {
-	q := `SELECT ` + leaseRequestColumns + ` FROM ai_lease_request`
+	q := `SELECT ` + leaseRequestColumns + leaseRequestFrom
 	conds := []string{}
 	args := []any{}
 	if nodeID != "" {
 		args = append(args, nodeID)
-		conds = append(conds, `node_id=$`+strconv.Itoa(len(args)))
+		conds = append(conds, `lr.node_id=$`+strconv.Itoa(len(args)))
 	}
 	if status != "" {
 		args = append(args, status)
-		conds = append(conds, `status=$`+strconv.Itoa(len(args)))
+		conds = append(conds, `lr.status=$`+strconv.Itoa(len(args)))
 	}
 	if len(conds) > 0 {
 		q += ` WHERE ` + strings.Join(conds, ` AND `)
 	}
-	q += ` ORDER BY created_at DESC`
+	q += ` ORDER BY lr.created_at DESC`
 	if limit > 0 {
 		args = append(args, limit)
 		q += ` LIMIT $` + strconv.Itoa(len(args))
@@ -149,24 +143,30 @@ func (s *Store) ListLeaseRequests(ctx context.Context, nodeID, status string, li
 	return out, rows.Err()
 }
 
-const leaseColumns = `id, request_id, node_id, ai_agent_id, permission_profile, public_key, public_key_fingerprint,
-	issued_at, expires_at, absolute_expires_at, last_renewed_at, renew_count, status, revoked_at, revoke_reason,
-	renewal_disabled, renewal_token_hash, renewal_token_prefix, active_session_count, last_heartbeat_at,
-	key_installed, key_installed_at, is_protected, protected_at`
+const leaseColumns = `l.id, l.request_id, l.node_id, l.ai_agent_id, l.permission_profile, l.public_key, l.public_key_fingerprint,
+	l.issued_at, l.expires_at, l.absolute_expires_at, l.last_renewed_at, l.renew_count, l.status, l.revoked_at, l.revoke_reason,
+	l.renewal_disabled, l.renewal_token_hash, l.renewal_token_prefix, l.active_session_count, l.last_heartbeat_at,
+	l.key_installed, l.key_installed_at, l.is_protected, l.protected_at, l.access_token_id, t.name, t.token_prefix`
+
+const leaseFrom = ` FROM ai_lease l
+	LEFT JOIN api_access_token t ON t.id = l.access_token_id`
 
 func scanLease(row interface{ Scan(...any) error }) (*model.AILease, error) {
 	var l model.AILease
-	var requestID, agentID, fp, issued, expires, absExpires, lastRenewed, revoked, reason, lastHeartbeatAt, keyInstalledAt, protected sql.NullString
+	var requestID, agentID, fp, issued, expires, absExpires, lastRenewed, revoked, reason, lastHeartbeatAt, keyInstalledAt, protected, tokenID, tokenName, tokenPrefix sql.NullString
 	var renewCount, activeSessions, prot int64
 	var renewalDisabled, keyInstalled int64
 	if err := row.Scan(&l.ID, &requestID, &l.NodeID, &agentID, &l.PermissionProfile, &l.PublicKey, &fp,
 		&issued, &expires, &absExpires, &lastRenewed, &renewCount, &l.Status, &revoked, &reason,
 		&renewalDisabled, &l.RenewalTokenHash, &l.RenewalTokenPrefix, &activeSessions, &lastHeartbeatAt,
-		&keyInstalled, &keyInstalledAt, &prot, &protected); err != nil {
+		&keyInstalled, &keyInstalledAt, &prot, &protected, &tokenID, &tokenName, &tokenPrefix); err != nil {
 		return nil, err
 	}
 	l.RequestID = requestID.String
 	l.AIAgentID = agentID.String
+	l.AccessTokenID = tokenID.String
+	l.AccessTokenName = tokenName.String
+	l.AccessTokenPrefix = tokenPrefix.String
 	l.PublicKeyFingerprint = fp.String
 	l.RevokeReason = reason.String
 	l.RenewCount = int(renewCount)
@@ -210,18 +210,19 @@ func (s *Store) CreateLease(ctx context.Context, l *model.AILease) error {
 		(id, request_id, node_id, ai_agent_id, permission_profile, public_key, public_key_fingerprint,
 		 issued_at, expires_at, absolute_expires_at, last_renewed_at, renew_count, status, revoked_at, revoke_reason,
 		 renewal_disabled, renewal_token_hash, renewal_token_prefix, active_session_count, last_heartbeat_at,
-		 key_installed, key_installed_at, is_protected, protected_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+		 key_installed, key_installed_at, is_protected, protected_at, access_token_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
 		l.ID, l.RequestID, l.NodeID, l.AIAgentID, l.PermissionProfile, l.PublicKey, l.PublicKeyFingerprint,
 		ts(l.IssuedAt), ts(l.ExpiresAt), ts(l.AbsoluteExpiresAt), nullTime(l.LastRenewedAt), l.RenewCount, l.Status, nullTime(l.RevokedAt), l.RevokeReason,
 		boolInt(l.RenewalDisabled), l.RenewalTokenHash, l.RenewalTokenPrefix, l.ActiveSessionCount, nullTime(l.LastHeartbeatAt),
-		boolInt(l.KeyInstalled), nullTime(l.KeyInstalledAt), boolInt(l.IsProtected), nullTime(l.ProtectedAt))
+		boolInt(l.KeyInstalled), nullTime(l.KeyInstalledAt), boolInt(l.IsProtected), nullTime(l.ProtectedAt),
+		nullString(l.AccessTokenID))
 	return err
 }
 
 // LeaseByID finds a lease.
 func (s *Store) LeaseByID(ctx context.Context, id string) (*model.AILease, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+leaseColumns+` FROM ai_lease WHERE id=$1`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+leaseColumns+leaseFrom+` WHERE l.id=$1`, id)
 	l, err := scanLease(row)
 	if err != nil {
 		return nil, sqlErr(err)
@@ -231,17 +232,7 @@ func (s *Store) LeaseByID(ctx context.Context, id string) (*model.AILease, error
 
 // LeaseByRequestID finds the lease created for a request.
 func (s *Store) LeaseByRequestID(ctx context.Context, requestID string) (*model.AILease, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+leaseColumns+` FROM ai_lease WHERE request_id=$1 ORDER BY issued_at DESC LIMIT 1`, requestID)
-	l, err := scanLease(row)
-	if err != nil {
-		return nil, sqlErr(err)
-	}
-	return l, nil
-}
-
-// LeaseByRenewalTokenHash finds a lease by renewal token hash.
-func (s *Store) LeaseByRenewalTokenHash(ctx context.Context, hash string) (*model.AILease, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+leaseColumns+` FROM ai_lease WHERE renewal_token_hash=$1`, hash)
+	row := s.db.QueryRowContext(ctx, `SELECT `+leaseColumns+leaseFrom+` WHERE l.request_id=$1 ORDER BY l.issued_at DESC LIMIT 1`, requestID)
 	l, err := scanLease(row)
 	if err != nil {
 		return nil, sqlErr(err)
@@ -264,16 +255,16 @@ func (s *Store) UpdateLease(ctx context.Context, l *model.AILease) error {
 
 // ListLeases returns leases with filters, newest first.
 func (s *Store) ListLeases(ctx context.Context, nodeID, status string, limit, offset int) ([]*model.AILease, error) {
-	q := `SELECT ` + leaseColumns + ` FROM ai_lease`
+	q := `SELECT ` + leaseColumns + leaseFrom
 	conds := []string{}
 	args := []any{}
 	if nodeID != "" {
 		args = append(args, nodeID)
-		conds = append(conds, `node_id=$`+strconv.Itoa(len(args)))
+		conds = append(conds, `l.node_id=$`+strconv.Itoa(len(args)))
 	}
 	if status != "" {
 		args = append(args, status)
-		conds = append(conds, `status=$`+strconv.Itoa(len(args)))
+		conds = append(conds, `l.status=$`+strconv.Itoa(len(args)))
 	}
 	if len(conds) > 0 {
 		q += ` WHERE ` + strings.Join(conds, ` AND `)
@@ -310,7 +301,7 @@ func (s *Store) ActiveLeasesOnNode(ctx context.Context, nodeID string) ([]*model
 
 // ExpiredLeases returns active leases whose expires_at is before cutoff.
 func (s *Store) ExpiredLeases(ctx context.Context, before time.Time) ([]*model.AILease, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+leaseColumns+` FROM ai_lease WHERE status=$1 AND expires_at < $2`,
+	rows, err := s.db.QueryContext(ctx, `SELECT `+leaseColumns+leaseFrom+` WHERE l.status=$1 AND l.expires_at < $2`,
 		model.LeaseActive, ts(before))
 	if err != nil {
 		return nil, err
@@ -457,63 +448,4 @@ func scanSSHSession(row interface{ Scan(...any) error }) (*model.AISSHSession, e
 		return nil, err
 	}
 	return &s, nil
-}
-
-// ApproveRequestWithAutoApproval atomically upserts an auto-approval rule,
-// marks the lease request approved (guarded on pending), and creates the
-// lease in a single transaction so a partial failure cannot leave
-// rule/request/lease out of sync, and a concurrent double-approval cannot
-// issue two leases for one request. The caller fills in IDs and timestamps;
-// created timestamps are set here for the rule and lease.
-func (s *Store) ApproveRequestWithAutoApproval(ctx context.Context, a *model.AIAutoApproval, req *model.AILeaseRequest, lease *model.AILease) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		tsx := s.Tx(tx)
-		nowT := now()
-
-		// Upsert auto-approval rule (keep existing id on update).
-		if _, err := tsx.exec(ctx, `INSERT INTO ai_auto_approval
-			(id, environment_id, ai_agent_id, ai_agent_name, node_id, source_request_id,
-			 created_by, created_at, updated_at, expires_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-			ON CONFLICT(environment_id, ai_agent_id, node_id) DO UPDATE SET
-				ai_agent_name=$4, source_request_id=$6, updated_at=$9, expires_at=$10`,
-			model.NewUUID(), a.EnvironmentID, a.AIAgentID, a.AIAgentName, a.NodeID, a.SourceRequestID,
-			a.CreatedBy, ts(nowT), ts(nowT), ts(a.ExpiresAt)); err != nil {
-			return err
-		}
-		if err := tsx.queryRow(ctx, `SELECT id FROM ai_auto_approval
-			WHERE environment_id=$1 AND ai_agent_id=$2 AND node_id=$3`,
-			a.EnvironmentID, a.AIAgentID, a.NodeID).Scan(&a.ID); err != nil {
-			return err
-		}
-
-		// Approve the request, only while it is still pending. A concurrent
-		// approval (admin or AI replay) loses the race and rolls back.
-		res, err := tsx.exec(ctx, `UPDATE ai_lease_request SET
-			status=$1, decision_reason=$2, decided_at=$3 WHERE id=$4 AND status=$5`,
-			req.Status, req.DecisionReason, nullTime(req.DecidedAt), req.ID, model.LeaseRequestPending)
-		if err != nil {
-			return err
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return ErrStateTransition
-		}
-
-		// Create the lease.
-		lease.ID = model.NewUUID()
-		lease.IssuedAt = nowT
-		lease.Status = model.LeaseActive
-		_, err = tsx.exec(ctx, `INSERT INTO ai_lease
-			(id, request_id, node_id, ai_agent_id, permission_profile, public_key, public_key_fingerprint,
-			 issued_at, expires_at, absolute_expires_at, last_renewed_at, renew_count, status, revoked_at, revoke_reason,
-			 renewal_disabled, renewal_token_hash, renewal_token_prefix, active_session_count, last_heartbeat_at,
-			 key_installed, key_installed_at, is_protected, protected_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
-			lease.ID, lease.RequestID, lease.NodeID, lease.AIAgentID, lease.PermissionProfile, lease.PublicKey, lease.PublicKeyFingerprint,
-			ts(lease.IssuedAt), ts(lease.ExpiresAt), ts(lease.AbsoluteExpiresAt), nullTime(lease.LastRenewedAt), lease.RenewCount, lease.Status, nullTime(lease.RevokedAt), lease.RevokeReason,
-			boolInt(lease.RenewalDisabled), lease.RenewalTokenHash, lease.RenewalTokenPrefix, lease.ActiveSessionCount, nullTime(lease.LastHeartbeatAt),
-			boolInt(lease.KeyInstalled), nullTime(lease.KeyInstalledAt), boolInt(lease.IsProtected), nullTime(lease.ProtectedAt))
-		return err
-	})
 }

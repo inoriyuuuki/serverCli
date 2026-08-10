@@ -13,7 +13,7 @@ ServerCLI 是「一台固定主服务器 + 多台节点服务器」的轻量级�
 - 🤖 **节点发现与审批**：子节点主动申请注册，主节点审批后签发不可变 `node_id` 与节点凭证
 - 📡 **命令调度**：节点本地声明命令 manifest（YAML + JSON Schema 参数校验），主节点发现后远程调用，参数以 argv 传递、禁止拼接 Shell
 - ⏱️ **任务系统**：长轮询领取任务、事件流上报、超时/取消/幂等（`Idempotency-Key`）
-- 🔑 **AI SSH Lease**：临时公钥授权、续期、心跳、断连/撤销，全流程审计
+- 🔑 **AI SSH Lease**：Access Token 自动审批、临时公钥授权、续期、心跳、断连/撤销，全流程审计
 - 🛡️ **安全与审计**：Secret 脱敏落盘、管理员会话 + CSRF、Agent 签名（HMAC）、限流、保留策略（默认 7 天）
 
 ## 技术栈
@@ -218,7 +218,7 @@ make test-child     # 等价于 start.sh --env test --role child --instance test
 - `state/`、`logs/`、`run/` 目录权限 0700；systemd 部署建议配合 `deploy/systemd/` 加固
   （`ProtectSystem=strict`、`NoNewPrivileges=true` 等）。
 - 节点身份、AI 临时公钥等凭证由后端按契约管理，本仓库不含任何真实凭证。
-- AI SSH 使用临时公钥租约（默认 1 小时，可续期，累计最多 24 小时），不向 AI 暴露长期密码或长期私钥。
+- AI SSH 使用 Access Token 自动审批 + 临时公钥租约（默认 1 小时，可续期，累计最多 24 小时），不向 AI 暴露长期密码或长期私钥。Token（`sct_*`）仅存哈希与前缀，明文只在创建时返回一次；Lease 有效期受 Token 有效期约束。
 
 ## 文档索引
 

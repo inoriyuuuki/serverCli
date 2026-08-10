@@ -18,10 +18,8 @@ import (
 	"servercli/internal/store"
 )
 
-// LeaseService manages AI SSH lease requests and leases.
-//
-// Auto-approval rules let an admin exempt a device (ai_agent_id) from manual
-// approval for a specific node for up to MaxAutoApprovalDays.
+// LeaseService manages AI SSH lease requests and leases. Requests are
+// auto-approved by a valid Access Token; lease expiry is bounded by the token.
 type LeaseService struct {
 	store    *store.Store
 	cfg      *config.Config
@@ -31,9 +29,6 @@ type LeaseService struct {
 	settings *SettingsService
 	envID    string
 }
-
-// MaxAutoApprovalDays is the ceiling for device-node auto-approval rules.
-const MaxAutoApprovalDays = 15
 
 // NewLeaseService builds the service.
 func NewLeaseService(st *store.Store, cfg *config.Config, log *slog.Logger, auditor *Auditor, nodes *NodeService, settings *SettingsService) *LeaseService {
@@ -56,9 +51,37 @@ type LeaseRequestInput struct {
 type LeaseRequestResult struct {
 	LeaseRequest *model.AILeaseRequest `json:"lease_request"`
 	Lease        *model.AILease        `json:"lease,omitempty"`
-	RenewalToken string                `json:"renewal_token,omitempty"`
 	Host         string                `json:"host,omitempty"`
 	Port         int                   `json:"port,omitempty"`
+	Replayed     bool                  `json:"-"`
+}
+
+// validatePublicKey rejects public keys that could inject extra
+// authorized_keys options/lines (auto-approval means the key is attacker
+// supplied). Accepts a single line of "type base64 [comment]".
+func validatePublicKey(pubkey string) error {
+	if pubkey == "" || strings.ContainsAny(pubkey, "\n\r,") || strings.Contains(pubkey, `"`) {
+		return fmt.Errorf("%w: invalid public key", ErrBadRequest)
+	}
+	fields := strings.Fields(pubkey)
+	if len(fields) < 2 || len(fields) > 3 {
+		return fmt.Errorf("%w: invalid public key", ErrBadRequest)
+	}
+	switch fields[0] {
+	case "ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+		"sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com":
+	default:
+		return fmt.Errorf("%w: unsupported public key type", ErrBadRequest)
+	}
+	if len(fields[1]) < 16 {
+		return fmt.Errorf("%w: invalid public key encoding", ErrBadRequest)
+	}
+	for _, c := range fields[1] {
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=') {
+			return fmt.Errorf("%w: invalid public key encoding", ErrBadRequest)
+		}
+	}
+	return nil
 }
 
 // fingerprint returns the SHA-256 fingerprint of an SSH public key line.
@@ -72,18 +95,28 @@ func fingerprint(pubkey string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// CreateLeaseRequest validates an application and applies the approval policy.
-func (s *LeaseService) CreateLeaseRequest(ctx context.Context, in LeaseRequestInput, sourceIP string) (*LeaseRequestResult, error) {
+// CreateLeaseRequest validates an application and auto-approves it: a valid
+// access token is the credential, so no manual approval or device-node rule is
+// consulted. The lease expiry is the earliest of the requested duration, the
+// access token expiry and the system absolute lease cap.
+func (s *LeaseService) CreateLeaseRequest(ctx context.Context, in LeaseRequestInput, sourceIP string, principal *TokenPrincipal) (*LeaseRequestResult, error) {
 	newEnabled, _, scope := s.settings.AIAccess(ctx)
-	if !newEnabled {
-		if scope == "global" {
-			return nil, ErrDisabled
-		}
+	if !newEnabled && scope == "global" {
+		return nil, ErrDisabled
 	}
 	if in.ClientRequestID != "" {
 		if existing, err := s.store.LeaseRequestByIdempotency(ctx, s.envID, in.ClientRequestID); err == nil {
-			// Re-run decision for the existing request.
-			return s.finishRequest(ctx, existing, sourceIP)
+			// Idempotency replay must not leak another token's request/lease:
+			// a key owned by a different token is treated as not found.
+			if existing.AccessTokenID != principal.TokenID {
+				return nil, ErrNotFound
+			}
+			res, err := s.resultForRequest(ctx, existing)
+			if err != nil {
+				return nil, err
+			}
+			res.Replayed = true
+			return res, nil
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return nil, err
 		}
@@ -91,14 +124,13 @@ func (s *LeaseService) CreateLeaseRequest(ctx context.Context, in LeaseRequestIn
 	if in.NodeSelector == "" || in.PublicKey == "" {
 		return nil, ErrBadRequest
 	}
+	if err := validatePublicKey(in.PublicKey); err != nil {
+		return nil, err
+	}
 	switch in.PermissionProfile {
 	case model.ProfileReadOnly, model.ProfileOperator, model.ProfileAdmin:
 	default:
 		return nil, ErrBadRequest
-	}
-	if in.PermissionProfile == model.ProfileAdmin {
-		// admin profile requires manual approval and is rejected in test.
-		// Keep it pending for manual review; policy mode never auto-approves it.
 	}
 	node, err := s.nodes.ResolveNodeSelector(ctx, in.NodeSelector)
 	if err != nil {
@@ -112,10 +144,14 @@ func (s *LeaseService) CreateLeaseRequest(ctx context.Context, in LeaseRequestIn
 	if duration <= 0 || duration > defaultMinutes*60 {
 		duration = defaultMinutes * 60
 	}
+	now := time.Now().UTC()
 	req := &model.AILeaseRequest{
 		ID:                       model.NewUUID(),
 		ClientRequestID:          in.ClientRequestID,
 		EnvironmentID:            s.envID,
+		AccessTokenID:            principal.TokenID,
+		AccessTokenName:          principal.Name,
+		AccessTokenPrefix:        principal.TokenPrefix,
 		AIAgentID:                in.AIAgentID,
 		AIAgentName:              in.AIAgentName,
 		NodeID:                   node.ID,
@@ -124,8 +160,10 @@ func (s *LeaseService) CreateLeaseRequest(ctx context.Context, in LeaseRequestIn
 		PublicKey:                in.PublicKey,
 		PublicKeyFingerprint:     fingerprint(in.PublicKey),
 		Purpose:                  in.Purpose,
-		Status:                   model.LeaseRequestPending,
+		Status:                   model.LeaseRequestApproved,
+		DecisionReason:           "auto-approved by access token",
 		SourceIP:                 sourceIP,
+		DecidedAt:                &now,
 	}
 	if err := s.store.CreateLeaseRequest(ctx, req); err != nil {
 		return nil, err
@@ -133,98 +171,19 @@ func (s *LeaseService) CreateLeaseRequest(ctx context.Context, in LeaseRequestIn
 	s.auditor.OK(ctx, AuditInput{
 		ActorType: model.ActorAI, ActorID: in.AIAgentID, NodeID: node.ID, Action: "ai.lease_request",
 		ResourceType: "ai_lease_request", ResourceID: req.ID, SourceIP: sourceIP,
-		Summary: "AI lease requested",
+		Summary: "AI lease requested (access token)",
 		Details: map[string]any{"profile": in.PermissionProfile, "duration_seconds": duration,
-			"public_key_fingerprint": req.PublicKeyFingerprint, "client_request_id": in.ClientRequestID},
+			"public_key_fingerprint": req.PublicKeyFingerprint, "client_request_id": in.ClientRequestID,
+			"access_token_id": principal.TokenID, "access_token_name": principal.Name},
 	})
-	return s.finishRequest(ctx, req, sourceIP)
+	return s.issueLease(ctx, req, sourceIP, principal)
 }
 
-// finishRequest applies the approval policy and, if approved, issues a lease.
-func (s *LeaseService) finishRequest(ctx context.Context, req *model.AILeaseRequest, sourceIP string) (*LeaseRequestResult, error) {
-	mode := s.settings.str(ctx, KeyApprovalMode, "manual")
-	approved := false
-	reason := ""
-	switch mode {
-	case "disabled":
-		reason = "lease requests disabled"
-	case "policy":
-		if req.RequestedProfile == model.ProfileReadOnly && req.Status == model.LeaseRequestPending {
-			approved = true
-			reason = "auto-approved by policy (read-only)"
-		} else if req.Status == model.LeaseRequestPending {
-			// operator/admin pending manual review
-			approved = false
-			reason = "requires manual approval"
-		}
-	case "manual":
-		if req.Status == model.LeaseRequestPending {
-			approved = false
-			reason = "requires manual approval"
-		}
-	}
-	// Device+node auto-approval rule overrides manual/policy approval, but
-	// never bypasses the global "disabled" gate handled above.
-	byRule := false
-	if !approved && mode != "disabled" && req.Status == model.LeaseRequestPending {
-		if rule, err := s.store.AutoApprovalByAgentNode(ctx, s.envID, req.AIAgentID, req.NodeID); err == nil && rule != nil && rule.ExpiresAt.After(time.Now().UTC()) {
-			approved = true
-			byRule = true
-			reason = "auto-approved by device-node rule"
-		}
-	}
-	if req.Status != model.LeaseRequestPending {
-		// Idempotent replay: reflect existing decision. The disabled branch
-		// below already persisted a rejection for brand-new requests.
-		return s.resultForRequest(ctx, req, sourceIP)
-	}
-	if mode == "disabled" {
-		// Persist the rejection before returning so the request cannot be
-		// revived later (e.g. by a new rule or a manual approve).
-		now := time.Now().UTC()
-		req.Status = model.LeaseRequestRejected
-		req.DecisionReason = reason
-		req.DecidedAt = &now
-		if err := s.store.UpdateLeaseRequest(ctx, req); err != nil {
-			return nil, err
-		}
-		s.auditor.Denied(ctx, AuditInput{
-			ActorType: model.ActorAI, NodeID: req.NodeID, Action: "ai.lease_denied",
-			ResourceType: "ai_lease_request", ResourceID: req.ID, SourceIP: sourceIP,
-			Summary: reason, RiskLevel: RiskMedium,
-		})
-		return s.resultForRequest(ctx, req, sourceIP)
-	}
-	if approved {
-		now := time.Now().UTC()
-		req.Status = model.LeaseRequestApproved
-		req.DecisionReason = reason
-		req.DecidedAt = &now
-		if err := s.store.ApproveLeaseRequestIfPending(ctx, req); err != nil {
-			if errors.Is(err, store.ErrStateTransition) {
-				return nil, ErrTerminal
-			}
-			return nil, err
-		}
-		if byRule {
-			s.auditor.OK(ctx, AuditInput{
-				ActorType: model.ActorSystem, ActorID: "auto-approval", NodeID: req.NodeID,
-				Action: "ai.lease_auto_approved", ResourceType: "ai_lease_request", ResourceID: req.ID,
-				SourceIP: sourceIP, Summary: "lease request auto-approved by device-node rule",
-				Details:   map[string]any{"ai_agent_id": req.AIAgentID, "node_id": req.NodeID},
-				RiskLevel: riskForProfile(req.RequestedProfile),
-			})
-		}
-		return s.issueLease(ctx, req, sourceIP, model.ActorSystem, "system")
-	}
-	return s.resultForRequest(ctx, req, sourceIP)
-}
-
-func (s *LeaseService) resultForRequest(ctx context.Context, req *model.AILeaseRequest, sourceIP string) (*LeaseRequestResult, error) {
+// resultForRequest reflects the stored decision for a lease request.
+func (s *LeaseService) resultForRequest(ctx context.Context, req *model.AILeaseRequest) (*LeaseRequestResult, error) {
 	out := &LeaseRequestResult{LeaseRequest: req}
 	if req.Status == model.LeaseRequestApproved {
-		lease, err := s.store.LeaseByID(ctx, s.leaseForRequest(ctx, req.ID))
-		if err == nil && lease != nil {
+		if lease, err := s.store.LeaseByRequestID(ctx, req.ID); err == nil && lease != nil {
 			out.Lease = lease
 		}
 	}
@@ -240,10 +199,16 @@ func (s *LeaseService) leaseForRequest(ctx context.Context, requestID string) st
 	return l.ID
 }
 
-// newLease builds an active lease and its renewal token for an approved
-// request without persisting anything.
-func (s *LeaseService) newLease(ctx context.Context, req *model.AILeaseRequest) (*model.AILease, string, error) {
+// newLease builds an active lease for an approved request without persisting
+// anything. Expiry is the earliest of the requested duration, the access token
+// expiry and the system absolute cap; a renewal token hash is still stored for
+// schema compatibility but is never returned to the client (client management
+// uses the access token).
+func (s *LeaseService) newLease(ctx context.Context, req *model.AILeaseRequest, tokenExpiresAt *time.Time) (*model.AILease, string, error) {
 	maxHours := s.settings.Int(ctx, KeyLeaseMaxHours, s.cfg.AILeaseMaxHours)
+	if maxHours <= 0 {
+		maxHours = s.cfg.AILeaseMaxHours
+	}
 	now := time.Now().UTC()
 	renewalToken, err := security.NewToken(32)
 	if err != nil {
@@ -254,9 +219,20 @@ func (s *LeaseService) newLease(ctx context.Context, req *model.AILeaseRequest) 
 	if expires.After(absolute) {
 		expires = absolute
 	}
+	if tokenExpiresAt != nil && expires.After(*tokenExpiresAt) {
+		expires = *tokenExpiresAt
+	}
+	if expires.Before(now) {
+		// Token already at/past expiry at issue time: never mint an already
+		// expired active lease.
+		expires = now
+	}
 	lease := &model.AILease{
 		ID:                   model.NewUUID(),
 		RequestID:            req.ID,
+		AccessTokenID:        req.AccessTokenID,
+		AccessTokenName:      req.AccessTokenName,
+		AccessTokenPrefix:    req.AccessTokenPrefix,
 		NodeID:               req.NodeID,
 		AIAgentID:            req.AIAgentID,
 		PermissionProfile:    req.RequestedProfile,
@@ -272,8 +248,8 @@ func (s *LeaseService) newLease(ctx context.Context, req *model.AILeaseRequest) 
 	return lease, renewalToken, nil
 }
 
-func (s *LeaseService) issueLease(ctx context.Context, req *model.AILeaseRequest, sourceIP, actorType, actorID string) (*LeaseRequestResult, error) {
-	lease, renewalToken, err := s.newLease(ctx, req)
+func (s *LeaseService) issueLease(ctx context.Context, req *model.AILeaseRequest, sourceIP string, principal *TokenPrincipal) (*LeaseRequestResult, error) {
+	lease, _, err := s.newLease(ctx, req, principal.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}
@@ -281,19 +257,19 @@ func (s *LeaseService) issueLease(ctx context.Context, req *model.AILeaseRequest
 		return nil, err
 	}
 	_ = s.store.AppendLeaseEvent(ctx, &model.AILeaseEvent{
-		LeaseID: lease.ID, EventType: "issued", ActorType: actorType, ActorID: actorID,
+		LeaseID: lease.ID, EventType: "issued", ActorType: model.ActorAI, ActorID: req.AIAgentID,
 		DetailsJSON: `{"duration_seconds":` + itoa(req.RequestedDurationSeconds) + `,"expires_at":"` + lease.ExpiresAt.Format(time.RFC3339) + `","absolute_expires_at":"` + lease.AbsoluteExpiresAt.Format(time.RFC3339) + `"}`,
 	})
 	s.auditor.OK(ctx, AuditInput{
-		ActorType: model.ActorSystem, NodeID: lease.NodeID, Action: "ai.lease_issued",
+		ActorType: model.ActorAI, ActorID: req.AIAgentID, NodeID: lease.NodeID, Action: "ai.lease_issued",
 		ResourceType: "ai_lease", ResourceID: lease.ID, LeaseID: lease.ID, SourceIP: sourceIP,
-		Summary: "AI lease issued",
+		Summary: "AI lease issued (auto-approved by access token)",
 		Details: map[string]any{"profile": lease.PermissionProfile, "expires_at": lease.ExpiresAt,
 			"absolute_expires_at": lease.AbsoluteExpiresAt, "public_key_fingerprint": lease.PublicKeyFingerprint,
-			"renewal_token_prefix": lease.RenewalTokenPrefix},
+			"access_token_id": principal.TokenID, "access_token_name": principal.Name},
 		RiskLevel: riskForProfile(lease.PermissionProfile),
 	})
-	return &LeaseRequestResult{LeaseRequest: req, Lease: lease, RenewalToken: renewalToken}, nil
+	return &LeaseRequestResult{LeaseRequest: req, Lease: lease}, nil
 }
 
 func riskForProfile(p string) string {
@@ -306,10 +282,14 @@ func riskForProfile(p string) string {
 	return RiskMedium
 }
 
-// LeaseRequest returns a lease request.
-func (s *LeaseService) LeaseRequest(ctx context.Context, id string) (*model.AILeaseRequest, error) {
+// LeaseRequest returns a lease request owned by the principal. Requests
+// created by another token (or legacy rows) are indistinguishable: 404.
+func (s *LeaseService) LeaseRequest(ctx context.Context, id string, principal *TokenPrincipal) (*model.AILeaseRequest, error) {
 	req, err := s.store.LeaseRequestByID(ctx, id)
 	if err != nil {
+		return nil, ErrNotFound
+	}
+	if req.AccessTokenID != principal.TokenID {
 		return nil, ErrNotFound
 	}
 	return req, nil
@@ -323,75 +303,14 @@ func (s *LeaseService) ListLeaseRequests(ctx context.Context, scopeNodeID, nodeI
 	return s.store.ListLeaseRequests(ctx, nodeID, status, limit, offset)
 }
 
-// ApproveLeaseRequest manually approves a pending request.
-func (s *LeaseService) ApproveLeaseRequest(ctx context.Context, id, adminID string) (*LeaseRequestResult, error) {
-	req, err := s.store.LeaseRequestByID(ctx, id)
-	if err != nil {
-		return nil, ErrNotFound
-	}
-	if req.Status != model.LeaseRequestPending {
-		return nil, ErrTerminal
-	}
-	now := time.Now().UTC()
-	req.Status = model.LeaseRequestApproved
-	req.DecisionReason = "approved by admin"
-	req.DecidedAt = &now
-	if err := s.store.ApproveLeaseRequestIfPending(ctx, req); err != nil {
-		if errors.Is(err, store.ErrStateTransition) {
-			return nil, ErrTerminal
-		}
-		return nil, err
-	}
-	s.auditor.OK(ctx, AuditInput{
-		ActorType: model.ActorAdmin, ActorID: adminID, NodeID: req.NodeID, Action: "ai.lease_approve",
-		ResourceType: "ai_lease_request", ResourceID: req.ID, Summary: "lease request approved by admin",
-	})
-	return s.issueLease(ctx, req, "", model.ActorAdmin, adminID)
-}
-
-// RejectLeaseRequest rejects a pending request.
-func (s *LeaseService) RejectLeaseRequest(ctx context.Context, id, adminID, reason string) error {
-	req, err := s.store.LeaseRequestByID(ctx, id)
-	if err != nil {
-		return ErrNotFound
-	}
-	if req.Status != model.LeaseRequestPending {
-		return ErrTerminal
-	}
-	now := time.Now().UTC()
-	req.Status = model.LeaseRequestRejected
-	req.DecisionReason = reason
-	req.DecidedAt = &now
-	if err := s.store.UpdateLeaseRequest(ctx, req); err != nil {
-		return err
-	}
-	s.auditor.OK(ctx, AuditInput{
-		ActorType: model.ActorAdmin, ActorID: adminID, NodeID: req.NodeID, Action: "ai.lease_reject",
-		ResourceType: "ai_lease_request", ResourceID: req.ID, Summary: "lease request rejected by admin",
-		Details: map[string]any{"reason": reason},
-	})
-	return nil
-}
-
-// authLease resolves a lease by renewal token.
-func (s *LeaseService) authLease(ctx context.Context, leaseID, token string) (*model.AILease, error) {
-	lease, err := s.store.LeaseByID(ctx, leaseID)
-	if err != nil {
-		return nil, ErrNotFound
-	}
-	if lease.RenewalTokenHash == "" || !security.ConstantTimeEqual(security.HashToken(token), lease.RenewalTokenHash) {
-		return nil, ErrForbidden
-	}
-	return lease, nil
-}
-
 // Renew extends an active lease without changing issued_at or the absolute cap.
-func (s *LeaseService) Renew(ctx context.Context, leaseID, token string, requestedSeconds int) (*model.AILease, error) {
-	lease, err := s.authLease(ctx, leaseID, token)
+// The new expiry is clamped to the access token expiry and the absolute cap.
+func (s *LeaseService) Renew(ctx context.Context, leaseID string, principal *TokenPrincipal, requestedSeconds int) (*model.AILease, error) {
+	lease, err := s.authLeaseForPrincipal(ctx, leaseID, principal)
 	if err != nil {
 		s.auditor.Denied(ctx, AuditInput{
-			ActorType: model.ActorAI, Action: "ai.lease_renew", ResourceType: "ai_lease", ResourceID: leaseID,
-			LeaseID: leaseID, Summary: "renewal denied: bad token", RiskLevel: RiskHigh,
+			ActorType: model.ActorAI, ActorID: principal.Name, Action: "ai.lease_renew", ResourceType: "ai_lease", ResourceID: leaseID,
+			LeaseID: leaseID, Summary: "renewal denied: token does not own lease", RiskLevel: RiskHigh,
 		})
 		return nil, err
 	}
@@ -408,15 +327,13 @@ func (s *LeaseService) Renew(ctx context.Context, leaseID, token string, request
 		return nil, ErrForbidden
 	}
 	_, renewals, scope := s.settings.AIAccess(ctx)
-	if !renewals {
-		if scope == "global" {
-			_ = s.appendLeaseEvent(ctx, lease, "renew_denied", model.ActorAI, lease.AIAgentID, map[string]any{"reason": "global renewals disabled"})
-			s.auditor.Denied(ctx, AuditInput{
-				ActorType: model.ActorAI, NodeID: lease.NodeID, Action: "ai.lease_renew_denied",
-				ResourceType: "ai_lease", ResourceID: lease.ID, LeaseID: lease.ID, Summary: "renewal denied: global gate", RiskLevel: RiskMedium,
-			})
-			return nil, ErrForbidden
-		}
+	if !renewals && scope == "global" {
+		_ = s.appendLeaseEvent(ctx, lease, "renew_denied", model.ActorAI, lease.AIAgentID, map[string]any{"reason": "global renewals disabled"})
+		s.auditor.Denied(ctx, AuditInput{
+			ActorType: model.ActorAI, NodeID: lease.NodeID, Action: "ai.lease_renew_denied",
+			ResourceType: "ai_lease", ResourceID: lease.ID, LeaseID: lease.ID, Summary: "renewal denied: global gate", RiskLevel: RiskMedium,
+		})
+		return nil, ErrForbidden
 	}
 	now := time.Now().UTC()
 	if !lease.ExpiresAt.After(now) {
@@ -438,6 +355,9 @@ func (s *LeaseService) Renew(ctx context.Context, leaseID, token string, request
 	if newExpires.After(lease.AbsoluteExpiresAt) {
 		newExpires = lease.AbsoluteExpiresAt
 	}
+	if principal.ExpiresAt != nil && newExpires.After(*principal.ExpiresAt) {
+		newExpires = *principal.ExpiresAt
+	}
 	if !newExpires.After(lease.ExpiresAt) {
 		_ = s.appendLeaseEvent(ctx, lease, "renew_denied", model.ActorAI, lease.AIAgentID, map[string]any{"reason": "no extension available"})
 		return nil, ErrForbidden
@@ -446,6 +366,11 @@ func (s *LeaseService) Renew(ctx context.Context, leaseID, token string, request
 	lease.LastRenewedAt = &now
 	lease.RenewCount++
 	lease.LastHeartbeatAt = &now
+	// The authorized_keys line carries a runtime token + expiry marker signed
+	// at install time; after renewal the expiry moved, so the node must
+	// re-install the key with a fresh token/marker.
+	lease.KeyInstalled = false
+	lease.KeyInstalledAt = nil
 	if err := s.store.UpdateLease(ctx, lease); err != nil {
 		return nil, err
 	}
@@ -461,8 +386,8 @@ func (s *LeaseService) Renew(ctx context.Context, leaseID, token string, request
 }
 
 // Heartbeat refreshes lease liveness.
-func (s *LeaseService) Heartbeat(ctx context.Context, leaseID, token string) (*model.AILease, error) {
-	lease, err := s.authLease(ctx, leaseID, token)
+func (s *LeaseService) Heartbeat(ctx context.Context, leaseID string, principal *TokenPrincipal) (*model.AILease, error) {
+	lease, err := s.authLeaseForPrincipal(ctx, leaseID, principal)
 	if err != nil {
 		return nil, err
 	}
@@ -483,8 +408,8 @@ func (s *LeaseService) Heartbeat(ctx context.Context, leaseID, token string) (*m
 }
 
 // Disconnect marks a lease disconnected (terminal).
-func (s *LeaseService) Disconnect(ctx context.Context, leaseID, token string) (*model.AILease, error) {
-	lease, err := s.authLease(ctx, leaseID, token)
+func (s *LeaseService) Disconnect(ctx context.Context, leaseID string, principal *TokenPrincipal) (*model.AILease, error) {
+	lease, err := s.authLeaseForPrincipal(ctx, leaseID, principal)
 	if err != nil {
 		return nil, err
 	}
@@ -502,6 +427,19 @@ func (s *LeaseService) Disconnect(ctx context.Context, leaseID, token string) (*
 		ActorType: model.ActorAI, ActorID: lease.AIAgentID, NodeID: lease.NodeID, Action: "ai.lease_disconnect",
 		ResourceType: "ai_lease", ResourceID: lease.ID, LeaseID: lease.ID, Summary: "AI lease disconnected",
 	})
+	return lease, nil
+}
+
+// authLeaseForPrincipal resolves a lease and verifies the access token owns it.
+// Ownership mismatches surface as 404 to avoid leaking whether the lease exists.
+func (s *LeaseService) authLeaseForPrincipal(ctx context.Context, leaseID string, principal *TokenPrincipal) (*model.AILease, error) {
+	lease, err := s.store.LeaseByID(ctx, leaseID)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	if lease.AccessTokenID != principal.TokenID {
+		return nil, ErrNotFound
+	}
 	return lease, nil
 }
 
@@ -786,174 +724,81 @@ func (s *LeaseService) ProtectLease(ctx context.Context, leaseID, adminID string
 }
 
 // RevokeAll revokes active leases globally or for a single node (admin action).
-// Returns the number of leases revoked.
-func (s *LeaseService) RevokeAll(ctx context.Context, nodeID, adminID, reason string, terminateSessions bool) (int, error) {
+// Returns the revoked leases so the caller can push key-refresh events.
+func (s *LeaseService) RevokeAll(ctx context.Context, nodeID, adminID, reason string, terminateSessions bool) (int, []*model.AILease, error) {
 	var active []*model.AILease
 	var err error
 	if nodeID != "" {
 		if _, err := s.store.NodeByID(ctx, nodeID); err != nil {
-			return 0, ErrNotFound
+			return 0, nil, ErrNotFound
 		}
 		active, err = s.store.ActiveLeasesOnNode(ctx, nodeID)
 	} else {
 		active, err = s.store.ListLeases(ctx, "", model.LeaseActive, 0, 0)
 	}
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	count := 0
+	var revoked []*model.AILease
 	for _, l := range active {
 		if l.Status != model.LeaseActive {
 			continue
 		}
-		if _, err := s.Revoke(ctx, l.ID, adminID, reason, terminateSessions); err == nil {
+		if r, err := s.Revoke(ctx, l.ID, adminID, reason, terminateSessions); err == nil {
 			count++
+			revoked = append(revoked, r)
 		}
 	}
-	return count, nil
+	return count, revoked, nil
 }
 
-// AutoApprovalResult is returned when an admin approves a request and creates
-// a device-node auto-approval rule at the same time.
-type AutoApprovalResult struct {
-	AutoApproval *model.AIAutoApproval `json:"auto_approval"`
-	LeaseRequest *model.AILeaseRequest `json:"lease_request"`
-	Lease        *model.AILease        `json:"lease,omitempty"`
-}
-
-// validateAutoApprovalDays normalizes duration_days into a duration capped at
-// MaxAutoApprovalDays.
-func validateAutoApprovalDays(days int) (time.Duration, error) {
-	if days < 1 || days > MaxAutoApprovalDays {
-		return 0, fmt.Errorf("%w: duration_days must be between 1 and %d", ErrBadRequest, MaxAutoApprovalDays)
-	}
-	return time.Duration(days) * 24 * time.Hour, nil
-}
-
-// AutoApproveWithDuration approves a pending request and creates (or extends)
-// the device-node auto-approval rule atomically.
-func (s *LeaseService) AutoApproveWithDuration(ctx context.Context, requestID, adminID string, durationDays int) (*AutoApprovalResult, error) {
-	dur, err := validateAutoApprovalDays(durationDays)
+// RevokeTokenCascade revokes an access token and every active lease bound to
+// it in a single transaction (called when an admin revokes the token), then
+// emits events/audit. Returns the revoked leases so the API layer can push
+// key-refresh events to the affected nodes. Idempotent: a second revoke with
+// the same token revokes nothing and emits no duplicates.
+func (s *LeaseService) RevokeTokenCascade(ctx context.Context, tokenID, adminID, reason string) ([]*model.AILease, error) {
+	revoked, err := s.store.RevokeAccessTokenAndLeases(ctx, tokenID, adminID, reason)
 	if err != nil {
 		return nil, err
 	}
-	req, err := s.store.LeaseRequestByID(ctx, requestID)
-	if err != nil {
-		return nil, ErrNotFound
+	for _, l := range revoked {
+		_ = s.appendLeaseEvent(ctx, l, "revoked", model.ActorAdmin, adminID, map[string]any{"reason": reason, "terminate_sessions": false})
+		s.auditor.OK(ctx, AuditInput{
+			ActorType: model.ActorAdmin, ActorID: adminID, NodeID: l.NodeID, Action: "ai.lease_revoke",
+			ResourceType: "ai_lease", ResourceID: l.ID, LeaseID: l.ID,
+			Summary: "AI lease revoked (access token revoked)", Details: map[string]any{"reason": reason, "access_token_id": tokenID},
+			RiskLevel: RiskHigh,
+		})
 	}
-	if req.Status != model.LeaseRequestPending {
-		return nil, ErrTerminal
-	}
-	now := time.Now().UTC()
-	rule := &model.AIAutoApproval{
-		EnvironmentID:   s.envID,
-		AIAgentID:       req.AIAgentID,
-		AIAgentName:     req.AIAgentName,
-		NodeID:          req.NodeID,
-		SourceRequestID: req.ID,
-		CreatedBy:       adminID,
-		ExpiresAt:       now.Add(dur),
-	}
-	// Never silently shorten an existing exemption: extend from the later of
-	// now and the current expiry, still capped at now + MaxAutoApprovalDays.
-	if existing, err := s.store.AutoApprovalByAgentNode(ctx, s.envID, req.AIAgentID, req.NodeID); err == nil && existing != nil {
-		base := existing.ExpiresAt
-		if base.Before(now) {
-			base = now
-		}
-		capped := now.Add(time.Duration(MaxAutoApprovalDays) * 24 * time.Hour)
-		rule.ExpiresAt = base.Add(dur)
-		if rule.ExpiresAt.After(capped) {
-			rule.ExpiresAt = capped
-		}
-	}
-	req.Status = model.LeaseRequestApproved
-	req.DecisionReason = "auto-approved by admin with device-node rule"
-	req.DecidedAt = &now
-	lease, _, err := s.newLease(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.store.ApproveRequestWithAutoApproval(ctx, rule, req, lease); err != nil {
-		if errors.Is(err, store.ErrStateTransition) {
-			return nil, ErrTerminal
-		}
-		return nil, err
-	}
-	// Re-read so the response carries accurate timestamps for updates too.
-	if refreshed, err := s.store.AutoApprovalByID(ctx, rule.ID); err == nil && refreshed != nil {
-		rule = refreshed
-	}
-	_ = s.store.AppendLeaseEvent(ctx, &model.AILeaseEvent{
-		LeaseID: lease.ID, EventType: "issued", ActorType: model.ActorAdmin, ActorID: adminID,
-		DetailsJSON: `{"duration_seconds":` + itoa(req.RequestedDurationSeconds) + `,"expires_at":"` + lease.ExpiresAt.Format(time.RFC3339) + `","absolute_expires_at":"` + lease.AbsoluteExpiresAt.Format(time.RFC3339) + `"}`,
-	})
-	s.auditor.OK(ctx, AuditInput{
-		ActorType: model.ActorAdmin, ActorID: adminID, NodeID: req.NodeID, Action: "ai.lease_auto_approval_create",
-		ResourceType: "ai_auto_approval", ResourceID: rule.ID,
-		Summary: "device-node auto-approval rule created and request approved",
-		Details: map[string]any{"ai_agent_id": req.AIAgentID, "node_id": req.NodeID,
-			"duration_days": durationDays, "expires_at": rule.ExpiresAt,
-			"request_id": req.ID, "lease_id": lease.ID},
-		RiskLevel: RiskHigh,
-	})
-	s.auditor.OK(ctx, AuditInput{
-		ActorType: model.ActorSystem, NodeID: lease.NodeID, Action: "ai.lease_issued",
-		ResourceType: "ai_lease", ResourceID: lease.ID, LeaseID: lease.ID,
-		Summary: "AI lease issued (auto-approval rule)",
-		Details: map[string]any{"profile": lease.PermissionProfile, "expires_at": lease.ExpiresAt,
-			"absolute_expires_at": lease.AbsoluteExpiresAt, "public_key_fingerprint": lease.PublicKeyFingerprint,
-			"renewal_token_prefix": lease.RenewalTokenPrefix},
-		RiskLevel: riskForProfile(lease.PermissionProfile),
-	})
-	return &AutoApprovalResult{AutoApproval: rule, LeaseRequest: req, Lease: lease}, nil
+	return revoked, nil
 }
 
-// ListAutoApprovals lists device-node auto-approval rules.
-func (s *LeaseService) ListAutoApprovals(ctx context.Context, scopeNodeID, nodeID, status string, limit, offset int) ([]*model.AIAutoApproval, error) {
-	if scopeNodeID != "" {
-		return nil, ErrForbidden
-	}
-	return s.store.ListAutoApprovals(ctx, nodeID, status, limit, offset)
-}
-
-// ExtendAutoApproval extends an existing rule by durationDays, accumulating
-// from the current expiry but never beyond now + MaxAutoApprovalDays.
-func (s *LeaseService) ExtendAutoApproval(ctx context.Context, id, adminID string, durationDays int) (*model.AIAutoApproval, error) {
-	dur, err := validateAutoApprovalDays(durationDays)
+// MigrateLegacyApprovalFlow is a one-time startup maintenance pass for the
+// token migration: pending requests from the retired manual-approval flow are
+// rejected, active leases without a bound access token are revoked, and leases
+// whose token already expired are marked expired. Idempotent.
+func (s *LeaseService) MigrateLegacyApprovalFlow(ctx context.Context) error {
+	n1, err := s.store.RejectLegacyPendingRequests(ctx, "legacy manual approval flow retired")
 	if err != nil {
-		return nil, err
+		return err
 	}
-	rule, err := s.store.AutoApprovalByID(ctx, id)
+	n2, err := s.store.RevokeLegacyUntokenizedLeases(ctx, "legacy lease without access token revoked after token migration")
 	if err != nil {
-		return nil, ErrNotFound
+		return err
 	}
-	oldExpiry := rule.ExpiresAt
-	now := time.Now().UTC()
-	base := oldExpiry
-	if base.Before(now) {
-		base = now
-	}
-	capped := now.Add(time.Duration(MaxAutoApprovalDays) * 24 * time.Hour)
-	newExpiry := base.Add(dur)
-	if newExpiry.After(capped) {
-		newExpiry = capped
-	}
-	if !newExpiry.After(oldExpiry) {
-		return nil, fmt.Errorf("%w: extension yields no additional time", ErrBadRequest)
-	}
-	rule.ExpiresAt = newExpiry
-	updated, err := s.store.UpsertAutoApproval(ctx, rule)
+	n3, err := s.store.ExpireLeasesBeforeAccessToken(ctx, time.Now().UTC())
 	if err != nil {
-		return nil, err
+		return err
 	}
-	s.auditor.OK(ctx, AuditInput{
-		ActorType: model.ActorAdmin, ActorID: adminID, NodeID: rule.NodeID, Action: "ai.auto_approval_extend",
-		ResourceType: "ai_auto_approval", ResourceID: rule.ID,
-		Summary: "device-node auto-approval rule extended",
-		Details: map[string]any{"ai_agent_id": rule.AIAgentID, "node_id": rule.NodeID,
-			"duration_days": durationDays, "old_expires_at": oldExpiry, "new_expires_at": newExpiry},
-		RiskLevel: RiskMedium,
-	})
-	return updated, nil
+	if n1 > 0 || n2 > 0 || n3 > 0 {
+		s.auditor.OK(ctx, AuditInput{
+			ActorType: model.ActorSystem, Action: "ai.lease_migrate_legacy",
+			Summary: "legacy approval flow migrated to access tokens",
+			Details: map[string]any{"rejected_pending_requests": n1, "revoked_untokenized_leases": n2, "expired_token_bound_leases": n3},
+			RiskLevel: RiskHigh,
+		})
+	}
+	return nil
 }

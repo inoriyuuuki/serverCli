@@ -166,6 +166,9 @@ export interface AiLease {
   id: string;
   request_id?: string;
   node_id?: string;
+  access_token_id?: string;
+  access_token_name?: string;
+  access_token_prefix?: string;
   ai_agent_id?: string;
   ai_agent_name?: string;
   permission_profile?: string;
@@ -183,21 +186,6 @@ export interface AiLease {
   is_protected?: boolean;
   node?: { id?: string; name?: string; alias?: string; instance_name?: string; hostname?: string } | null;
   node_name?: string;
-  [key: string]: unknown;
-}
-
-export interface AiAutoApproval {
-  id: string;
-  ai_agent_id?: string;
-  ai_agent_name?: string | null;
-  node_id?: string;
-  node?: { id?: string; name?: string; alias?: string; instance_name?: string; hostname?: string } | null;
-  node_name?: string;
-  source_request_id?: string | null;
-  created_by?: string | null;
-  created_at?: string;
-  updated_at?: string;
-  expires_at?: string;
   [key: string]: unknown;
 }
 
@@ -219,6 +207,9 @@ export interface TaskParameterHistory {
 export interface AiLeaseRequest {
   id: string;
   client_request_id?: string;
+  access_token_id?: string;
+  access_token_name?: string;
+  access_token_prefix?: string;
   ai_agent_id?: string;
   ai_agent_name?: string;
   node_id?: string;
@@ -236,6 +227,52 @@ export interface AiLeaseRequest {
   node?: { id?: string; name?: string; alias?: string; instance_name?: string; hostname?: string } | null;
   node_name?: string;
   [key: string]: unknown;
+}
+
+export interface ApiAccessToken {
+  id: string;
+  name?: string;
+  token_prefix?: string;
+  created_by?: string | null;
+  created_at?: string;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+  revoked_by?: string | null;
+  last_used_at?: string | null;
+  last_used_ip?: string | null;
+  usage_count?: number;
+  permission_version?: number;
+}
+
+export interface ApiTokenUsageLog {
+  id: string;
+  token_id?: string;
+  request_id?: string | null;
+  occurred_at?: string;
+  method?: string;
+  route?: string;
+  resource?: string | null;
+  action?: string | null;
+  source_ip?: string | null;
+  user_agent?: string | null;
+  status_code?: number;
+  outcome?: string;
+  lease_request_id?: string | null;
+  lease_id?: string | null;
+  token_state?: string;
+}
+
+export interface ApiRouteSpec {
+  method: string;
+  path: string;
+  group?: string;
+  auth?: string;
+  summary?: string;
+  params?: { name: string; in: string; type: string; required?: boolean; description?: string }[];
+  body?: string;
+  response?: string;
+  errors?: string[];
+  debug?: boolean;
 }
 
 export interface AuditEvent {

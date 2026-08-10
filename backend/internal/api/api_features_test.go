@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -35,197 +36,255 @@ func leaseRequestBody(nodeSelector, agentID, profile string) map[string]any {
 	}
 }
 
-func TestAutoApprovalFlow(t *testing.T) {
+func createAPIToken(t *testing.T, env *testEnv, name, ttl string) (tokenID, plaintext string) {
+	t.Helper()
+	status, out := env.post("/api/v1/api-tokens", map[string]any{"name": name, "ttl": ttl}, env.adminHeaders())
+	if status != http.StatusCreated {
+		t.Fatalf("create api token status %d: %s", status, out)
+	}
+	var resp struct {
+		APIToken struct {
+			ID string `json:"id"`
+		} `json:"api_token"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("decode token response %s: %v", out, err)
+	}
+	if resp.APIToken.ID == "" || resp.Token == "" || !strings.HasPrefix(resp.Token, "sct_") {
+		t.Fatalf("token response incomplete: %s", out)
+	}
+	return resp.APIToken.ID, resp.Token
+}
+
+func tokenHeaders(plaintext string) map[string]string {
+	return map[string]string{"Authorization": "Bearer " + plaintext}
+}
+
+func TestAccessTokenLeaseFlow(t *testing.T) {
 	env := setupAPI(t)
 	ctx := context.Background()
 
-	// Create a second enabled node for the "different node" case.
-	otherNode := &model.Node{
-		ID:            model.NewUUID(),
-		EnvironmentID: env.nodes.EnvID(),
-		InstanceName:  "second-node",
-		Role:          "child",
-		Status:        model.NodeStatusOnline,
-		Enabled:       true,
+	// Missing or invalid tokens are rejected with 401 and no token leaks.
+	status, out := env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", "read-only"), nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("missing token should be 401, got %d: %s", status, out)
 	}
-	if err := env.st.CreateNode(ctx, otherNode); err != nil {
-		t.Fatal(err)
+	if strings.Contains(string(out), "sct_") {
+		t.Fatalf("error response leaked token material: %s", out)
+	}
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", "read-only"),
+		tokenHeaders("sct_" + strings.Repeat("0", 64)))
+	if status != http.StatusUnauthorized {
+		t.Fatalf("invalid token should be 401, got %d: %s", status, out)
 	}
 
-	// Initial pending request (admin profile stays pending under manual mode).
-	status, out := env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", "admin"), nil)
+	// Token management requires the admin session.
+	status, _ = env.serve("GET", "/api/v1/api-tokens", nil, nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("api-tokens without session should be 401, got %d", status)
+	}
+
+	// Create tokens: short-lived (15m), medium (1h) and permanent.
+	shortID, shortTok := createAPIToken(t, env, "short-lived", "15m")
+	_, midTok := createAPIToken(t, env, "one-hour", "1h")
+	_, permTok := createAPIToken(t, env, "permanent", "never")
+
+	// Lease request with a valid token is auto-approved and bound to the token.
+	h := tokenHeaders(shortTok)
+	h["Idempotency-Key"] = "token-flow-1"
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", "read-only"), h)
 	if status != http.StatusCreated {
 		t.Fatalf("create lease request status %d: %s", status, out)
 	}
-	req1 := mustDecode[struct {
+	reqResp := mustDecode[struct {
 		LeaseRequest struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
+			ID              string `json:"id"`
+			Status          string `json:"status"`
+			AccessTokenID   string `json:"access_token_id"`
+			AccessTokenName string `json:"access_token_name"`
 		} `json:"lease_request"`
+		Lease struct {
+			ID            string `json:"id"`
+			Status        string `json:"status"`
+			ExpiresAt     string `json:"expires_at"`
+			AccessTokenID string `json:"access_token_id"`
+		} `json:"lease"`
 	}](t, out)
-	if req1.LeaseRequest.Status != model.LeaseRequestPending {
-		t.Fatalf("expected pending, got %s", req1.LeaseRequest.Status)
+	if reqResp.LeaseRequest.Status != model.LeaseRequestApproved {
+		t.Fatalf("request not auto-approved: %s", out)
+	}
+	if reqResp.Lease.Status != model.LeaseActive || reqResp.Lease.ID == "" {
+		t.Fatalf("lease not issued: %s", out)
+	}
+	if reqResp.LeaseRequest.AccessTokenID != shortID || reqResp.Lease.AccessTokenID != shortID {
+		t.Fatalf("lease not bound to token: %s", out)
+	}
+	if reqResp.LeaseRequest.AccessTokenName != "short-lived" {
+		t.Fatalf("token name not surfaced: %s", out)
+	}
+	// Short token (15m) bounds the lease expiry even though 30min was requested.
+	expires, _ := time.Parse(time.RFC3339Nano, reqResp.Lease.ExpiresAt)
+	if remaining := time.Until(expires); remaining > 16*time.Minute || remaining < 13*time.Minute {
+		t.Fatalf("lease expiry not bounded by token TTL: %v", remaining)
 	}
 
-	// Invalid duration days are rejected.
-	for _, days := range []int{0, 16, -1} {
-		status, out = env.post("/api/v1/ai/lease-requests/"+req1.LeaseRequest.ID+"/auto-approval",
-			map[string]any{"duration_days": days}, env.adminHeaders())
-		if status != http.StatusBadRequest {
-			t.Fatalf("duration_days=%d should be 400, got %d: %s", days, status, out)
-		}
+	// Ownership isolation: a different token cannot read or renew this lease.
+	status, out = env.serve("GET", "/api/v1/ai/lease-requests/"+reqResp.LeaseRequest.ID, nil, tokenHeaders(permTok))
+	if status != http.StatusNotFound {
+		t.Fatalf("foreign read should be 404, got %d: %s", status, out)
+	}
+	status, out = env.serve("POST", "/api/v1/ai/leases/"+reqResp.Lease.ID+"/renew",
+		map[string]any{"requested_duration_seconds": 600}, tokenHeaders(permTok))
+	if status != http.StatusNotFound {
+		t.Fatalf("foreign renew should be 404, got %d: %s", status, out)
 	}
 
-	// Admin approves with a 5-day device-node rule.
-	status, out = env.post("/api/v1/ai/lease-requests/"+req1.LeaseRequest.ID+"/auto-approval",
-		map[string]any{"duration_days": 5}, env.adminHeaders())
-	if status != http.StatusOK {
-		t.Fatalf("auto-approval status %d: %s", status, out)
+	// The owner can renew, heartbeat and disconnect with the access token
+	// (medium token so the lease has headroom below the token expiry).
+	hMid := tokenHeaders(midTok)
+	hMid["Idempotency-Key"] = "token-flow-mid"
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", "read-only"), hMid)
+	if status != http.StatusCreated {
+		t.Fatalf("mid lease request status %d: %s", status, out)
 	}
-	created := mustDecode[struct {
-		AutoApproval struct {
-			ID        string `json:"id"`
-			ExpiresAt string `json:"expires_at"`
-			NodeID    string `json:"node_id"`
-		} `json:"auto_approval"`
-		LeaseRequest struct {
-			Status string `json:"status"`
-		} `json:"lease_request"`
+	mid := mustDecode[struct {
 		Lease struct {
 			ID string `json:"id"`
 		} `json:"lease"`
 	}](t, out)
-	if created.LeaseRequest.Status != model.LeaseRequestApproved || created.Lease.ID == "" {
-		t.Fatalf("request not approved with lease: %s", out)
-	}
-	if created.AutoApproval.NodeID != env.nodeID {
-		t.Fatalf("rule node mismatch: %s", out)
-	}
-
-	// Same device + node: admin profile now auto-approves immediately.
-	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", "admin"), nil)
-	if status != http.StatusCreated {
-		t.Fatalf("second request status %d: %s", status, out)
-	}
-	req2 := mustDecode[struct {
-		LeaseRequest struct {
-			Status string `json:"status"`
-		} `json:"lease_request"`
-		Lease struct {
-			ID string `json:"id"`
-		} `json:"lease"`
-	}](t, out)
-	if req2.LeaseRequest.Status != model.LeaseRequestApproved || req2.Lease.ID == "" {
-		t.Fatalf("rule did not auto-approve admin request: %s", out)
-	}
-
-	// Different node: rule does not match, stays pending.
-	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(otherNode.ID, "device-A", "operator"), nil)
-	if status != http.StatusCreated {
-		t.Fatalf("other node request status %d: %s", status, out)
-	}
-	req3 := mustDecode[struct {
-		LeaseRequest struct {
-			Status string `json:"status"`
-		} `json:"lease_request"`
-	}](t, out)
-	if req3.LeaseRequest.Status != model.LeaseRequestPending {
-		t.Fatalf("rule matched wrong node: %s", out)
-	}
-
-	// Different device, same node: no match.
-	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-B", "operator"), nil)
-	if status != http.StatusCreated {
-		t.Fatalf("other device request status %d: %s", status, out)
-	}
-	req4 := mustDecode[struct {
-		LeaseRequest struct {
-			Status string `json:"status"`
-		} `json:"lease_request"`
-	}](t, out)
-	if req4.LeaseRequest.Status != model.LeaseRequestPending {
-		t.Fatalf("rule matched wrong device: %s", out)
-	}
-
-	// List rules.
-	status, out = env.serve("GET", "/api/v1/ai/auto-approvals", nil, env.adminHeaders())
+	status, out = env.serve("POST", "/api/v1/ai/leases/"+mid.Lease.ID+"/renew",
+		map[string]any{"requested_duration_seconds": 3600}, tokenHeaders(midTok))
 	if status != http.StatusOK {
-		t.Fatalf("list auto-approvals status %d: %s", status, out)
+		t.Fatalf("renew status %d: %s", status, out)
+	}
+	status, out = env.serve("POST", "/api/v1/ai/leases/"+mid.Lease.ID+"/heartbeat", map[string]any{}, tokenHeaders(midTok))
+	if status != http.StatusOK {
+		t.Fatalf("heartbeat status %d: %s", status, out)
+	}
+	status, out = env.serve("POST", "/api/v1/ai/leases/"+mid.Lease.ID+"/disconnect", map[string]any{}, tokenHeaders(midTok))
+	if status != http.StatusOK {
+		t.Fatalf("disconnect status %d: %s", status, out)
+	}
+
+	// Every recognized-token request produced a usage log row.
+	status, out = env.serve("GET", "/api/v1/api-tokens/"+shortID+"/usage-logs?limit=100", nil, env.adminHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("usage logs status %d: %s", status, out)
+	}
+	logs := mustDecode[struct {
+		UsageLogs []struct {
+			Action  string `json:"action"`
+			Outcome string `json:"outcome"`
+			TokenID string `json:"token_id"`
+			LeaseID string `json:"lease_id"`
+		} `json:"usage_logs"`
+	}](t, out)
+	if len(logs.UsageLogs) == 0 {
+		t.Fatalf("expected usage logs, got 0: %s", out)
+	}
+	if logs.UsageLogs[0].TokenID != shortID {
+		t.Fatalf("usage log token mismatch: %s", out)
+	}
+
+	// Revoking the token revokes its active leases (the short-token lease is
+	// still active) and blocks further use.
+	status, out = env.post("/api/v1/api-tokens/"+shortID+"/revoke",
+		map[string]any{"reason": "rotation"}, env.adminHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("revoke token status %d: %s", status, out)
+	}
+	rev := mustDecode[struct {
+		RevokedLeaseCount int `json:"revoked_lease_count"`
+	}](t, out)
+	if rev.RevokedLeaseCount != 1 {
+		t.Fatalf("expected 1 cascaded lease revoke, got %d: %s", rev.RevokedLeaseCount, out)
+	}
+	fromDB, err := env.st.LeaseByID(ctx, reqResp.Lease.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromDB.Status != model.LeaseRevoked {
+		t.Fatalf("lease not revoked after token revoke: %s", fromDB.Status)
+	}
+	// The revoked token no longer authenticates.
+	status, _ = env.serve("POST", "/api/v1/ai/leases/"+reqResp.Lease.ID+"/heartbeat", map[string]any{}, tokenHeaders(shortTok))
+	if status != http.StatusUnauthorized {
+		t.Fatalf("revoked token should be 401, got %d", status)
+	}
+
+	// Token list shows revocation state and no plaintext/hash.
+	status, out = env.serve("GET", "/api/v1/api-tokens", nil, env.adminHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("token list status %d: %s", status, out)
 	}
 	list := mustDecode[struct {
-		AutoApprovals []map[string]any `json:"auto_approvals"`
+		APITokens []map[string]any `json:"api_tokens"`
 	}](t, out)
-	if len(list.AutoApprovals) != 1 {
-		t.Fatalf("expected 1 rule, got %d: %s", len(list.AutoApprovals), out)
+	for _, tok := range list.APITokens {
+		if _, has := tok["token_hash"]; has {
+			t.Fatalf("token list leaked token_hash")
+		}
+		if _, has := tok["token"]; has {
+			t.Fatalf("token list leaked plaintext")
+		}
 	}
+}
 
-	// Extend: +3 days from current expiry.
-	exp1, _ := time.Parse(time.RFC3339Nano, created.AutoApproval.ExpiresAt)
-	status, out = env.post("/api/v1/ai/auto-approvals/"+created.AutoApproval.ID+"/extend",
-		map[string]any{"duration_days": 3}, env.adminHeaders())
-	if status != http.StatusOK {
-		t.Fatalf("extend status %d: %s", status, out)
-	}
-	ext := mustDecode[struct {
-		AutoApproval struct {
-			ExpiresAt string `json:"expires_at"`
-		} `json:"auto_approval"`
-	}](t, out)
-	exp2, _ := time.Parse(time.RFC3339Nano, ext.AutoApproval.ExpiresAt)
-	if !exp2.After(exp1) {
-		t.Fatalf("extend did not move expiry: %s -> %s", exp1, exp2)
-	}
+func TestAccessTokenTTLBoundsLease(t *testing.T) {
+	env := setupAPI(t)
 
-	// Cap: extend far past the 15-day ceiling.
-	status, out = env.post("/api/v1/ai/auto-approvals/"+created.AutoApproval.ID+"/extend",
-		map[string]any{"duration_days": 15}, env.adminHeaders())
-	if status != http.StatusOK {
-		t.Fatalf("cap extend status %d: %s", status, out)
-	}
-	capExt := mustDecode[struct {
-		AutoApproval struct {
-			ExpiresAt string `json:"expires_at"`
-		} `json:"auto_approval"`
-	}](t, out)
-	exp3, _ := time.Parse(time.RFC3339Nano, capExt.AutoApproval.ExpiresAt)
-	ceiling := time.Now().UTC().Add(15 * 24 * time.Hour).Add(2 * time.Second)
-	if exp3.After(ceiling) {
-		t.Fatalf("rule exceeds 15-day ceiling: %s", exp3)
-	}
+	_, permTok := createAPIToken(t, env, "perm", "never")
 
-	// Disabled mode cannot be bypassed by the rule.
-	status, out = env.serve("PATCH", "/api/v1/settings", map[string]any{"ai_approval_mode": "disabled"}, env.adminHeaders())
-	if status != http.StatusOK {
-		t.Fatalf("disable settings status %d: %s", status, out)
-	}
-	status, out = env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", "read-only"), nil)
+	// A permanent token cannot exceed the system absolute lease cap (24h).
+	h := tokenHeaders(permTok)
+	h["Idempotency-Key"] = "ttl-perm-1"
+	status, out := env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-P", "read-only"), h)
 	if status != http.StatusCreated {
-		t.Fatalf("request under disabled mode status %d: %s", status, out)
+		t.Fatalf("permanent token request status %d: %s", status, out)
 	}
-	req5 := mustDecode[struct {
-		LeaseRequest struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-		} `json:"lease_request"`
+	perm := mustDecode[struct {
+		Lease struct {
+			ExpiresAt         string `json:"expires_at"`
+			AbsoluteExpiresAt string `json:"absolute_expires_at"`
+		} `json:"lease"`
 	}](t, out)
-	if req5.LeaseRequest.Status != model.LeaseRequestRejected {
-		t.Fatalf("rule bypassed disabled mode: %s", out)
+	abs, _ := time.Parse(time.RFC3339Nano, perm.Lease.AbsoluteExpiresAt)
+	if time.Until(abs) > 25*time.Hour {
+		t.Fatalf("absolute cap violated: %s", perm.Lease.AbsoluteExpiresAt)
 	}
-	// The rejection must be persisted (not just echoed in the response) and a
-	// denied audit recorded, so the request cannot be revived later.
-	persisted, err := env.st.LeaseRequestByID(ctx, req5.LeaseRequest.ID)
-	if err != nil {
-		t.Fatal(err)
+
+	// 1h token with a 6h request: lease expires at the token, not 6h.
+	_, hTok := createAPIToken(t, env, "one-hour", "1h")
+	h2 := tokenHeaders(hTok)
+	h2["Idempotency-Key"] = "ttl-1h-1"
+	body := leaseRequestBody(env.nodeID, "device-P", "read-only")
+	body["requested_duration_seconds"] = 6 * 3600
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", body, h2)
+	if status != http.StatusCreated {
+		t.Fatalf("1h token request status %d: %s", status, out)
 	}
-	if persisted.Status != model.LeaseRequestRejected {
-		t.Fatalf("disabled rejection not persisted: %s", persisted.Status)
+	one := mustDecode[struct {
+		Lease struct {
+			ExpiresAt string `json:"expires_at"`
+		} `json:"lease"`
+	}](t, out)
+	exp, _ := time.Parse(time.RFC3339Nano, one.Lease.ExpiresAt)
+	if remaining := time.Until(exp); remaining > 61*time.Minute || remaining < 55*time.Minute {
+		t.Fatalf("lease expiry not bounded by 1h token: %v", remaining)
 	}
-	denied, err := env.st.ListAuditEvents(ctx, store.AuditFilter{Action: "ai.lease_denied"})
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestTokenManagementChildScopeForbidden(t *testing.T) {
+	env := setupAPI(t)
+	env.srv.SetChildScope(env.nodeID)
+	status, out := env.post("/api/v1/api-tokens", map[string]any{"name": "child", "ttl": "1h"}, env.adminHeaders())
+	if status != http.StatusForbidden {
+		t.Fatalf("token creation under child scope should be 403, got %d: %s", status, out)
 	}
-	if len(denied) == 0 {
-		t.Fatalf("no ai.lease_denied audit recorded")
+	status, out = env.serve("GET", "/api/v1/api-tokens", nil, env.adminHeaders())
+	if status != http.StatusForbidden {
+		t.Fatalf("token list under child scope should be 403, got %d: %s", status, out)
 	}
 }
 
@@ -432,127 +491,139 @@ func formatArgs(m map[string]any) string {
 	return strings.TrimSpace(out)
 }
 
-func TestAutoApprovalNoShrinkDoubleApproveAndExpiredExtend(t *testing.T) {
+func TestOpenAPIDirectoryCoversRegisteredRoutes(t *testing.T) {
 	env := setupAPI(t)
-	ctx := context.Background()
-
-	// Manual mode keeps requests pending so we can exercise the
-	// "existing rule" branch of auto-approval.
-	status, out := env.serve("PATCH", "/api/v1/settings", map[string]any{"ai_approval_mode": "manual"}, env.adminHeaders())
+	status, out := env.serve("GET", "/api/v1/meta/openapi", nil, env.adminHeaders())
 	if status != http.StatusOK {
-		t.Fatalf("set manual mode status %d: %s", status, out)
+		t.Fatalf("openapi status %d: %s", status, out)
 	}
-
-	mkPending := func(profile string) string {
-		status, out := env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-A", profile), nil)
-		if status != http.StatusCreated {
-			t.Fatalf("create request status %d: %s", status, out)
+	doc := mustDecode[struct {
+		Paths []map[string]any `json:"paths"`
+	}](t, out)
+	if len(doc.Paths) == 0 {
+		t.Fatalf("openapi directory empty")
+	}
+	// Every route the mux knows about must appear in the directory.
+	specs := env.srv.apiRoutes()
+	if len(doc.Paths) != len(specs) {
+		t.Fatalf("directory has %d routes but mux registered %d", len(doc.Paths), len(specs))
+	}
+	// Spot-check that the token and AI routes are present.
+	seen := map[string]bool{}
+	for _, p := range doc.Paths {
+		seen[p["method"].(string)+" "+p["path"].(string)] = true
+	}
+	for _, want := range []string{
+		"POST /api/v1/api-tokens",
+		"POST /api/v1/ai/lease-requests",
+		"POST /api/v1/ai/leases/{id}/renew",
+		"GET /api/v1/ai/leases/{id}/status",
+		"GET /api/v1/meta/openapi",
+	} {
+		if !seen[want] {
+			t.Fatalf("directory missing route %s", want)
 		}
-		req := mustDecode[struct {
-			LeaseRequest struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
-			} `json:"lease_request"`
-		}](t, out)
-		if req.LeaseRequest.Status != model.LeaseRequestPending {
-			t.Fatalf("request not pending under manual mode: %s", req.LeaseRequest.Status)
-		}
-		return req.LeaseRequest.ID
-	}
-
-	// Two pending requests exist before any rule; approve the second one first
-	// with 15 days (creates the rule), then approve the older one with 1 day.
-	older := mkPending("admin")
-	newer := mkPending("operator")
-
-	status, out = env.post("/api/v1/ai/lease-requests/"+newer+"/auto-approval",
-		map[string]any{"duration_days": 15}, env.adminHeaders())
-	if status != http.StatusOK {
-		t.Fatalf("first auto-approval status %d: %s", status, out)
-	}
-	first := mustDecode[struct {
-		AutoApproval struct {
-			ID        string `json:"id"`
-			ExpiresAt string `json:"expires_at"`
-		} `json:"auto_approval"`
-	}](t, out)
-	firstExpiry, _ := time.Parse(time.RFC3339Nano, first.AutoApproval.ExpiresAt)
-
-	// Approving the older pending request with a shorter duration must NOT
-	// shrink the existing exemption: it extends from the current expiry.
-	status, out = env.post("/api/v1/ai/lease-requests/"+older+"/auto-approval",
-		map[string]any{"duration_days": 1}, env.adminHeaders())
-	if status != http.StatusOK {
-		t.Fatalf("second auto-approval status %d: %s", status, out)
-	}
-	second := mustDecode[struct {
-		AutoApproval struct {
-			ExpiresAt string `json:"expires_at"`
-		} `json:"auto_approval"`
-	}](t, out)
-	secondExpiry, _ := time.Parse(time.RFC3339Nano, second.AutoApproval.ExpiresAt)
-	if secondExpiry.Before(firstExpiry) {
-		t.Fatalf("auto-approval silently shrank exemption: %s -> %s", firstExpiry, secondExpiry)
-	}
-
-	// Double-approving the same request is rejected (terminal state).
-	status, out = env.post("/api/v1/ai/lease-requests/"+newer+"/auto-approval",
-		map[string]any{"duration_days": 5}, env.adminHeaders())
-	if status != http.StatusConflict {
-		t.Fatalf("double approve should be 409, got %d: %s", status, out)
-	}
-
-	// Expire the rule in the DB, then extend: it must reactivate from now.
-	rule, err := env.st.AutoApprovalByID(ctx, first.AutoApproval.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rule.ExpiresAt = time.Now().UTC().Add(-time.Hour)
-	if _, err := env.st.UpsertAutoApproval(ctx, rule); err != nil {
-		t.Fatal(err)
-	}
-	status, out = env.post("/api/v1/ai/auto-approvals/"+first.AutoApproval.ID+"/extend",
-		map[string]any{"duration_days": 3}, env.adminHeaders())
-	if status != http.StatusOK {
-		t.Fatalf("extend expired rule status %d: %s", status, out)
-	}
-	ext := mustDecode[struct {
-		AutoApproval struct {
-			ExpiresAt string `json:"expires_at"`
-		} `json:"auto_approval"`
-	}](t, out)
-	extExpiry, _ := time.Parse(time.RFC3339Nano, ext.AutoApproval.ExpiresAt)
-	if !extExpiry.After(time.Now().UTC().Add(2 * 24 * time.Hour)) {
-		t.Fatalf("expired rule not reactivated with +3d: %s", extExpiry)
 	}
 }
 
-func TestAutoApprovalChildScopeForbidden(t *testing.T) {
+func TestLegacyAutoApprovalRoutesRetired(t *testing.T) {
 	env := setupAPI(t)
 
-	status, out := env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "device-C", "operator"), nil)
-	if status != http.StatusCreated {
-		t.Fatalf("create request status %d: %s", status, out)
-	}
-	req := mustDecode[struct {
-		LeaseRequest struct {
-			ID string `json:"id"`
-		} `json:"lease_request"`
-	}](t, out)
-
-	env.srv.SetChildScope(env.nodeID)
-	for path, body := range map[string]any{
-		"/api/v1/ai/lease-requests/" + req.LeaseRequest.ID + "/auto-approval": map[string]any{"duration_days": 3},
-		"/api/v1/ai/auto-approvals/" + req.LeaseRequest.ID + "/extend":        map[string]any{"duration_days": 3},
+	// The old manual-approval and auto-approval routes are gone (404).
+	for path, method := range map[string]string{
+		"/api/v1/ai/auto-approvals":                          "GET",
+		"/api/v1/ai/lease-requests/some-id/approve":          "POST",
+		"/api/v1/ai/lease-requests/some-id/reject":           "POST",
+		"/api/v1/ai/lease-requests/some-id/auto-approval":    "POST",
+		"/api/v1/ai/auto-approvals/some-id/extend":           "POST",
 	} {
-		status, out = env.post(path, body, env.adminHeaders())
-		if status != http.StatusForbidden {
-			t.Fatalf("%s under child scope should be 403, got %d: %s", path, status, out)
+		req := httptest.NewRequest(method, path, nil)
+		for k, v := range env.adminHeaders() {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		env.handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s %s should be 404, got %d", method, path, rec.Code)
 		}
 	}
-	status, out = env.serve("GET", "/api/v1/ai/auto-approvals", nil, env.adminHeaders())
-	if status != http.StatusForbidden {
-		t.Fatalf("GET auto-approvals under child scope should be 403, got %d: %s", status, out)
+
+	// Legacy pending requests are rejected by the startup migration.
+	ctx := context.Background()
+	legacy := &model.AILeaseRequest{
+		ID: model.NewUUID(), ClientRequestID: "legacy-1", EnvironmentID: env.nodes.EnvID(),
+		NodeID: env.nodeID, RequestedProfile: "read-only", RequestedDurationSeconds: 1800,
+		PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKmzTestFakeKey legacy", Status: model.LeaseRequestPending,
+	}
+	if err := env.st.CreateLeaseRequest(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	// A legacy active lease without a bound token must be revoked, and one
+	// bound to an already-expired token must be expired.
+	now := time.Now().UTC()
+	mkLegacyRequest := func(id, key string) {
+		if err := env.st.CreateLeaseRequest(ctx, &model.AILeaseRequest{
+			ID: id, ClientRequestID: key, EnvironmentID: env.nodes.EnvID(),
+			NodeID: env.nodeID, RequestedProfile: "read-only", RequestedDurationSeconds: 1800,
+			PublicKey: "ssh-ed25519 AAAA... legacy", Status: model.LeaseRequestApproved,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	untokReqID := model.NewUUID()
+	mkLegacyRequest(untokReqID, "legacy-untok")
+	untok := &model.AILease{
+		ID: model.NewUUID(), RequestID: untokReqID, NodeID: env.nodeID,
+		PermissionProfile: "read-only", PublicKey: "ssh-ed25519 AAAA... legacy-untok",
+		IssuedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour), AbsoluteExpiresAt: now.Add(23 * time.Hour),
+		Status: model.LeaseActive,
+	}
+	if err := env.st.CreateLease(ctx, untok); err != nil {
+		t.Fatal(err)
+	}
+	expTok := &model.APIAccessToken{
+		ID: model.NewUUID(), EnvironmentID: env.nodes.EnvID(), Name: "expired-legacy",
+		TokenHash: "deadbeef", TokenPrefix: "sct_deadbeef", CreatedAt: now.Add(-2 * time.Hour),
+		ExpiresAt: &now,
+	}
+	if err := env.st.CreateAccessToken(ctx, expTok); err != nil {
+		t.Fatal(err)
+	}
+	expReqID := model.NewUUID()
+	mkLegacyRequest(expReqID, "legacy-exp")
+	expLease := &model.AILease{
+		ID: model.NewUUID(), RequestID: expReqID, NodeID: env.nodeID, AccessTokenID: expTok.ID,
+		PermissionProfile: "read-only", PublicKey: "ssh-ed25519 AAAA... legacy-exp",
+		IssuedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Minute), AbsoluteExpiresAt: now.Add(22 * time.Hour),
+		Status: model.LeaseActive,
+	}
+	if err := env.st.CreateLease(ctx, expLease); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := env.srv.LeaseService().MigrateLegacyApprovalFlow(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := env.st.LeaseRequestByID(ctx, legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != model.LeaseRequestRejected {
+		t.Fatalf("legacy pending request not rejected: %s", after.Status)
+	}
+	untokAfter, err := env.st.LeaseByID(ctx, untok.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if untokAfter.Status != model.LeaseRevoked {
+		t.Fatalf("legacy untokenized active lease not revoked: %s", untokAfter.Status)
+	}
+	expAfter, err := env.st.LeaseByID(ctx, expLease.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expAfter.Status != model.LeaseExpired {
+		t.Fatalf("legacy expired lease not expired by migration: %s", expAfter.Status)
 	}
 }
 
@@ -612,5 +683,111 @@ func TestAgentTaskParameterHistoryEndpoints(t *testing.T) {
 	}](t, out)
 	if len(after.Histories) != 0 {
 		t.Fatalf("history not deleted via agent API: %s", out)
+	}
+}
+
+// TestIdempotencyReplayOwnershipIsolation ensures a client_request_id owned by
+// another token never replays that request/lease back (404, no leak).
+func TestIdempotencyReplayOwnershipIsolation(t *testing.T) {
+	env := setupAPI(t)
+
+	_, tokA := createAPIToken(t, env, "owner-A", "1h")
+	_, tokB := createAPIToken(t, env, "owner-B", "1h")
+
+	// A creates a request keyed solely by the Idempotency-Key header.
+	body := leaseRequestBody(env.nodeID, "device-A", "read-only")
+	delete(body, "client_request_id")
+	hA := tokenHeaders(tokA)
+	hA["Idempotency-Key"] = "shared-key-1"
+	status, out := env.serve("POST", "/api/v1/ai/lease-requests", body, hA)
+	if status != http.StatusCreated {
+		t.Fatalf("owner A request status %d: %s", status, out)
+	}
+
+	// B replays the same key: must be 404 and must not leak A's data.
+	hB := tokenHeaders(tokB)
+	hB["Idempotency-Key"] = "shared-key-1"
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", body, hB)
+	if status != http.StatusNotFound {
+		t.Fatalf("cross-token replay should be 404, got %d: %s", status, out)
+	}
+	if strings.Contains(string(out), "device-A") || strings.Contains(string(out), "ssh-ed25519") {
+		t.Fatalf("cross-token replay leaked owner A data: %s", out)
+	}
+
+	// A can still replay its own key (200/201, not a leak).
+	status, out = env.serve("POST", "/api/v1/ai/lease-requests", body, hA)
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("owner A replay should succeed, got %d: %s", status, out)
+	}
+}
+
+func TestExpiredAccessTokenRejected(t *testing.T) {
+	env := setupAPI(t)
+	ctx := context.Background()
+
+	tokenID, tok := createAPIToken(t, env, "expired", "1h")
+	// Force the token expiry into the past.
+	if _, err := env.st.DB().ExecContext(ctx,
+		`UPDATE api_access_token SET expires_at=$1 WHERE id=$2`,
+		time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano), tokenID); err != nil {
+		t.Fatal(err)
+	}
+
+	status, out := env.serve("POST", "/api/v1/ai/lease-requests", leaseRequestBody(env.nodeID, "exp", "read-only"), tokenHeaders(tok))
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expired token should be 401, got %d: %s", status, out)
+	}
+	// Usage log records token_state=expired.
+	status, out = env.serve("GET", "/api/v1/api-tokens/"+tokenID+"/usage-logs?limit=10", nil, env.adminHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("usage logs status %d: %s", status, out)
+	}
+	logs := mustDecode[struct {
+		UsageLogs []struct {
+			TokenState string `json:"token_state"`
+			Outcome    string `json:"outcome"`
+		} `json:"usage_logs"`
+	}](t, out)
+	if len(logs.UsageLogs) == 0 {
+		t.Fatalf("expected a usage log for the expired token request")
+	}
+	found := false
+	for _, l := range logs.UsageLogs {
+		if l.TokenState == "expired" && l.Outcome == "denied" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no expired/denied usage log recorded: %+v", logs.UsageLogs)
+	}
+}
+
+// TestPublicKeyInjectionRejected ensures a public key with newlines/options that
+// could inject extra authorized_keys lines is rejected at the API.
+func TestPublicKeyInjectionRejected(t *testing.T) {
+	env := setupAPI(t)
+
+	_, tok := createAPIToken(t, env, "inject", "1h")
+	for _, bad := range []string{
+		"ssh-ed25519 AAAA...\ncommand=\"/bin/sh\" ssh-ed25519 BBBB...",
+		"ssh-ed25519 AAAA,no-agent-forwarding BBBB",
+		"ssh-rsa AAAA...",
+		"garbage-key",
+		"ssh-ed25519 AAAA... \"quoted\"",
+	} {
+		body := leaseRequestBody(env.nodeID, "inj", "read-only")
+		body["public_key"] = bad
+		status, out := env.serve("POST", "/api/v1/ai/lease-requests", body, tokenHeaders(tok))
+		if status != http.StatusBadRequest {
+			t.Fatalf("public_key %q should be 400, got %d: %s", bad, status, out)
+		}
+	}
+	// A legitimate key still works.
+	body := leaseRequestBody(env.nodeID, "inj", "read-only")
+	body["public_key"] = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKmzTestFakeKey device-test"
+	status, out := env.serve("POST", "/api/v1/ai/lease-requests", body, tokenHeaders(tok))
+	if status != http.StatusCreated {
+		t.Fatalf("legitimate key should be accepted, got %d: %s", status, out)
 	}
 }

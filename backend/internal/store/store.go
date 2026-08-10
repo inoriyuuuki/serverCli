@@ -74,6 +74,13 @@ func nullTime(t *time.Time) any {
 	return ts(*t)
 }
 
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func parseTime(s sql.NullString) (*time.Time, error) {
 	if !s.Valid || s.String == "" {
 		return nil, nil

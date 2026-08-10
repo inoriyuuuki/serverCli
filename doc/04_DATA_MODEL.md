@@ -187,6 +187,7 @@ IP 不设置全局唯一约束。
 
 - `id`
 - `client_request_id`：幂等键
+- `access_token_id`（可空）：来源 Access Token（新数据必填，旧数据为空）
 - `ai_agent_id/ai_agent_name`
 - `node_id`
 - `requested_profile`
@@ -205,6 +206,7 @@ IP 不设置全局唯一约束。
 
 - `id`
 - `request_id/node_id`
+- `access_token_id`（可空）：来源 Access Token（新数据必填，旧数据为空）
 - `ai_agent_id`
 - `permission_profile`
 - `public_key/public_key_fingerprint`
@@ -281,7 +283,9 @@ Secret 使用外部配置，不写该表。
 - `status/error_message`
 - `requested_by`
 
-### 3.18 `ai_auto_approval`
+### 3.18 `ai_auto_approval`（历史保留，不再参与审批）
+
+> Access Token 自动审批上线后，本表仅用于历史追溯：不再参与申请匹配，也不再提供管理 API/UI。节点删除时仍随节点级联清理。
 
 - `id`、`environment_id`
 - `ai_agent_id` / `ai_agent_name`：设备身份（沿用 Lease 申请的 `ai_agent_id`）
@@ -291,6 +295,29 @@ Secret 使用外部配置，不写该表。
 - `expires_at`：到期时间
 - 唯一约束 `(environment_id, ai_agent_id, node_id)`：同一设备访问同一节点只保留一条规则，延长/重新创建时更新到期时间
 - 有效期上限 15 天；延长从当前到期时间累加但不超过“操作时刻 + 15 天”
+
+### 3.18.1 `api_access_token`
+
+- `id`、`environment_id`、`name`
+- `token_hash`：SHA-256 哈希（唯一）
+- `token_prefix`：可识别前缀（如 `sct_8995d790`）
+- `created_by`、`created_at`
+- `expires_at`：永久 Token 为 `NULL`
+- `revoked_at`、`revoked_by`
+- `last_used_at`、`last_used_ip`、`usage_count`
+- `permission_version`、`permissions_json`：预留 `{version, grants:[{resource, actions, constraints}]}`，首版为全权限 `*:*`
+
+明文只返回一次；日志/错误/示例不得出现完整 Token。
+
+### 3.18.2 `api_token_usage_log`
+
+- `id`、`token_id`、`environment_id`
+- `request_id`、`occurred_at`
+- `method`、`route`（规范化路由模板）、`resource`、`action`
+- `source_ip`、`user_agent`
+- `status_code`、`outcome`（`success/denied/failure`）
+- `lease_request_id`、`lease_id`：关联资源
+- `token_state`：`valid/expired/revoked`
 
 ### 3.19 `task_parameter_history`
 
@@ -319,8 +346,8 @@ queued -> dispatched -> running -> succeeded
 ### 4.2 AI Lease
 
 ```text
-request: pending -> approved -> lease active
-                \-> rejected
+request: (token 校验通过) approved -> lease active     // 自动审批
+                \-> rejected          // 开关关闭/参数无效（遗留 pending 启动时统一置为 rejected）
                 \-> failed
 
 lease: active -> renewed -> active

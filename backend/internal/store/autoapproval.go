@@ -1,3 +1,6 @@
+// Package-level note: ai_auto_approval is retained for history only — the
+// token-based auto-approval flow no longer reads or writes it. These accessors
+// remain for legacy cascade tests and potential audit tooling.
 package store
 
 import (

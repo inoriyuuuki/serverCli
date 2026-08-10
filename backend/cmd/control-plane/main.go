@@ -128,6 +128,15 @@ func run() error {
 		return fmt.Errorf("build server: %w", err)
 	}
 
+	// One-time migration for the access-token auto-approval flow: reject
+	// legacy pending requests and revoke active leases without a bound token
+	// (primary only; children proxy their self-view to the primary).
+	if cfg.NodeRole == "primary" {
+		if err := srv.LeaseService().MigrateLegacyApprovalFlow(ctx); err != nil {
+			log.Warn("legacy lease approval migration failed", "error", err)
+		}
+	}
+
 	// One-time backfill of reusable task parameter history from existing task
 	// records (primary only; child planes proxy self-view to the primary).
 	if cfg.NodeRole == "primary" {

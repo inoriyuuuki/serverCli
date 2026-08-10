@@ -171,35 +171,48 @@ Agent 必须校验目标节点、签名、时间窗、命令版本和是否已�
 7. 具有副作用的命令默认不自动重试。
 8. 参数、输出、错误和环境变量经过脱敏。
 
-## 9. AI Lease API
+## 9. AI Lease API（Access Token 自动审批）
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `POST` | `/ai/lease-requests` | AI 申请临时权限 |
-| `GET` | `/ai/lease-requests/{id}` | 查询申请状态 |
-| `POST` | `/ai/leases/{id}/renew` | 续期 |
-| `POST` | `/ai/leases/{id}/heartbeat` | AI 客户端连接保活 |
-| `POST` | `/ai/leases/{id}/disconnect` | 正常断开并释放 |
-| `POST` | `/ai/leases/{id}/revoke` | 管理员撤销 |
-| `GET` | `/ai/leases` | 管理员/本机范围列表 |
-| `GET` | `/ai/lease-requests` | 申请历史 |
-| `POST` | `/ai/lease-requests/{id}/auto-approval` | 批准申请并创建/更新设备+节点免审批规则 `{duration_days:1..15}` |
-| `GET` | `/ai/auto-approvals` | 免审批规则列表（主） |
-| `POST` | `/ai/auto-approvals/{id}/extend` | 延长免审批 `{duration_days:1..15}` |
-| `PATCH` | `/settings/ai-access` | 全局/节点申请与续期开关 |
+外部 AI 自助接口全部要求 `Authorization: Bearer <sct_* Access Token>`。无 Token、Token 无效/过期/已撤销一律返回 `401`；有效 Token 的申请校验通过后直接 `approved` 并签发 Lease（自动审批），不再人工审批。
 
-申请示例：
+| 方法 | 路径 | 鉴权 | 说明 |
+| --- | --- | --- | --- |
+| `POST` | `/ai/lease-requests` | Access Token | 申请 Lease（自动审批，`Idempotency-Key` 防重） |
+| `GET` | `/ai/lease-requests/{id}` | Access Token | 查询本人申请（非本人返回 404） |
+| `POST` | `/ai/leases/{id}/renew` | Access Token | 续期 |
+| `POST` | `/ai/leases/{id}/heartbeat` | Access Token | AI 客户端连接保活 |
+| `POST` | `/ai/leases/{id}/disconnect` | Access Token | 正常断开并释放 |
+| `GET` | `/ai/leases/{id}/status` | 签名运行时 Token（`X-Lease-Runtime-Token` 头） | `servercli-lease-shell` 校验 Lease 状态 |
+| `POST` | `/ai/leases/{id}/revoke` | 管理员 Session | 撤销 Lease |
+| `POST` | `/ai/leases/{id}/disable-renewal` | 管理员 Session | 禁止续期 |
+| `POST` | `/ai/leases/{id}/protect` | 管理员 Session | 标记重要 |
+| `POST` | `/ai/leases/revoke-all` | 管理员 Session | 紧急撤销（全局/节点） |
+| `GET` | `/ai/leases` | 管理员 Session | 列表 |
+| `GET` | `/ai/lease-requests` | 管理员 Session | 申请历史 |
+| `PATCH` | `/settings/ai-access` | 管理员 Session | 全局/节点申请与续期开关 |
 
-```json
-{
-  "node_selector": "node UUID、别名或明确 IP:端口",
-  "public_key": "ssh-ed25519 AAAA... temporary-agent-key",
-  "permission_profile": "read-only",
-  "requested_duration_seconds": 3600,
-  "purpose": "诊断服务状态",
-  "client_request_id": "uuid"
-}
+Access Token 管理（主节点管理员 Session）：`POST/GET /api-tokens`、`GET /api-tokens/{id}`、`POST /api-tokens/{id}/revoke`、`GET /api-tokens/{id}/usage-logs`。
+全接口目录：`GET /meta/openapi`。
+
+申请示例（携带 Token）：
+
+```bash
+curl -X POST "$PRIMARY_API/ai/lease-requests" \
+  -H "Authorization: Bearer sct_<token>" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: <uuid>" \
+  -d '{
+    "node_selector": "node UUID、别名或明确 IP:端口",
+    "public_key": "ssh-ed25519 AAAA... temporary-agent-key",
+    "permission_profile": "read-only",
+    "requested_duration_seconds": 3600,
+    "purpose": "诊断服务状态",
+    "client_request_id": "uuid"
+  }'
 ```
+
+响应包含 `lease_request`（含 `access_token_id/access_token_name`）与 `lease`、`host`、`ssh_port`、`user`；不再返回 `renewal_token`。
+Lease 到期 = `min(申请时长, Token 到期时间, 系统绝对上限)`；Token 到期/撤销后 API 立即失败、关联活动 Lease 撤销并通知节点删除公钥。
 
 IP 选择器如匹配多个同 IP 实例，API 必须返回歧义错误并要求使用 `node_id` 或 `IP:后端端口`，不得自行选择。
 
@@ -215,6 +228,7 @@ Profile 映射到命令、sudoers、文件路径和网络访问白名单，而�
 
 ## 11. API 安全与限流
 
+- 外部 AI 自助 API 使用 Access Token 鉴权（`sct_*`，库中仅存 SHA-256 哈希与前缀，日志/错误/示例不出现明文）；每次可识别 Token 的请求写入 `api_token_usage_log`。
 - 登录、Lease 申请、续期和节点注册均设置独立限流。
 - 节点凭证失败达到阈值后产生高风险审计，不自动永久封禁合法节点。
 - 所有错误响应不泄露节点密钥、用户存在性、内部路径和原始数据库错误。

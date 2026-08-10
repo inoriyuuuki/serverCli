@@ -152,25 +152,44 @@ Poll 响应（空则 `{"task": null}`）：
 事件体：`{event_type:"accepted|started|stdout_chunk|stderr_chunk|progress|completed|failed|timed_out|cancelled", sequence, message, occurred_at}`。
 Result 体：`{status:"succeeded|failed|timed_out|cancelled|result_unknown", stdout_text, stderr_text, exit_code, error_code, error_message, truncated, finished_at}`。
 
-### 4.8 AI Lease
+### 4.8 AI Lease（Access Token 自动审批）
+外部 AI 自助接口一律要求 `Authorization: Bearer <sct_* Access Token>`；有效 Token 的申请直接自动审批签发 Lease，不再有人工审批/设备免审批。
+
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/api/v1/ai/lease-requests` | AI 申请（Idempotency-Key） |
-| GET | `/api/v1/ai/lease-requests/{id}` | 查询 |
-| POST | `/api/v1/ai/leases/{id}/renew` | 续期（AI 签名头） |
-| POST | `/api/v1/ai/leases/{id}/heartbeat` | 保活 |
-| POST | `/api/v1/ai/leases/{id}/disconnect` | 正常断开 |
+| POST | `/api/v1/ai/lease-requests` | AI 申请（自动审批，Idempotency-Key） |
+| GET | `/api/v1/ai/lease-requests/{id}` | 查询本人申请（Token 归属校验，非本人 404） |
+| POST | `/api/v1/ai/leases/{id}/renew` | 续期（Access Token） |
+| POST | `/api/v1/ai/leases/{id}/heartbeat` | 保活（Access Token） |
+| POST | `/api/v1/ai/leases/{id}/disconnect` | 正常断开（Access Token） |
+| GET | `/api/v1/ai/leases/{id}/status` | Lease 运行时状态（签名运行时 Token，`X-Lease-Runtime-Token` 头） |
 | POST | `/api/v1/ai/leases/{id}/revoke` | 管理员撤销 `{reason, terminate_sessions}` |
-| GET | `/api/v1/ai/leases` | 列表 |
-| GET | `/api/v1/ai/lease-requests` | 申请历史 |
-| POST | `/api/v1/ai/lease-requests/{id}/auto-approval` | 批准并创建/更新设备+节点免审批 `{duration_days:1..15}` |
-| GET | `/api/v1/ai/auto-approvals` | 免审批规则列表（主） |
-| POST | `/api/v1/ai/auto-approvals/{id}/extend` | 延长免审批 `{duration_days:1..15}`（累计上限 15 天） |
+| POST | `/api/v1/ai/leases/{id}/disable-renewal` | 管理员禁止续期 |
+| POST | `/api/v1/ai/leases/{id}/protect` | 管理员标记重要 |
+| POST | `/api/v1/ai/leases/revoke-all` | 管理员紧急撤销（全局/节点） |
+| GET | `/api/v1/ai/leases` | 列表（管理） |
+| GET | `/api/v1/ai/lease-requests` | 申请历史（管理） |
 | PATCH | `/api/v1/settings/ai-access` | 开关 `{new_requests_enabled, renewals_enabled, scope:"global"|node_id}` |
 
 申请体：`{node_selector, public_key, permission_profile:"read-only|operator|admin", requested_duration_seconds, purpose, client_request_id}`。
-响应：`{lease_request:{id,status}, lease?:{id,node_id,expires_at,absolute_expires_at,...}}`。
-AI 认证：`Authorization: Bearer <ai_renewal_token>`（申请成功时返回，服务端只存哈希）。
+响应：`{lease_request:{id,status,access_token_id,access_token_name}, lease?:{id,node_id,access_token_id,expires_at,absolute_expires_at,...}, host, ssh_port, user}`。
+AI 认证：`Authorization: Bearer <access_token>`（`sct_*`，创建时返回一次明文，服务端只存 SHA-256 哈希与前缀）。
+Lease 到期 = `min(申请时长, Token 到期时间, 系统绝对上限(issued_at + ai_lease_max_hours))`；永久 Token 不突破绝对上限。
+不再返回/接受 `renewal_token`。
+
+### 4.8.1 Access Token 管理（主节点管理员 Session API）
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/v1/api-tokens` | 创建 Token `{name, ttl:"15m|1h|6h|1d|1w|never"}`，仅本次返回明文 |
+| GET | `/api/v1/api-tokens` | Token 列表（含 active_lease_count，不含哈希/明文） |
+| GET | `/api/v1/api-tokens/{id}` | Token 详情 |
+| POST | `/api/v1/api-tokens/{id}/revoke` | 撤销 Token `{reason}`，级联撤销关联活动 Lease |
+| GET | `/api/v1/api-tokens/{id}/usage-logs` | 使用日志 `{outcome:"success|denied|failure"}` |
+
+### 4.8.2 接口目录
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/v1/meta/openapi` | 全接口目录（与路由注册同源，防文档漂移） |
 
 ### 4.9 审计 / 设置 / 清理
 | 方法 | 路径 | 说明 |
@@ -217,7 +236,7 @@ Agent 启动/变更时校验 manifest 与可执行文件 hash、权限，上报 
 ```
 
 ## 6. 数据模型
-遵循 `04_DATA_MODEL.md` 的表设计；首版必须实现：`admin_user, admin_session, node_enrollment, node, node_address, node_heartbeat, node_command, task, task_event, task_output, ai_lease_request, ai_lease, ai_lease_event, ai_ssh_session, audit_event, system_setting, cleanup_run`。时间字段 UTC，主键 UUID 字符串，`is_protected/protected_at` 覆盖所有会被清理的表。Token/凭证只存哈希+前缀。迁移必须 SQLite 与 PostgreSQL 兼容（避免使用方言专有类型）。
+遵循 `04_DATA_MODEL.md` 的表设计；首版必须实现：`admin_user, admin_session, node_enrollment, node, node_address, node_heartbeat, node_command, task, task_event, task_output, ai_lease_request, ai_lease, ai_lease_event, ai_ssh_session, audit_event, system_setting, cleanup_run, api_access_token, api_token_usage_log`（`ai_auto_approval` 保留为历史表）。时间字段 UTC，主键 UUID 字符串，`is_protected/protected_at` 覆盖所有会被清理的表。Token/凭证只存哈希+前缀。迁移必须 SQLite 与 PostgreSQL 兼容（避免使用方言专有类型）。
 
 ## 7. 脚本接口
 

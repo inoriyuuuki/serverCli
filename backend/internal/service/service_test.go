@@ -113,6 +113,35 @@ func mustEnrollAndClaimNamed(t *testing.T, ctx context.Context, nodes *NodeServi
 	return res.NodeID, res.NodeCredential, e.ID
 }
 
+// mustCreatePrincipal creates an access token row and returns its principal.
+func mustCreatePrincipal(t *testing.T, st *store.Store, envID, name string, ttl time.Duration) *TokenPrincipal {
+	t.Helper()
+	plaintext, err := GenerateAccessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp := time.Now().UTC().Add(ttl)
+	tok := &model.APIAccessToken{
+		ID:                model.NewUUID(),
+		EnvironmentID:     envID,
+		Name:              name,
+		TokenHash:         security.HashToken(plaintext),
+		TokenPrefix:       security.Prefix(plaintext, 12),
+		CreatedAt:         time.Now().UTC(),
+		ExpiresAt:         &exp,
+		PermissionVersion: 1,
+		PermissionsJSON:   defaultPermissionsJSON,
+	}
+	if err := st.CreateAccessToken(context.Background(), tok); err != nil {
+		t.Fatal(err)
+	}
+	perms, err := parsePermissions(defaultPermissionsJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &TokenPrincipal{TokenID: tok.ID, Name: tok.Name, TokenPrefix: tok.TokenPrefix, ExpiresAt: &exp, Permissions: perms}
+}
+
 func TestRegistrationClaimHeartbeatFlow(t *testing.T) {
 	ctx, st, _, _, nodes, _, _, _, _ := testServices(t)
 	nodeID, credential, _ := mustEnrollAndClaim(t, ctx, nodes)
@@ -270,15 +299,12 @@ func TestTaskLifecycleAndIdempotency(t *testing.T) {
 }
 
 func TestLeaseTimeRules(t *testing.T) {
-	ctx, st, _, _, nodes, _, leases, settings, _ := testServices(t)
+	ctx, st, _, _, nodes, _, leases, _, _ := testServices(t)
 	nodeID, _, _ := mustEnrollAndClaim(t, ctx, nodes)
 	if _, err := nodes.Heartbeat(ctx, nodeID, HeartbeatInput{Hostname: "n"}, "1.2.3.4"); err != nil {
 		t.Fatal(err)
 	}
-	// policy mode auto-approves read-only.
-	if _, err := settings.Patch(ctx, map[string]any{KeyApprovalMode: "policy"}); err != nil {
-		t.Fatal(err)
-	}
+	principal := mustCreatePrincipal(t, st, nodes.EnvID(), "ai-test", 2*time.Hour)
 	res, err := leases.CreateLeaseRequest(ctx, LeaseRequestInput{
 		NodeSelector:          nodeID,
 		PublicKey:             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",
@@ -287,7 +313,7 @@ func TestLeaseTimeRules(t *testing.T) {
 		Purpose:               "test",
 		ClientRequestID:       "lr-1",
 		AIAgentID:             "ai-1",
-	}, "9.9.9.9")
+	}, "9.9.9.9", principal)
 	if err != nil {
 		t.Fatalf("lease request: %v", err)
 	}
@@ -297,6 +323,9 @@ func TestLeaseTimeRules(t *testing.T) {
 	lease := res.Lease
 	if lease.Status != model.LeaseActive {
 		t.Fatalf("expected active lease, got %s", lease.Status)
+	}
+	if lease.AccessTokenID != principal.TokenID {
+		t.Fatalf("lease not bound to token: %s", lease.AccessTokenID)
 	}
 	// Default duration = 1h.
 	if lease.ExpiresAt.Sub(lease.IssuedAt) > 61*time.Minute {
@@ -309,13 +338,10 @@ func TestLeaseTimeRules(t *testing.T) {
 	if lease.ExpiresAt.After(lease.AbsoluteExpiresAt) {
 		t.Fatal("expires_at exceeds absolute cap")
 	}
-	if res.RenewalToken == "" {
-		t.Fatal("renewal token missing")
-	}
 	// Renew extends without resetting issued_at / absolute.
 	origIssued := lease.IssuedAt
 	origAbs := lease.AbsoluteExpiresAt
-	renewed, err := leases.Renew(ctx, lease.ID, res.RenewalToken, 3600)
+	renewed, err := leases.Renew(ctx, lease.ID, principal, 3600)
 	if err != nil {
 		t.Fatalf("renew: %v", err)
 	}
@@ -328,9 +354,10 @@ func TestLeaseTimeRules(t *testing.T) {
 	if renewed.RenewCount != 1 {
 		t.Fatalf("expected renew_count 1, got %d", renewed.RenewCount)
 	}
-	// Wrong token rejected.
-	if _, err := leases.Renew(ctx, lease.ID, "badtoken", 3600); err == nil {
-		t.Fatal("renew with bad token should fail")
+	// A different principal is not the owner: 404.
+	other := mustCreatePrincipal(t, st, nodes.EnvID(), "other", time.Hour)
+	if _, err := leases.Renew(ctx, lease.ID, other, 3600); err == nil {
+		t.Fatal("renew with non-owner token should fail")
 	}
 	// Revoke makes lease terminal and disables further renew.
 	revoked, err := leases.Revoke(ctx, lease.ID, "admin-1", "test revoke", false)
@@ -340,41 +367,36 @@ func TestLeaseTimeRules(t *testing.T) {
 	if revoked.Status != model.LeaseRevoked {
 		t.Fatalf("expected revoked, got %s", revoked.Status)
 	}
-	if _, err := leases.Renew(ctx, lease.ID, res.RenewalToken, 3600); err == nil {
+	if _, err := leases.Renew(ctx, lease.ID, principal, 3600); err == nil {
 		t.Fatal("renew after revoke should fail")
 	}
-	if _, err := leases.Heartbeat(ctx, lease.ID, res.RenewalToken); err == nil {
+	if _, err := leases.Heartbeat(ctx, lease.ID, principal); err == nil {
 		t.Fatal("heartbeat after revoke should fail")
 	}
-	// Lease in DB retains only the token hash + prefix.
+	// Lease in DB retains only a renewal token hash + prefix (schema compat).
 	fromDB, err := st.LeaseByID(ctx, lease.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fromDB.RenewalTokenHash == "" || fromDB.RenewalTokenHash == res.RenewalToken {
-		t.Fatal("renewal token must be stored as hash only")
+	if fromDB.RenewalTokenHash == "" {
+		t.Fatal("renewal token hash must be stored for schema compatibility")
 	}
-	if fromDB.RenewalTokenPrefix == "" || strings.Contains(res.RenewalToken, fromDB.RenewalTokenPrefix) == false {
-		t.Fatal("prefix should be a prefix of the token")
-	}
-	if !strings.HasPrefix(res.RenewalToken, fromDB.RenewalTokenPrefix) {
-		t.Fatal("prefix should be a prefix of the token")
+	if fromDB.RenewalTokenPrefix == "" {
+		t.Fatal("renewal token prefix missing")
 	}
 }
 
 func TestLeaseAbsoluteCapBlocksRenew(t *testing.T) {
-	ctx, _, _, _, nodes, _, leases, settings, _ := testServices(t)
+	ctx, st, _, _, nodes, _, leases, _, _ := testServices(t)
 	nodeID, _, _ := mustEnrollAndClaim(t, ctx, nodes)
 	if _, err := nodes.Heartbeat(ctx, nodeID, HeartbeatInput{Hostname: "n"}, "1.2.3.4"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := settings.Patch(ctx, map[string]any{KeyApprovalMode: "policy"}); err != nil {
-		t.Fatal(err)
-	}
+	principal := mustCreatePrincipal(t, st, nodes.EnvID(), "cap", 24*time.Hour)
 	res, err := leases.CreateLeaseRequest(ctx, LeaseRequestInput{
 		NodeSelector: nodeID, PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",
 		PermissionProfile: "read-only", RequestedDurationSecs: 3600, ClientRequestID: "cap-1", AIAgentID: "ai-1",
-	}, "1.1.1.1")
+	}, "1.1.1.1", principal)
 	if err != nil || res.Lease == nil {
 		t.Fatalf("lease request: %v", err)
 	}
@@ -382,7 +404,6 @@ func TestLeaseAbsoluteCapBlocksRenew(t *testing.T) {
 	// clamp to absolute_expires_at, and once at cap renewal must fail.
 	lease := res.Lease
 	now := time.Now().UTC()
-	// absolute_expires_at is immutable via the service; move it with raw SQL.
 	if _, err := leases.store.DB().ExecContext(ctx,
 		`UPDATE ai_lease SET absolute_expires_at=$1, expires_at=$2, last_heartbeat_at=$3 WHERE id=$4`,
 		tsRFC3339(now.Add(10*time.Minute)), tsRFC3339(now.Add(2*time.Minute)), tsRFC3339(now), lease.ID); err != nil {
@@ -397,7 +418,7 @@ func TestLeaseAbsoluteCapBlocksRenew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	renewed, err := leases.Renew(ctx, lease.ID, res.RenewalToken, 3600)
+	renewed, err := leases.Renew(ctx, lease.ID, principal, 3600)
 	if err != nil {
 		t.Fatalf("renew near cap: %v", err)
 	}
@@ -409,24 +430,22 @@ func TestLeaseAbsoluteCapBlocksRenew(t *testing.T) {
 	if err := leases.store.UpdateLease(ctx, lease); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := leases.Renew(ctx, lease.ID, res.RenewalToken, 3600); err == nil {
+	if _, err := leases.Renew(ctx, lease.ID, principal, 3600); err == nil {
 		t.Fatal("renew past absolute cap should fail")
 	}
 }
 
 func TestRenewalsDisabled(t *testing.T) {
-	ctx, _, _, _, nodes, _, leases, settings, _ := testServices(t)
+	ctx, st, _, _, nodes, _, leases, settings, _ := testServices(t)
 	nodeID, _, _ := mustEnrollAndClaim(t, ctx, nodes)
 	if _, err := nodes.Heartbeat(ctx, nodeID, HeartbeatInput{Hostname: "n"}, "1.2.3.4"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := settings.Patch(ctx, map[string]any{KeyApprovalMode: "policy"}); err != nil {
-		t.Fatal(err)
-	}
+	principal := mustCreatePrincipal(t, st, nodes.EnvID(), "renew", 24*time.Hour)
 	res, err := leases.CreateLeaseRequest(ctx, LeaseRequestInput{
 		NodeSelector: nodeID, PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",
 		PermissionProfile: "read-only", ClientRequestID: "nr-1", AIAgentID: "ai-1",
-	}, "1.1.1.1")
+	}, "1.1.1.1", principal)
 	if err != nil || res.Lease == nil {
 		t.Fatalf("lease request: %v", err)
 	}
@@ -434,7 +453,7 @@ func TestRenewalsDisabled(t *testing.T) {
 	if err := leases.SetAIAccess(ctx, nil, &f, "", "admin-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := leases.Renew(ctx, res.Lease.ID, res.RenewalToken, 3600); err == nil {
+	if _, err := leases.Renew(ctx, res.Lease.ID, principal, 3600); err == nil {
 		t.Fatal("renew should be denied when renewals disabled")
 	}
 	// New requests still allowed? Test gate.
@@ -444,7 +463,7 @@ func TestRenewalsDisabled(t *testing.T) {
 	if _, err := leases.CreateLeaseRequest(ctx, LeaseRequestInput{
 		NodeSelector: nodeID, PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 test",
 		PermissionProfile: "read-only", ClientRequestID: "nr-2", AIAgentID: "ai-1",
-	}, "1.1.1.1"); err == nil {
+	}, "1.1.1.1", principal); err == nil {
 		t.Fatal("new requests should be denied when gate off")
 	}
 }
@@ -609,27 +628,25 @@ func TestLoginRateLimitLockout(t *testing.T) {
 }
 
 func TestLeaseDisableRenewalProtectRevokeAll(t *testing.T) {
-	ctx, st, _, _, nodes, _, leases, settings, _ := testServices(t)
+	ctx, st, _, _, nodes, _, leases, _, _ := testServices(t)
 	nodeID, _, _ := mustEnrollAndClaim(t, ctx, nodes)
 	if _, err := nodes.Heartbeat(ctx, nodeID, HeartbeatInput{Hostname: "n"}, "1.2.3.4"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := settings.Patch(ctx, map[string]any{KeyApprovalMode: "policy"}); err != nil {
-		t.Fatal(err)
-	}
-	newLease := func(id string) (*model.AILease, string) {
+	principal := mustCreatePrincipal(t, st, nodes.EnvID(), "prot", 24*time.Hour)
+	newLease := func(id string) *model.AILease {
 		res, err := leases.CreateLeaseRequest(ctx, LeaseRequestInput{
 			NodeSelector: nodeID, PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGenericTestKeyValue123456789 " + id,
 			PermissionProfile: "read-only", RequestedDurationSecs: 3600, Purpose: "test", ClientRequestID: id, AIAgentID: "ai-1",
-		}, "9.9.9.9")
+		}, "9.9.9.9", principal)
 		if err != nil || res.Lease == nil {
 			t.Fatalf("lease request %s: %v", id, err)
 		}
-		return res.Lease, res.RenewalToken
+		return res.Lease
 	}
 
-	l1, tok1 := newLease("lr-a")
-	l2, _ := newLease("lr-b")
+	l1 := newLease("lr-a")
+	l2 := newLease("lr-b")
 
 	// Disable renewal on l1.
 	after, err := leases.DisableRenewal(ctx, l1.ID, "admin-1", "no more")
@@ -639,7 +656,7 @@ func TestLeaseDisableRenewalProtectRevokeAll(t *testing.T) {
 	if !after.RenewalDisabled {
 		t.Fatal("renewal_disabled should be true")
 	}
-	if _, err := leases.Renew(ctx, l1.ID, tok1, 3600); err == nil {
+	if _, err := leases.Renew(ctx, l1.ID, principal, 3600); err == nil {
 		t.Fatal("renew after disable should fail")
 	}
 	// Unknown lease -> not found.
@@ -658,9 +675,12 @@ func TestLeaseDisableRenewalProtectRevokeAll(t *testing.T) {
 
 	// Revoke-all (global) revokes every still-active lease (both l1 and l2;
 	// disabling renewal does not make a lease terminal).
-	count, err := leases.RevokeAll(ctx, "", "admin-1", "emergency", true)
+	count, revokedLeases, err := leases.RevokeAll(ctx, "", "admin-1", "emergency", true)
 	if err != nil {
 		t.Fatalf("revoke all: %v", err)
+	}
+	if len(revokedLeases) != count {
+		t.Fatalf("revoke all returned %d leases but count=%d", len(revokedLeases), count)
 	}
 	if count != 2 {
 		t.Fatalf("expected 2 revoked, got %d", count)
@@ -675,7 +695,7 @@ func TestLeaseDisableRenewalProtectRevokeAll(t *testing.T) {
 		}
 	}
 	// Node-scoped revoke-all with unknown node errors.
-	if _, err := leases.RevokeAll(ctx, "missing-node", "admin-1", "x", true); err == nil {
+	if _, _, err := leases.RevokeAll(ctx, "missing-node", "admin-1", "x", true); err == nil {
 		t.Fatal("revoke all for unknown node should fail")
 	}
 }

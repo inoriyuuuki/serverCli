@@ -19,6 +19,7 @@ type LeaseInstall struct {
 	PublicKey         string    `json:"public_key"`
 	PermissionProfile string    `json:"permission_profile"`
 	ExpiresAt         time.Time `json:"expires_at"`
+	RuntimeToken      string    `json:"runtime_token,omitempty"`
 }
 
 // LeaseRemove is a removal instruction from the control plane.
@@ -94,7 +95,7 @@ func (m *LeaseKeyManager) SweepExpired(now time.Time) (int, error) {
 	var kept []string
 	for _, line := range lines {
 		if id, exp, ok := parseManagedLine(line); ok {
-			if time.Now().Unix() >= exp {
+			if now.Unix() >= exp {
 				m.log.Info("locally removing expired lease key", "lease_id", id)
 				removed++
 				continue
@@ -116,7 +117,11 @@ func (m *LeaseKeyManager) buildLine(inst LeaseInstall) string {
 	if shell == "" {
 		shell = "/usr/local/bin/servercli-lease-shell"
 	}
-	options += fmt.Sprintf(",command=%q", shell+" --lease "+inst.LeaseID)
+	cmd := shell + " --lease " + inst.LeaseID
+	if inst.RuntimeToken != "" {
+		cmd += " --token " + inst.RuntimeToken
+	}
+	options += fmt.Sprintf(",command=%q", cmd)
 	comment := fmt.Sprintf("servercli-lease-%s-exp-%d", inst.LeaseID, inst.ExpiresAt.Unix())
 	return options + " " + strings.TrimSpace(inst.PublicKey) + " " + comment
 }

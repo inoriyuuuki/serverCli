@@ -127,3 +127,17 @@ func (s *Server) handleCleanupRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cleanup_runs": runs})
 }
+
+// handleOpenAPI returns the unified route directory generated from the same
+// specs used to register the routes, so docs cannot drift from the mux.
+func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"openapi": "3.0.3",
+		"info": map[string]any{
+			"title":       "ServerCLI Control Plane API",
+			"version":     s.version,
+			"description": "统一接口目录：管理员 Session、Access Token 与 Agent/HMAC 接口。外部 AI 自助接口使用 Authorization: Bearer sct_* Access Token。",
+		},
+		"paths": s.apiRoutes(),
+	})
+}

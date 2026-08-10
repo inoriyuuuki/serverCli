@@ -11,6 +11,8 @@ import CommandCenterPage from './pages/CommandCenterPage';
 import TasksPage from './pages/TasksPage';
 import TaskDetailPage from './pages/TaskDetailPage';
 import AiCredentialsPage from './pages/AiCredentialsPage';
+import ApiTokensPage from './pages/ApiTokensPage';
+import ApiDirectoryPage from './pages/ApiDirectoryPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import SettingsPage from './pages/SettingsPage';
 
@@ -46,6 +48,22 @@ function AppRoutes() {
         <Route path="tasks" element={<TasksPage />} />
         <Route path="tasks/:taskId" element={<TaskDetailPage />} />
         <Route path="ai-credentials" element={<AiCredentialsPage />} />
+        <Route
+          path="api-tokens"
+          element={
+            <RequirePrimary>
+              <ApiTokensPage />
+            </RequirePrimary>
+          }
+        />
+        <Route
+          path="api-directory"
+          element={
+            <RequirePrimary>
+              <ApiDirectoryPage />
+            </RequirePrimary>
+          }
+        />
         <Route path="audit" element={<AuditLogsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
