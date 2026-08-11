@@ -7,6 +7,7 @@ import LoginPage from './pages/LoginPage';
 import OverviewPage from './pages/OverviewPage';
 import ServersPage from './pages/ServersPage';
 import ServerDetailPage from './pages/ServerDetailPage';
+import MigrationConsolePage from './pages/MigrationConsolePage';
 import CommandCenterPage from './pages/CommandCenterPage';
 import TasksPage from './pages/TasksPage';
 import TaskDetailPage from './pages/TaskDetailPage';
@@ -44,6 +45,7 @@ function AppRoutes() {
             </RequirePrimary>
           }
         />
+        <Route path="migrate" element={<MigrationConsolePage />} />
         <Route path="commands" element={<CommandCenterPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="tasks/:taskId" element={<TaskDetailPage />} />

@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"servercli/internal/config"
+	"servercli/internal/ownership"
 )
 
 // AgentVersion is reported in enrollments and heartbeats. CI injects the
@@ -334,6 +335,7 @@ func (a *Agent) sendHeartbeat(ctx context.Context) error {
 	hostname, _ := os.Hostname()
 	body := map[string]any{
 		"hostname":           hostname,
+		"ownership":          collectOwnershipReport(ownership.DefaultStatePath),
 		"agent_version":      AgentVersion,
 		"os_name":            runtime.GOOS,
 		"os_version":         runtime.GOARCH,
@@ -613,4 +615,29 @@ func (a *Agent) sweepLeaseKeys() {
 	} else if n > 0 {
 		a.log.Info("locally removed expired lease keys", "count", n)
 	}
+}
+
+// collectOwnershipReport reads the node-local ServerCLI ownership store
+// (/etc/servercli/private/ownership.json) and maps it to the heartbeat
+// payload. A missing/corrupt store yields an empty (non-nil) report so the
+// control plane can reconcile stale rows; nothing here is secret material.
+func collectOwnershipReport(path string) []map[string]any {
+	st := ownership.NewStore(path)
+	if err := st.Load(); err != nil {
+		return []map[string]any{}
+	}
+	all := st.All()
+	if len(all) == 0 {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(all))
+	for _, o := range all {
+		out = append(out, map[string]any{
+			"service":       o.Service,
+			"owner":         o.Owner,
+			"config_digest": o.ConfigDigest,
+			"environment":   o.Environment,
+		})
+	}
+	return out
 }

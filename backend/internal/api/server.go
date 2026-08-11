@@ -212,6 +212,11 @@ func (s *Server) Handler() http.Handler {
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes/{id}/metrics", Group: "节点", Auth: AuthAdmin, Summary: "节点指标", Debug: true}, s.requireAdmin(s.handleNodeMetrics))
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/nodes/{id}/commands", Group: "节点", Auth: AuthAdmin, Summary: "节点命令注册表", Debug: true}, s.requireAdmin(s.handleNodeCommands))
 
+	// Migration console (service ownership + adopt plan + ops dispatch).
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/migrate/services", Group: "迁移运维", Auth: AuthAdminOrToken, Summary: "服务归属列表（管理员 Session 或 Access Token）", Params: []RouteParam{{Name: "node_id", In: "query", Type: "string"}}, Debug: true}, s.adminOrToken(service.ResourceMigrate, service.ActionRead, "/api/v1/migrate/services")(s.handleMigrateServices))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/migrate/plan", Group: "迁移运维", Auth: AuthAdminOrToken, Summary: "adopt 计划（只读，不落盘）", Params: []RouteParam{{Name: "node_id", In: "query", Type: "string"}, {Name: "service", In: "query", Type: "string", Required: true}}, Debug: true}, s.adminOrToken(service.ResourceMigrate, service.ActionRead, "/api/v1/migrate/plan")(s.handleMigratePlan))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/migrate/ops", Group: "迁移运维", Auth: AuthAdminOrToken, Summary: "派发 adopt/update/backup/restore 到节点", Body: `{"node_id":"...","service":"docker","operation":"adopt","confirm":true}`, Errors: []string{"400", "401", "403", "404"}, Debug: true}, s.adminOrToken(service.ResourceMigrate, service.ActionOps, "/api/v1/migrate/ops")(s.handleMigrateOps))
+
 	// Agent (signature-authenticated, except enrollment).
 	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/agent/enrollments", Group: "Agent", Auth: AuthNone, Summary: "节点注册申请", Debug: false}, s.handleAgentEnroll)
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/agent/enrollments/{id}", Group: "Agent", Auth: AuthNone, Summary: "注册申请状态", Debug: false}, s.handleAgentEnrollmentStatus)

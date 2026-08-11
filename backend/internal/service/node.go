@@ -342,6 +342,18 @@ type HeartbeatInput struct {
 	TimeOffsetMS     int64          `json:"time_offset_ms"`
 	Summary          map[string]any `json:"summary"`
 	CommandsHash     string         `json:"commands_hash"`
+	// Ownership is the node agent's report of local ServerCLI service owner
+	// state. nil means the agent does not support reporting yet (rows kept);
+	// an empty non-nil slice replaces the node's rows (nothing owned).
+	Ownership []ServiceOwnershipReport `json:"ownership"`
+}
+
+// ServiceOwnershipReport is one service owner entry reported by a node agent.
+type ServiceOwnershipReport struct {
+	Service      string `json:"service"`
+	Owner        string `json:"owner"`
+	ConfigDigest string `json:"config_digest,omitempty"`
+	Environment  string `json:"environment,omitempty"`
 }
 
 // LeaseInstallOp is a pending key install instruction. RuntimeToken is the
@@ -404,6 +416,19 @@ func (s *NodeService) Heartbeat(ctx context.Context, nodeID string, in Heartbeat
 	}
 	if err := s.store.CreateHeartbeat(ctx, hb); err != nil {
 		return nil, err
+	}
+	// Persist the node's ServerCLI service ownership report (migration console).
+	if in.Ownership != nil {
+		rows := make([]model.ServiceOwnership, 0, len(in.Ownership))
+		for _, r := range in.Ownership {
+			rows = append(rows, model.ServiceOwnership{
+				NodeID: node.ID, Service: r.Service, Owner: r.Owner,
+				ConfigDigest: r.ConfigDigest, Environment: r.Environment,
+			})
+		}
+		if err := s.store.UpsertServiceOwnership(ctx, node.ID, rows); err != nil {
+			s.log.Warn("persist service ownership failed", "node", node.ID, "err", err)
+		}
 	}
 	if node.Status == model.NodeStatusOffline || node.Status == model.NodeStatusPending {
 		s.auditor.OK(ctx, AuditInput{

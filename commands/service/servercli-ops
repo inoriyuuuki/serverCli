@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# servercli-ops —— 在节点上执行 ServerCLI 迁移/运维操作（root）。
+# 由控制面「迁移与运维」控制台通过任务系统派发；参数顺序与 manifest 一致：
+#   $1 operation (adopt|update|backup|restore)
+#   $2 service
+#   $3 backup_id（仅 restore 需要）
+#   $4 confirm
+# 输出/退出码原样透传；Secret 不落 argv（servercli ops 自己管理）。
+set -eu
+
+op="${1:-}"
+service="${2:-}"
+backup_id="${3:-}"
+
+SERVERCLI_BIN=""
+for cand in /home/inori/serverCli/bin/servercli /opt/servercli/bin/servercli /usr/local/bin/servercli; do
+  if [ -x "$cand" ]; then SERVERCLI_BIN="$cand"; break; fi
+done
+if [ -z "$SERVERCLI_BIN" ]; then
+  echo "servercli-ops: servercli binary not found" >&2
+  exit 3
+fi
+if [ -z "$op" ] || [ -z "$service" ]; then
+  echo "servercli-ops: operation and service are required" >&2
+  exit 2
+fi
+
+case "$op" in
+  adopt|update|backup)
+    exec sudo -n "$SERVERCLI_BIN" ops "$op" "$service" --yes
+    ;;
+  restore)
+    if [ -z "$backup_id" ]; then
+      echo "servercli-ops: restore requires backup_id" >&2
+      exit 2
+    fi
+    exec sudo -n "$SERVERCLI_BIN" ops restore "$service" "$backup_id" --yes
+    ;;
+  *)
+    echo "servercli-ops: unsupported operation: $op" >&2
+    exit 2
+    ;;
+esac

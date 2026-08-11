@@ -78,6 +78,7 @@ const (
 	ResourceLeases        = "ai.leases"
 	ResourceNodes         = "nodes"
 	ResourceNotifications = "notifications"
+	ResourceMigrate       = "migrate"
 
 	ActionCreate     = "create"
 	ActionRead       = "read"
@@ -85,6 +86,7 @@ const (
 	ActionHeartbeat  = "heartbeat"
 	ActionDisconnect = "disconnect"
 	ActionSend       = "send"
+	ActionOps        = "ops"
 )
 
 // TokenPrincipal is the authenticated identity for a request carrying a
@@ -129,11 +131,12 @@ type PermissionCategory struct {
 	Label    string `json:"label"`
 }
 
-// PermissionCategories returns the two top-level permission categories.
+// PermissionCategories returns the top-level permission categories.
 func PermissionCategories() []PermissionCategory {
 	return []PermissionCategory{
 		{Category: "notifications", Label: "通知"},
 		{Category: "ai_credentials", Label: "AI 凭证"},
+		{Category: "migrate", Label: "迁移与运维"},
 	}
 }
 
@@ -148,6 +151,8 @@ func PermissionCatalog() []PermissionDef {
 		{Category: "ai_credentials", Resource: ResourceLeases, Action: ActionRenew, Label: "续期 Lease", Description: "允许续期本人持有的 Lease"},
 		{Category: "ai_credentials", Resource: ResourceLeases, Action: ActionHeartbeat, Label: "Lease 心跳", Description: "允许对本人持有的 Lease 发送心跳"},
 		{Category: "ai_credentials", Resource: ResourceLeases, Action: ActionDisconnect, Label: "断开 Lease", Description: "允许断开本人持有的 Lease"},
+		{Category: "migrate", Resource: ResourceMigrate, Action: ActionRead, Label: "迁移只读", Description: "查看服务归属与 adopt 计划（迁移与运维控制台只读）"},
+		{Category: "migrate", Resource: ResourceMigrate, Action: ActionOps, Label: "迁移运维操作", Description: "触发 adopt/update/backup/restore（高风险，会向节点派发任务）"},
 	}
 }
 

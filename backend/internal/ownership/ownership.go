@@ -129,13 +129,13 @@ type AdoptStep struct {
 // AdoptPlanResult is the diff plan produced by AdoptPlan. Producing a plan
 // never writes to the system.
 type AdoptPlanResult struct {
-	Environment    string         `json:"environment"`
-	Node           string         `json:"node"`
-	Service        string         `json:"service"`
-	Owner          string         `json:"owner"`
-	AlreadyAdopted bool           `json:"already_adopted"`
+	Environment    string           `json:"environment"`
+	Node           string           `json:"node"`
+	Service        string           `json:"service"`
+	Owner          string           `json:"owner"`
+	AlreadyAdopted bool             `json:"already_adopted"`
 	Discovered     *LegacyDiscovery `json:"discovered,omitempty"`
-	Steps          []AdoptStep    `json:"steps,omitempty"`
+	Steps          []AdoptStep      `json:"steps,omitempty"`
 }
 
 // NewStore returns a store backed by path. The in-memory state is empty until
@@ -280,6 +280,18 @@ func (s *Store) Get(env, node, service string) (Ownership, bool) {
 	defer s.mu.Unlock()
 	o, ok := s.data[key(env, node, service)]
 	return o, ok
+}
+
+// All returns every ownership record currently held (for node agent
+// heartbeat reporting to the control plane).
+func (s *Store) All() []Ownership {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Ownership, 0, len(s.data))
+	for _, o := range s.data {
+		out = append(out, o)
+	}
+	return out
 }
 
 // Set records ownership (in memory). Call Save to persist.

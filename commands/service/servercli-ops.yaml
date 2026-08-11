@@ -1,0 +1,29 @@
+apiVersion: servercli/v1
+kind: Command
+metadata:
+  id: servercli-ops
+  version: 1.0.0
+  category: service
+  title: ServerCLI 迁移与运维操作
+  description: 在节点上以 root 执行 servercli ops adopt/update/backup/restore（迁移与运维控制台派发）
+spec:
+  executable: ./service/servercli-ops
+  permissionProfile: admin
+  timeoutSeconds: 1800
+  maxOutputBytes: 1048576
+  concurrency: 1
+  parameters:
+    type: object
+    additionalProperties: false
+    required: [operation, service, confirm]
+    properties:
+      operation:
+        type: string
+        enum: [adopt, update, backup, restore]
+      service:
+        type: string
+        minLength: 1
+      backup_id:
+        type: string
+      confirm:
+        type: boolean

@@ -183,6 +183,27 @@ servercli version
 > http 8118），但安装器在 v2ray 就绪前运行，因此需先在本机起好代理并传
 > `--proxy`；init 之后的模块下载/更新则复用 v2ray 模块写入的代理环境。
 
+## 5.4 迁移与运维控制台（控制面 UI + API）
+
+「迁移与运维」已接入控制面作为正式功能（前置页面原型），支持分服务从旧 init
+迁移到 ServerCLI 并在界面完成后续运维派发：
+
+- **Agent 上报**：节点 Agent 每次心跳读取本机 `/etc/servercli/private/ownership.json`
+  （`ownership.Store`）并上报 `ownership` 字段；控制面持久化到 `service_ownership`
+  表（迁移 0007）。缺失文件上报空数组以清理陈旧记录；旧 Agent 不上报该字段则保留原记录。
+- **API**（`/api/v1/migrate/*`，管理员 Session 或 Access Token；权限目录新增
+  `migrate:read` / `migrate:ops`）：
+  - `GET /api/v1/migrate/services`：服务归属列表（按节点过滤）；
+  - `GET /api/v1/migrate/plan?node_id=&service=`：adopt 计划（只读，固定 8 步 + 红线）；
+  - `POST /api/v1/migrate/ops`：派发 adopt/update/backup/restore 到节点
+    （`confirm=true` 必填；restore 需 `backup_id`；需 `Idempotency-Key`）。
+- **执行链路**：控制面通过节点任务系统派发命令 `servercli-ops`
+  （`commands/service/servercli-ops.yaml` + 包装脚本，以 root 执行
+  `servercli ops <op> <service>`），结果/事件进入任务中心，可在任务页跟踪。
+- **前端**：导航「迁移运维」页（`/migrate`）——节点/服务选择、owner 状态机徽标、
+  adopt 计划与红线、操作派发按钮（成功后跳转任务详情）。
+- 节点需部署 0.0.33+ 才会上报 ownership 并通告 `servercli-ops` 命令。
+
 ## 6. Bundle 与 age
 
 - **Bundle Manifest** 字段（`backend/internal/bootstrap.BundleManifest`）：

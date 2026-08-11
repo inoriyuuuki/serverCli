@@ -159,8 +159,8 @@ func TestTokenServicePermanentAndExpiry(t *testing.T) {
 
 func TestPermissionCatalog(t *testing.T) {
 	cat := PermissionCatalog()
-	if len(cat) != 7 {
-		t.Fatalf("catalog must have 7 permissions, got %d", len(cat))
+	if len(cat) != 9 {
+		t.Fatalf("catalog must have 9 permissions, got %d", len(cat))
 	}
 	cats := map[string]int{}
 	for _, d := range cat {
@@ -174,12 +174,12 @@ func TestPermissionCatalog(t *testing.T) {
 			t.Fatalf("catalog entry %s:%s fails validation: %v", d.Resource, d.Action, err)
 		}
 	}
-	if cats["notifications"] != 1 || cats["ai_credentials"] != 6 {
+	if cats["notifications"] != 1 || cats["ai_credentials"] != 6 || cats["migrate"] != 2 {
 		t.Fatalf("unexpected category distribution: %v", cats)
 	}
 	categories := PermissionCategories()
-	if len(categories) != 2 {
-		t.Fatalf("expected 2 categories, got %d", len(categories))
+	if len(categories) != 3 {
+		t.Fatalf("expected 3 categories, got %d", len(categories))
 	}
 	byCat := map[string]string{}
 	for _, c := range categories {
