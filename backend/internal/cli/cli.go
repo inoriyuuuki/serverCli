@@ -51,6 +51,7 @@ type app struct {
 	jsonOut              bool
 	yes                  bool
 	env                  string
+	bootstrapEnv         string
 	node                 string
 	bundleURL            string
 	ageKeyFile           string
@@ -143,6 +144,8 @@ func consumeFlags(a *app, args []string) []string {
 			return pos
 		case strings.HasPrefix(arg, "--environment="):
 			a.env = strings.TrimPrefix(arg, "--environment=")
+		case strings.HasPrefix(arg, "--bootstrap-env="):
+			a.bootstrapEnv = strings.TrimPrefix(arg, "--bootstrap-env=")
 		case strings.HasPrefix(arg, "--node-name="):
 			a.node = strings.TrimPrefix(arg, "--node-name=")
 		case strings.HasPrefix(arg, "--bundle-url="):

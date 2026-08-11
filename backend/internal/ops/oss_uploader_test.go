@@ -61,3 +61,14 @@ func TestOSSUploaderNilProvider(t *testing.T) {
 		t.Fatalf("expected ErrNoUploader, got %v", err)
 	}
 }
+
+func TestFailingUploaderAlwaysFails(t *testing.T) {
+	u := FailingUploader{}
+	err := u.Upload(context.Background(), "servercli/backups/bak-1/manifest.json", []byte("{}"))
+	if err == nil {
+		t.Fatal("expected FailingUploader.Upload to return an error")
+	}
+	if got := err.Error(); got != "ops: OSS uploader misconfigured" {
+		t.Fatalf("error = %q, want %q", got, "ops: OSS uploader misconfigured")
+	}
+}

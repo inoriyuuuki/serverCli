@@ -164,10 +164,8 @@ func (a *app) newPrimaryBootstrap() (*bootstrapv2.Bootstrap, error) {
 }
 
 func (a *app) bootstrapEnvPath() string {
-	for _, arg := range os.Args {
-		if strings.HasPrefix(arg, "--bootstrap-env=") {
-			return strings.TrimPrefix(arg, "--bootstrap-env=")
-		}
+	if a.bootstrapEnv != "" {
+		return a.bootstrapEnv
 	}
 	return "/root/servercli-bootstrap/bootstrap.env"
 }
@@ -398,11 +396,12 @@ func ensureNoSymlinkPath(dir string) error {
 func (a *app) opsUploader() ops.Uploader {
 	cfg, err := a.ossConfigFromEnv()
 	if err != nil || cfg.Bucket == "" {
+		a.err("ops: warning: backups are local-only (OSS not configured)")
 		return ops.NoopUploader{}
 	}
 	provider, err := oss.New(cfg)
 	if err != nil {
-		return ops.NoopUploader{}
+		return ops.FailingUploader{}
 	}
 	return ops.OSSUploader{Provider: provider, BaseKey: "servercli/backups"}
 }

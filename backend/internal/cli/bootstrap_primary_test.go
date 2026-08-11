@@ -88,3 +88,14 @@ func TestInstallServerCLIFromArtifactsPicksPlatform(t *testing.T) {
 		t.Fatalf("platform artifact %s should match %s/%s", platformArtifact, osName, arch)
 	}
 }
+
+func TestBootstrapEnvPath(t *testing.T) {
+	a := &app{bootstrapEnv: "/tmp/custom.env"}
+	if got := a.bootstrapEnvPath(); got != "/tmp/custom.env" {
+		t.Fatalf("bootstrapEnvPath() = %q, want /tmp/custom.env", got)
+	}
+	a = &app{}
+	if got := a.bootstrapEnvPath(); got != "/root/servercli-bootstrap/bootstrap.env" {
+		t.Fatalf("bootstrapEnvPath() default = %q, want /root/servercli-bootstrap/bootstrap.env", got)
+	}
+}
