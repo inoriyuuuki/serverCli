@@ -16,6 +16,11 @@ import ApiTokensPage from './pages/ApiTokensPage';
 import ApiDirectoryPage from './pages/ApiDirectoryPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import SettingsPage from './pages/SettingsPage';
+import ClustersPage from './pages/ClustersPage';
+import ClusterDetailPage from './pages/ClusterDetailPage';
+import OperationsPage from './pages/OperationsPage';
+import ReleaseCachePage from './pages/ReleaseCachePage';
+import PrimaryTransferPage from './pages/PrimaryTransferPage';
 
 function AppRoutes() {
   return (
@@ -46,6 +51,11 @@ function AppRoutes() {
           }
         />
         <Route path="migrate" element={<MigrationConsolePage />} />
+        <Route path="clusters" element={<ClustersPage />} />
+        <Route path="clusters/:id" element={<ClusterDetailPage />} />
+        <Route path="operations" element={<OperationsPage />} />
+        <Route path="release-cache" element={<ReleaseCachePage />} />
+        <Route path="primary-transfers" element={<PrimaryTransferPage />} />
         <Route path="commands" element={<CommandCenterPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="tasks/:taskId" element={<TaskDetailPage />} />

@@ -360,3 +360,165 @@ export interface VersionInfo {
   database_migration_version?: string;
   [key: string]: unknown;
 }
+
+/** Declarative operations V2 API views. Secret values are intentionally absent. */
+export interface SecretRefLite {
+  key: string;
+  store?: string;
+  source?: string;
+}
+
+export interface Cluster {
+  id: string;
+  name: string;
+  environment: string;
+  active_primary_node_id?: string;
+  primary_epoch: number;
+  release_channel?: string;
+  oss_provider_ref?: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface NodeProfile {
+  id: string;
+  cluster_id: string;
+  name: string;
+  version: string;
+  modules?: ProfileModule[];
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProfileModule {
+  module_id: string;
+  version?: string;
+  config?: Record<string, string>;
+  secret_refs?: SecretRefLite[];
+  dependencies?: string[];
+  service_refs?: string[];
+  risk_level?: string;
+}
+
+export interface DeclarativeNode {
+  id: string;
+  cluster_id: string;
+  node_id: string;
+  role: string;
+  profile_id?: string;
+  lifecycle: string;
+  status: string;
+  labels?: Record<string, string>;
+  addresses?: DeclarativeNodeAddress[];
+  os_name?: string;
+  os_version?: string;
+  arch?: string;
+  desired_revision?: string;
+  applied_revision?: string;
+  identity_generation: number;
+  replacement_status?: string;
+  agent_status?: string;
+  legacy_mac?: string;
+}
+
+export interface DeclarativeNodeAddress {
+  address: string;
+  address_type: string;
+  port?: number;
+  preferred?: boolean;
+}
+
+export interface ServiceReference {
+  id: string;
+  cluster_id: string;
+  name: string;
+  service_instance_id?: string;
+  node_id?: string;
+  address?: string;
+  port?: number;
+  status: string;
+}
+
+export interface OperationView {
+  id: string;
+  operation_id: string;
+  operation_type: string;
+  cluster_id?: string;
+  node_id?: string;
+  module_id?: string;
+  service_instance_id?: string;
+  desired_revision?: string;
+  approval?: string;
+  risk_level?: string;
+  status: string;
+  requested_by?: string;
+  created_at?: string;
+  started_at?: string;
+  finished_at?: string;
+  error_code?: string;
+  error_message?: string;
+}
+
+export interface OperationStepView {
+  id: string;
+  operation_id: string;
+  sequence: number;
+  module_id?: string;
+  operation?: string;
+  attempt: number;
+  commit_point?: string;
+  status: string;
+  error_type?: string;
+  message?: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface ReleaseCacheEntry {
+  id: string;
+  version: string;
+  source_repository?: string;
+  source_release?: string;
+  os?: string;
+  arch?: string;
+  artifact_name: string;
+  artifact_size: number;
+  sha256: string;
+  modules_version?: string;
+  schema_min?: string;
+  schema_max?: string;
+  oss_key?: string;
+  status: string;
+  uploaded_at?: string;
+  verified_at?: string;
+  created_at?: string;
+}
+
+export interface BackupSetView {
+  id: string;
+  backup_id: string;
+  recovery_set_id?: string;
+  node_id?: string;
+  service_instance_id?: string;
+  module_version?: string;
+  status: string;
+  created_at?: string;
+  sha256?: string;
+  oss_key?: string;
+  size_bytes: number;
+}
+
+export interface PrimaryTransferView {
+  id: string;
+  cluster_id: string;
+  from_node_id: string;
+  to_node_id: string;
+  primary_epoch: number;
+  status: string;
+  backup_set_id?: string;
+  error_message?: string;
+  created_at?: string;
+  completed_at?: string;
+}
