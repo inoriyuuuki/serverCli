@@ -351,7 +351,7 @@ jobs:
       - name: Upload flat assets
         uses: actions/upload-artifact@v4
         with:
-          name: flat-${GOOS}-${GOARCH}
+          name: flat-${{ matrix.os }}-${{ matrix.arch }}
           path: ${{ env.FLAT }}/*
           if-no-files-found: error
 
