@@ -96,3 +96,37 @@ func TestBootstrapEnvToOSSConfig(t *testing.T) {
 		t.Fatal("first primary must not require a GitHub token")
 	}
 }
+
+func TestLoadBootstrapEnvRejectsPermissiveFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bootstrap.env")
+	text := "OSS_ACCESS_KEY_ID=id\nOSS_ACCESS_KEY_SECRET=secret\nOSS_ENDPOINT=https://oss.example.com\nOSS_BUCKET=bkt\nSERVERCLI_VERSION=0.0.9\n"
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadBootstrapEnv(path); err == nil {
+		t.Fatal("expected error for 0644 file")
+	}
+}
+
+func TestLoadBootstrapEnvRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.env")
+	if err := os.WriteFile(real, []byte("OSS_ACCESS_KEY_ID=id\nOSS_ENDPOINT=https://x\nOSS_BUCKET=b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.env")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("symlink unsupported")
+	}
+	if _, err := LoadBootstrapEnv(link); err == nil {
+		t.Fatal("expected error for symlink")
+	}
+}
+
+func TestLoadBootstrapEnvRejectsNonRegular(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := LoadBootstrapEnv(dir); err == nil {
+		t.Fatal("expected error for directory")
+	}
+}

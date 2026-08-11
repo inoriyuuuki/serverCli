@@ -129,7 +129,8 @@ CREATE TABLE operation_v2 (
     finished_at         TEXT,
     error_code          TEXT,
     error_message       TEXT,
-    UNIQUE(idempotency_key)
+    request_fingerprint TEXT,
+    UNIQUE(requested_by, idempotency_key)
 );
 CREATE INDEX idx_operation_v2_status ON operation_v2(status);
 CREATE INDEX idx_operation_v2_node ON operation_v2(node_id);

@@ -2,6 +2,7 @@ package releasecache
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"servercli/internal/bootstrap"
+	"servercli/internal/bundle"
 	"servercli/internal/oss"
 )
 
@@ -66,6 +69,8 @@ type SyncPlan struct {
 	Artifacts        []PlannedArtifact `json:"artifacts"`
 	ManifestOSSKey   string            `json:"manifest_oss_key"`
 	SHA256SumsOSSKey string            `json:"sha256sums_oss_key"`
+	// OSSBase is the normalized base key (e.g. "servercli/releases").
+	OSSBase string `json:"oss_base,omitempty"`
 }
 
 // SyncResult reports a completely verified sync. Additional source fields are
@@ -162,6 +167,7 @@ func PlanSync(ctx context.Context, opts SyncOptions) (*SyncPlan, error) {
 		Artifacts:        planned,
 		ManifestOSSKey:   objectKey(base, version, manifestFileName),
 		SHA256SumsOSSKey: objectKey(base, version, shaSumsFileName),
+		OSSBase:          base,
 	}, nil
 }
 
@@ -253,6 +259,39 @@ func ApplySync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 		return nil, errors.New("releasecache: OSS returned unexpected manifest sha256")
 	}
 
+	// Also publish a bootstrap-compatible Release Manifest so the OSS-first
+	// bootstrap (which reads bootstrap.ReleaseManifest via
+	// bundle.ReleaseManifestName) can consume the same release. The bootstrap
+	// manifest is the trust anchor for artifact sha256 lists in V1 (release
+	// signing is disabled); it must live under the same version prefix.
+	bootstrapManifest := &bootstrap.ReleaseManifest{
+		SchemaVersion:  "1.0",
+		ReleaseVersion: plan.Version,
+		CreatedAt:      now,
+		Artifacts:      make([]bootstrap.Artifact, 0, len(cacheArtifacts)),
+		SchemaCompat: bootstrap.SchemaCompat{
+			MinSchemaVersion: opts.Schema.Min,
+			MaxSchemaVersion: opts.Schema.Max,
+			Reversible:       true,
+		},
+	}
+	for _, ca := range cacheArtifacts {
+		bootstrapManifest.Artifacts = append(bootstrapManifest.Artifacts, bootstrap.Artifact{
+			Path:   ca.Name,
+			Kind:   classifyArtifactKind(ca.Name),
+			SHA256: ca.SHA256,
+			Size:   ca.Size,
+		})
+	}
+	bmData, err := json.Marshal(bootstrapManifest)
+	if err != nil {
+		return nil, fmt.Errorf("releasecache: marshal bootstrap release manifest: %w", err)
+	}
+	bmKey := objectKey(plan.OSSBase, plan.Version, bundle.ReleaseManifestName)
+	if _, err := opts.OSS.PutVerified(ctx, bmKey, bmData, "application/json"); err != nil {
+		return nil, fmt.Errorf("releasecache: upload and verify bootstrap release manifest: %w", err)
+	}
+
 	if opts.Log != nil {
 		opts.Log.Info("release sync completed", "version", plan.Version, "artifacts", len(uploaded))
 	}
@@ -309,6 +348,19 @@ func verifiedExistingSync(ctx context.Context, opts SyncOptions, plan *SyncPlan)
 	if err != nil {
 		return nil, false, fmt.Errorf("releasecache: read existing sha256sums.txt: %w", err)
 	}
+	// The bootstrap-compatible release manifest is part of the availability
+	// contract: a cache is only "already uploaded" when it exists and parses.
+	bmKey := objectKey(plan.OSSBase, plan.Version, bundle.ReleaseManifestName)
+	bmData, err := opts.OSS.Get(ctx, bmKey)
+	if errors.Is(err, oss.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("releasecache: read existing bootstrap release manifest: %w", err)
+	}
+	if _, err := bundle.LoadReleaseManifest(bmData); err != nil {
+		return nil, false, nil
+	}
 	return &SyncResult{
 		Version: plan.Version, Uploaded: uploaded, ManifestSHA256: oss.SHA256Hex(data), Verified: true,
 		AlreadyUploaded: true, SourceRepository: manifest.SourceRepository, SourceRelease: manifest.SourceRelease,
@@ -360,6 +412,30 @@ func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, c
 		timeout = 10 * time.Minute
 	}
 	return context.WithTimeout(ctx, timeout)
+}
+
+// classifyArtifactKind maps a release asset name to a bootstrap.Artifact
+// kind. Raw executables (servercli, servercli-linux-amd64, ...) are "binary";
+// archives and the module/template/schema bundles are explicitly NOT binary so
+// the bootstrap installer never tries to exec a tar.gz.
+func classifyArtifactKind(name string) string {
+	lower := strings.ToLower(name)
+	base := path.Base(lower)
+	switch {
+	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"),
+		strings.HasSuffix(lower, ".zip"), strings.HasSuffix(lower, ".tar"):
+		return "archive"
+	case strings.HasPrefix(base, "modules"), strings.Contains(lower, "modules.tar"):
+		return "module"
+	case strings.HasPrefix(base, "templates"), strings.Contains(lower, "templates.tar"):
+		return "template"
+	case strings.HasPrefix(base, "schema"), strings.Contains(lower, "schema.tar"):
+		return "schema"
+	case strings.HasSuffix(lower, ".sh"), strings.HasPrefix(base, "install"):
+		return "installer"
+	default:
+		return "binary"
+	}
 }
 
 func contentTypeFor(name string) string {

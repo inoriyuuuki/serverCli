@@ -4,6 +4,8 @@ package opsv2
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,6 +76,7 @@ var validApprovals = map[string]struct{}{
 	"approved": {},
 	"rejected": {},
 	"auto":     {},
+	"manual":   {}, // requires explicit human approval: created as awaiting_approval
 }
 
 // ParseOperationRequest parses a strict Operation V2 request. JSON property
@@ -207,4 +210,39 @@ func (r *OperationRequest) ToOperation(id, requestedBy string, now ...time.Time)
 		RequestedBy:       requestedBy,
 		CreatedAt:         createdAt,
 	}, nil
+}
+
+// RequestFingerprint returns a stable sha256 fingerprint of the semantic
+// content of an OperationRequest. Arguments are canonicalized (key-sorted,
+// order-independent) and the primary_epoch is included, so reusing an
+// idempotency key with a different payload — including different arguments
+// ordering — yields a different fingerprint and is treated as a conflict.
+// Only the idempotency key, approval and deadline are excluded.
+func RequestFingerprint(req *OperationRequest) string {
+	arguments := req.Arguments
+	if canonical, err := canonicalJSON(req.Arguments); err == nil {
+		arguments = canonical
+	}
+	canon := struct {
+		OperationType     string          `json:"operation_type"`
+		ClusterID         string          `json:"cluster_id"`
+		NodeID            string          `json:"node_id"`
+		ModuleID          string          `json:"module_id"`
+		ServiceInstanceID string          `json:"service_instance_id"`
+		DesiredRevision   string          `json:"desired_revision"`
+		PrimaryEpoch      int64           `json:"primary_epoch"`
+		Arguments         json.RawMessage `json:"arguments"`
+	}{
+		OperationType:     req.OperationType,
+		ClusterID:         req.ClusterID,
+		NodeID:            req.NodeID,
+		ModuleID:          req.ModuleID,
+		ServiceInstanceID: req.ServiceInstanceID,
+		DesiredRevision:   req.DesiredRevision,
+		PrimaryEpoch:      req.PrimaryEpoch,
+		Arguments:         arguments,
+	}
+	raw, _ := json.Marshal(&canon)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }

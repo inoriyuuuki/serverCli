@@ -290,7 +290,7 @@ func TestReleaseCacheRegisterAndMarkAvailable(t *testing.T) {
 		t.Fatalf("unexpected release cache entry: %+v", created.Entry)
 	}
 
-	status, body = env.serve(http.MethodPost, "/api/v1/release-cache/"+created.Entry.ID+"/mark-available", nil, env.adminHeaders())
+	status, body = env.serve(http.MethodPost, "/api/v1/release-cache/"+created.Entry.ID+"/mark-available", map[string]any{"verified": true}, env.adminHeaders())
 	if status != http.StatusOK {
 		t.Fatalf("mark release cache available status=%d body=%s", status, body)
 	}

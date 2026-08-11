@@ -161,14 +161,23 @@ func (e *Executor) Execute(ctx context.Context, payload *TaskPayload, cmd Comman
 	send(Event{EventType: "accepted", Message: "task accepted"})
 	send(Event{EventType: "started", Message: "task started"})
 
-	args := buildArgs(cmd, payload.Arguments)
-	structured, sErr := prepareStructuredTask(payload)
-	if sErr != nil {
-		e.finish(taskID, send, Result{Status: "failed", ErrorCode: "EXEC_STRUCTURED", ErrorMessage: sErr.Error()})
-		return
-	}
-	if structured != nil {
-		defer structured.cleanup()
+	var args []string
+	var structured *structuredEnv
+	if isStructuredPayload(payload.Arguments) {
+		var sErr error
+		structured, sErr = prepareStructuredTask(payload)
+		if sErr != nil {
+			e.finish(taskID, send, Result{Status: "failed", ErrorCode: "EXEC_STRUCTURED", ErrorMessage: sErr.Error()})
+			return
+		}
+		if structured != nil {
+			defer structured.cleanup()
+		}
+		// Structured operation data is passed only through the private context
+		// and secret files referenced by the environment, never through argv.
+		args = nil
+	} else {
+		args = buildTaskArgs(payload, cmd)
 	}
 	execCtx, execCancel := context.WithCancel(runCtx)
 	defer execCancel()
@@ -372,6 +381,16 @@ func buildArgs(cmd CommandEntry, raw json.RawMessage) []string {
 		args = append(args, argString(p.val))
 	}
 	return args
+}
+
+// buildTaskArgs returns positional argv only for legacy tasks. Structured
+// tasks receive their operation context through private files referenced by
+// environment variables and must never serialize their payload into argv.
+func buildTaskArgs(payload *TaskPayload, cmd CommandEntry) []string {
+	if payload == nil || isStructuredPayload(payload.Arguments) {
+		return nil
+	}
+	return buildArgs(cmd, payload.Arguments)
 }
 
 func argString(v any) string {

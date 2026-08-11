@@ -122,11 +122,20 @@ const profileColumns = `id, cluster_id, name, version, modules_json, default_con
 func scanProfile(row interface{ Scan(...any) error }) (*model.NodeProfile, error) {
 	var p model.NodeProfile
 	var created, updated sql.NullString
-	if err := row.Scan(&p.ID, &p.ClusterID, &p.Name, &p.Version, &p.ModulesJSON, &p.DefaultConfigJSON,
-		&p.SecretRefsJSON, &p.BackupPolicyJSON, &p.UpdatePolicyJSON, &p.VerificationPolicyJSON,
-		&p.LabelsJSON, &p.ResourcesJSON, &p.Status, &created, &updated); err != nil {
+	var modules, defCfg, secretRefs, backupPol, updatePol, verifyPol, labels, resources sql.NullString
+	if err := row.Scan(&p.ID, &p.ClusterID, &p.Name, &p.Version, &modules, &defCfg,
+		&secretRefs, &backupPol, &updatePol, &verifyPol,
+		&labels, &resources, &p.Status, &created, &updated); err != nil {
 		return nil, err
 	}
+	p.ModulesJSON = modules.String
+	p.DefaultConfigJSON = defCfg.String
+	p.SecretRefsJSON = secretRefs.String
+	p.BackupPolicyJSON = backupPol.String
+	p.UpdatePolicyJSON = updatePol.String
+	p.VerificationPolicyJSON = verifyPol.String
+	p.LabelsJSON = labels.String
+	p.ResourcesJSON = resources.String
 	var err error
 	if p.CreatedAt, err = parseTimeVal(created); err != nil {
 		return nil, err
@@ -217,12 +226,15 @@ func scanDeclarativeNode(row interface{ Scan(...any) error }) (*model.Declarativ
 	var n model.DeclarativeNode
 	var created, updated, retired sql.NullString
 	var profileID, osName, osVersion, arch, desiredRev, appliedRev, replacement, agentStatus, legacyMAC sql.NullString
+	var labels, addresses sql.NullString
 	var gen int64
 	if err := row.Scan(&n.ID, &n.ClusterID, &n.NodeID, &n.Role, &profileID, &n.Lifecycle, &n.Status,
-		&n.LabelsJSON, &n.AddressesJSON, &osName, &osVersion, &arch, &desiredRev,
+		&labels, &addresses, &osName, &osVersion, &arch, &desiredRev,
 		&appliedRev, &gen, &replacement, &agentStatus, &legacyMAC, &created, &updated, &retired); err != nil {
 		return nil, err
 	}
+	n.LabelsJSON = labels.String
+	n.AddressesJSON = addresses.String
 	n.ProfileID = profileID.String
 	n.OSName = osName.String
 	n.OSVersion = osVersion.String
@@ -443,19 +455,20 @@ func (s *Store) UpdateServiceReference(ctx context.Context, r *model.ServiceRefe
 
 const operationColumns = `id, operation_id, operation_type, cluster_id, node_id, module_id, service_instance_id,
 	desired_revision, arguments_json, approval, risk_level, idempotency_key, deadline, primary_epoch,
-	status, requested_by, created_at, started_at, finished_at, error_code, error_message`
+	status, requested_by, created_at, started_at, finished_at, error_code, error_message, request_fingerprint`
 
 func scanOperation(row interface{ Scan(...any) error }) (*model.Operation, error) {
 	var o model.Operation
 	var deadline, created, started, finished sql.NullString
-	var clusterID, nodeID, moduleID, svcID, desiredRev, approval, risk, idem, requestedBy, errCode, errMsg sql.NullString
+	var clusterID, nodeID, moduleID, svcID, desiredRev, approval, risk, idem, requestedBy, errCode, errMsg, fingerprint, argsJSON sql.NullString
 	var epoch int64
 	if err := row.Scan(&o.ID, &o.OperationID, &o.OperationType, &clusterID, &nodeID, &moduleID,
-		&svcID, &desiredRev, &o.ArgumentsJSON, &approval, &risk,
+		&svcID, &desiredRev, &argsJSON, &approval, &risk,
 		&idem, &deadline, &epoch, &o.Status, &requestedBy, &created, &started, &finished,
-		&errCode, &errMsg); err != nil {
+		&errCode, &errMsg, &fingerprint); err != nil {
 		return nil, err
 	}
+	o.ArgumentsJSON = argsJSON.String
 	o.ClusterID = clusterID.String
 	o.NodeID = nodeID.String
 	o.ModuleID = moduleID.String
@@ -467,6 +480,7 @@ func scanOperation(row interface{ Scan(...any) error }) (*model.Operation, error
 	o.RequestedBy = requestedBy.String
 	o.ErrorCode = errCode.String
 	o.ErrorMessage = errMsg.String
+	o.RequestFingerprint = fingerprint.String
 	o.PrimaryEpoch = epoch
 	var err error
 	if o.Deadline, err = parseTime(deadline); err != nil {
@@ -493,13 +507,14 @@ func (s *Store) CreateOperation(ctx context.Context, o *model.Operation) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO operation_v2
 		(id, operation_id, operation_type, cluster_id, node_id, module_id, service_instance_id,
 		 desired_revision, arguments_json, approval, risk_level, idempotency_key, deadline, primary_epoch,
-		 status, requested_by, created_at, started_at, finished_at, error_code, error_message)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+		 status, requested_by, created_at, started_at, finished_at, error_code, error_message, request_fingerprint)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
 		o.ID, o.OperationID, o.OperationType, nullString(o.ClusterID), nullString(o.NodeID),
 		nullString(o.ModuleID), nullString(o.ServiceInstanceID), nullString(o.DesiredRevision),
 		o.ArgumentsJSON, nullString(o.Approval), nullString(o.RiskLevel), nullString(o.IdempotencyKey),
 		nullTime(o.Deadline), o.PrimaryEpoch, o.Status, nullString(o.RequestedBy), ts(o.CreatedAt),
-		nullTime(o.StartedAt), nullTime(o.FinishedAt), nullString(o.ErrorCode), nullString(o.ErrorMessage))
+		nullTime(o.StartedAt), nullTime(o.FinishedAt), nullString(o.ErrorCode), nullString(o.ErrorMessage),
+		nullString(o.RequestFingerprint))
 	return err
 }
 
@@ -582,16 +597,46 @@ func (s *Store) ListOperations(ctx context.Context, clusterID, nodeID, status st
 // UpdateOperationStatus transitions an operation status with an optional
 // error. Only non-terminal -> terminal transitions are persisted once.
 func (s *Store) UpdateOperationStatus(ctx context.Context, id, status, errorCode, errorMessage string) error {
+	ok, err := s.UpdateOperationStatusCAS(ctx, id, "", status, errorCode, errorMessage)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrStateTransition
+	}
+	return nil
+}
+
+// UpdateOperationStatusCAS performs a compare-and-swap status transition:
+// the UPDATE only applies when the current status equals expectedStatus (or
+// always when expectedStatus is empty). It returns whether a row changed, so
+// concurrent approve/cancel/status calls cannot overwrite a terminal state.
+func (s *Store) UpdateOperationStatusCAS(ctx context.Context, id, expectedStatus, status, errorCode, errorMessage string) (bool, error) {
 	nowTs := now()
 	var finished any
 	if model.IsOperationTerminal(status) {
 		finished = ts(nowTs)
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE operation_v2 SET
+	if expectedStatus != "" {
+		res, err := s.db.ExecContext(ctx, `UPDATE operation_v2 SET
+			status=$2, error_code=$3, error_message=$4, finished_at=COALESCE(finished_at, $5)
+			WHERE id=$1 AND status=$6`,
+			id, status, nullString(errorCode), nullString(errorMessage), finished, expectedStatus)
+		if err != nil {
+			return false, err
+		}
+		n, _ := res.RowsAffected()
+		return n == 1, nil
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE operation_v2 SET
 		status=$2, error_code=$3, error_message=$4, finished_at=COALESCE(finished_at, $5)
 		WHERE id=$1`,
 		id, status, nullString(errorCode), nullString(errorMessage), finished)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 const operationStepColumns = `id, operation_id, sequence, module_id, operation, attempt, commit_point, status, error_type, message, started_at, completed_at`
@@ -936,11 +981,13 @@ const primaryTransferColumns = `id, cluster_id, from_node_id, to_node_id, primar
 func scanPrimaryTransfer(row interface{ Scan(...any) error }) (*model.PrimaryTransfer, error) {
 	var t model.PrimaryTransfer
 	var created, started, completed, errCode, errMsg, backupID, requestedBy sql.NullString
+	var stepsJSON sql.NullString
 	if err := row.Scan(&t.ID, &t.ClusterID, &t.FromNodeID, &t.ToNodeID, &t.PrimaryEpoch, &t.Status,
-		&backupID, &t.StepsJSON, &errCode, &errMsg, &requestedBy, &created, &started, &completed); err != nil {
+		&backupID, &stepsJSON, &errCode, &errMsg, &requestedBy, &created, &started, &completed); err != nil {
 		return nil, err
 	}
 	t.BackupSetID = backupID.String
+	t.StepsJSON = stepsJSON.String
 	t.ErrorCode = errCode.String
 	t.ErrorMessage = errMsg.String
 	t.RequestedBy = requestedBy.String

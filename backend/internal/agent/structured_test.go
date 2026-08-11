@@ -19,6 +19,45 @@ func TestPrepareStructuredTaskLegacyReturnsNil(t *testing.T) {
 	}
 }
 
+func TestBuildTaskArgsDoesNotExposeStructuredPayload(t *testing.T) {
+	const secret = "argv-secret-must-not-leak"
+	opJSON := `{
+		"operation_id":"op-argv","operation_type":"backup","cluster_id":"clu-1",
+		"node_id":"node-1","module_id":"postgres","service_instance_id":"svc-pg",
+		"desired_revision":"","arguments":{"password":"` + secret + `"},"approval":"auto",
+		"risk_level":"medium","idempotency_key":"idem-argv","deadline":null,
+		"primary_epoch":1
+	}`
+	structuredArgs, err := json.Marshal(map[string]json.RawMessage{
+		reservedStructuredKey: json.RawMessage(opJSON),
+		structuredSecretsKey:  json.RawMessage(`{"postgres.password":"` + secret + `"}`),
+	})
+	if err != nil {
+		t.Fatalf("marshal structured arguments: %v", err)
+	}
+
+	cmd := CommandEntry{
+		ParameterSchemaJSON: `{"type":"object","properties":{"operation_request":{},"_secrets":{}}}`,
+	}
+	structuredPayload := &TaskPayload{Arguments: structuredArgs}
+	argv := buildTaskArgs(structuredPayload, cmd)
+	if len(argv) != 0 {
+		t.Fatalf("structured argv = %q, want empty", argv)
+	}
+	joined := strings.Join(argv, " ")
+	for _, forbidden := range []string{secret, reservedStructuredKey, structuredSecretsKey} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("structured argv contains forbidden value %q: %q", forbidden, joined)
+		}
+	}
+
+	legacyPayload := &TaskPayload{Arguments: json.RawMessage(`{"operation":"backup","service":"docker"}`)}
+	legacyArgv := buildTaskArgs(legacyPayload, CommandEntry{})
+	if len(legacyArgv) == 0 {
+		t.Fatal("legacy argv must not be empty")
+	}
+}
+
 func TestPrepareStructuredTaskWrites0600ContextAndSecrets(t *testing.T) {
 	opJSON := `{
 		"operation_id":"op-1","operation_type":"backup","cluster_id":"clu-1",

@@ -276,6 +276,9 @@ type Operation struct {
 	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 	ErrorCode         string     `json:"error_code,omitempty"`
 	ErrorMessage      string     `json:"error_message,omitempty"`
+	// RequestFingerprint is the canonical fingerprint of the originating
+	// OperationRequest used for idempotency replay; never serialized.
+	RequestFingerprint string `json:"-"`
 }
 
 // OperationStep is one step of an operation, with attempt + commit point for

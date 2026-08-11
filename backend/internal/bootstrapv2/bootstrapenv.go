@@ -44,6 +44,22 @@ var supportedBootstrapEnvKeys = map[string]func(*BootstrapEnv, string){
 // shell parser: quoting, expansion, command substitution, whitespace-bearing
 // values and duplicate supported keys are rejected.
 func LoadBootstrapEnv(path string) (*BootstrapEnv, error) {
+	// The seed file contains OSS credentials: it must be a regular file (never
+	// a symlink) with no group/other permissions (0600/0400/000). An overly
+	// permissive file is refused rather than silently accepted.
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap env: stat: %w", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("bootstrap env: refusing symlink %s", path)
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("bootstrap env: %s is not a regular file", path)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("bootstrap env: %s permissions %o are too open; require 0600", path, fi.Mode().Perm())
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap env: open: %w", err)
