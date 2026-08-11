@@ -180,12 +180,15 @@ func installServerCLIFromArtifacts(ctx context.Context, manifest *bootstrap.Rele
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Select the servercli binary artifact for this platform. The generic
-	// `servercli` artifact (bin/servercli) is accepted; platform-specific
-	// names like servercli-linux-amd64 are preferred when present.
+	// Select the servercli binary artifact for this platform. Only Kind
+	// "binary" artifacts that are raw executables (no archive extension) are
+	// candidates. The generic `servercli` artifact (bin/servercli) is
+	// accepted; platform-specific names like servercli-linux-amd64 are
+	// preferred when present. Archives (tar.gz/zip) and module bundles are
+	// never installed as the servercli binary.
 	candidate := ""
 	for _, art := range manifest.Artifacts {
-		if art.Kind != "binary" {
+		if art.Kind != "binary" || isArchivePath(art.Path) {
 			continue
 		}
 		base := filepath.Base(filepath.FromSlash(art.Path))
@@ -233,6 +236,14 @@ func installServerCLIFromArtifacts(ctx context.Context, manifest *bootstrap.Rele
 func platformMatches(base, osName, arch string) bool {
 	lower := strings.ToLower(base)
 	return strings.Contains(lower, strings.ToLower(osName)) && strings.Contains(lower, strings.ToLower(arch))
+}
+
+// isArchivePath reports whether an artifact path is an archive that must not
+// be installed as a raw executable binary.
+func isArchivePath(p string) bool {
+	lower := strings.ToLower(p)
+	return strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") ||
+		strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar")
 }
 
 // runFoundationModule executes one foundation module lifecycle operation
@@ -342,11 +353,24 @@ func installBinarySafely(src, dst string, mode os.FileMode) error {
 // pre-existing component in the writable region that is a symlink is rejected.
 // System symlinks above the nearest existing ancestor (e.g. /var on macOS)
 // are intentionally not traversed.
+// trustedSystemRoots are the well-known top-level directories below which
+// servercli installs binaries. Walking stops at the first trusted root so
+// legitimate system symlinks above it (e.g. /var on macOS) never cause false
+// rejections, while attacker-controllable components under /home /usr /opt
+// /etc are fully validated.
+var trustedSystemRoots = map[string]bool{"/usr": true, "/opt": true, "/home": true, "/etc": true}
+
 func ensureNoSymlinkPath(dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return err
 	}
+	// Walk from the deepest component upward. Every existing component is
+	// checked: a symlink anywhere in the writable region is rejected. The
+	// walk stops at the first existing directory that is NOT world-writable —
+	// those are system directories (root-owned) that no unprivileged attacker
+	// can replace with a symlink, and stopping there avoids false rejections
+	// from legitimate system symlinks above them (e.g. /var on macOS).
 	rest := abs
 	for {
 		fi, lerr := os.Lstat(rest)
@@ -354,10 +378,10 @@ func ensureNoSymlinkPath(dir string) error {
 			if fi.Mode()&os.ModeSymlink != 0 {
 				return fmt.Errorf("install: refusing to write through symlinked directory %s", rest)
 			}
-			// Nearest existing regular directory: stop ascending.
-			return nil
-		}
-		if !os.IsNotExist(lerr) {
+			if fi.Mode().Perm()&0o002 == 0 && fi.IsDir() {
+				return nil // system-owned directory; stop ascending
+			}
+		} else if !os.IsNotExist(lerr) {
 			return lerr
 		}
 		parent := filepath.Dir(rest)

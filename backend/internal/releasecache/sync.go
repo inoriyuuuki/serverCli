@@ -278,7 +278,7 @@ func ApplySync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	for _, ca := range cacheArtifacts {
 		bootstrapManifest.Artifacts = append(bootstrapManifest.Artifacts, bootstrap.Artifact{
 			Path:   ca.Name,
-			Kind:   "binary",
+			Kind:   classifyArtifactKind(ca.Name),
 			SHA256: ca.SHA256,
 			Size:   ca.Size,
 		})
@@ -348,6 +348,19 @@ func verifiedExistingSync(ctx context.Context, opts SyncOptions, plan *SyncPlan)
 	if err != nil {
 		return nil, false, fmt.Errorf("releasecache: read existing sha256sums.txt: %w", err)
 	}
+	// The bootstrap-compatible release manifest is part of the availability
+	// contract: a cache is only "already uploaded" when it exists and parses.
+	bmKey := objectKey(plan.OSSBase, plan.Version, bundle.ReleaseManifestName)
+	bmData, err := opts.OSS.Get(ctx, bmKey)
+	if errors.Is(err, oss.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("releasecache: read existing bootstrap release manifest: %w", err)
+	}
+	if _, err := bundle.LoadReleaseManifest(bmData); err != nil {
+		return nil, false, nil
+	}
 	return &SyncResult{
 		Version: plan.Version, Uploaded: uploaded, ManifestSHA256: oss.SHA256Hex(data), Verified: true,
 		AlreadyUploaded: true, SourceRepository: manifest.SourceRepository, SourceRelease: manifest.SourceRelease,
@@ -399,6 +412,30 @@ func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, c
 		timeout = 10 * time.Minute
 	}
 	return context.WithTimeout(ctx, timeout)
+}
+
+// classifyArtifactKind maps a release asset name to a bootstrap.Artifact
+// kind. Raw executables (servercli, servercli-linux-amd64, ...) are "binary";
+// archives and the module/template/schema bundles are explicitly NOT binary so
+// the bootstrap installer never tries to exec a tar.gz.
+func classifyArtifactKind(name string) string {
+	lower := strings.ToLower(name)
+	base := path.Base(lower)
+	switch {
+	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"),
+		strings.HasSuffix(lower, ".zip"), strings.HasSuffix(lower, ".tar"):
+		return "archive"
+	case strings.HasPrefix(base, "modules"), strings.Contains(lower, "modules.tar"):
+		return "module"
+	case strings.HasPrefix(base, "templates"), strings.Contains(lower, "templates.tar"):
+		return "template"
+	case strings.HasPrefix(base, "schema"), strings.Contains(lower, "schema.tar"):
+		return "schema"
+	case strings.HasSuffix(lower, ".sh"), strings.HasPrefix(base, "install"):
+		return "installer"
+	default:
+		return "binary"
+	}
 }
 
 func contentTypeFor(name string) string {
