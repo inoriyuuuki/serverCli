@@ -28,6 +28,17 @@ type structuredEnv struct {
 	extra       []string
 }
 
+// isStructuredPayload reports whether raw arguments contain the reserved
+// Operation V2 key. It performs no filesystem or other external side effects.
+func isStructuredPayload(raw json.RawMessage) bool {
+	var args map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return false
+	}
+	_, ok := args[reservedStructuredKey]
+	return ok
+}
+
 // prepareStructuredTask inspects payload arguments for a structured Operation
 // V2 request. It returns nil when the task is a legacy positional task.
 // On success the caller must invoke cleanup() after the process exits.
