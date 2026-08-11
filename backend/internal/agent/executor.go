@@ -162,12 +162,23 @@ func (e *Executor) Execute(ctx context.Context, payload *TaskPayload, cmd Comman
 	send(Event{EventType: "started", Message: "task started"})
 
 	args := buildArgs(cmd, payload.Arguments)
+	structured, sErr := prepareStructuredTask(payload)
+	if sErr != nil {
+		e.finish(taskID, send, Result{Status: "failed", ErrorCode: "EXEC_STRUCTURED", ErrorMessage: sErr.Error()})
+		return
+	}
+	if structured != nil {
+		defer structured.cleanup()
+	}
 	execCtx, execCancel := context.WithCancel(runCtx)
 	defer execCancel()
 
 	proc := exec.CommandContext(execCtx, cmd.ExecutablePath, args...)
 	proc.Dir = filepath.Dir(cmd.ExecutablePath)
 	proc.Env = minimalEnv()
+	if structured != nil {
+		proc.Env = append(proc.Env, structured.extra...)
+	}
 
 	stdout, err := proc.StdoutPipe()
 	if err != nil {

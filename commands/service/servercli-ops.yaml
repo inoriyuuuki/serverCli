@@ -2,10 +2,10 @@ apiVersion: servercli/v1
 kind: Command
 metadata:
   id: servercli-ops
-  version: 1.0.0
+  version: 2.0.0
   category: service
-  title: ServerCLI 迁移与运维操作
-  description: 在节点上以 root 执行 servercli ops adopt/update/backup/restore（迁移与运维控制台派发）
+  title: ServerCLI 迁移与运维操作（Operation V2）
+  description: 在节点上以 root 执行 servercli ops adopt/update/backup/restore；结构化 OperationRequest 经 SERVERCLI_OPERATION_CONTEXT（0600 JSON）与 SERVERCLI_SECRET_DIR（0700）传递，不依赖参数顺序
 spec:
   executable: ./service/servercli-ops
   permissionProfile: admin
@@ -15,15 +15,11 @@ spec:
   parameters:
     type: object
     additionalProperties: false
-    required: [operation, service, confirm]
+    required: [operation_request]
     properties:
-      operation:
-        type: string
-        enum: [adopt, update, backup, restore]
-      service:
-        type: string
-        minLength: 1
-      backup_id:
-        type: string
-      confirm:
-        type: boolean
+      operation_request:
+        type: object
+        description: 结构化 OperationRequest（operation_type/module_id/arguments/backup_id 等）
+      _secrets:
+        type: object
+        description: 可选 Secret 映射，仅写入 0700 目录下的独立 0600 文件

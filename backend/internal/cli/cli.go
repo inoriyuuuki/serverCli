@@ -112,6 +112,8 @@ func Run(args []string, stdout, stderr io.Writer, vi VersionInfo) int {
 		return a.cmdModules()
 	case "ops":
 		return a.cmdOps()
+	case "bootstrap":
+		return a.cmdBootstrap()
 	case "version", "--version":
 		a.out("%s (build %s, commit %s)", a.vi.Version, a.vi.Build, a.vi.Commit)
 		return bootstrap.ExitOK
@@ -972,7 +974,7 @@ func (a *app) cmdOps() int {
 		BackupDir:   a.backupDir,
 		StatePath:   a.statePath,
 		Timeout:     30 * time.Minute,
-		Uploader:    ops.NoopUploader{},
+		Uploader:    a.opsUploader(),
 		Inventory:   inv,
 		Secrets:     bstore,
 	}

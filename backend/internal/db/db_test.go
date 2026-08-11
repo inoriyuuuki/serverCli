@@ -26,8 +26,8 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	ver := d.SchemaVersion(ctx)
-	if ver != 7 {
-		t.Fatalf("expected schema version 7, got %d", ver)
+	if ver != 8 {
+		t.Fatalf("expected schema version 8, got %d", ver)
 	}
 	// Required tables exist.
 	expected := []string{
@@ -38,6 +38,10 @@ func TestMigrateSQLite(t *testing.T) {
 		"audit_event", "system_setting", "cleanup_run",
 		"ai_auto_approval", "task_parameter_history",
 		"api_access_token", "api_token_usage_log",
+		"cluster", "node_profile", "declarative_node", "service_reference",
+		"desired_state_revision", "applied_state_revision", "operation_v2",
+		"operation_step", "backup_set", "oss_sync_revision",
+		"release_cache_entry", "primary_transfer",
 	}
 	for _, tbl := range expected {
 		var name string
@@ -55,7 +59,7 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer d2.Close()
-	if v := d2.SchemaVersion(ctx); v != 7 {
+	if v := d2.SchemaVersion(ctx); v != 8 {
 		t.Fatalf("reopen version mismatch: %d", v)
 	}
 }
@@ -67,7 +71,7 @@ func TestMigrateInMemory(t *testing.T) {
 		t.Fatalf("open in-memory: %v", err)
 	}
 	defer d.Close()
-	if d.SchemaVersion(context.Background()) != 7 {
+	if d.SchemaVersion(context.Background()) != 8 {
 		t.Fatal("in-memory migration failed")
 	}
 }
@@ -159,8 +163,8 @@ func TestMigrate0006RewritesCanonicalWildcards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply 0006: %v", err)
 	}
-	if ver != 7 {
-		t.Fatalf("expected schema version 7 after applying 0006+0007, got %d", ver)
+	if ver != 8 {
+		t.Fatalf("expected schema version 8 after applying 0007+0008, got %d", ver)
 	}
 
 	rows, err := d.QueryContext(ctx, `SELECT id, permissions_json FROM api_access_token ORDER BY id`)
