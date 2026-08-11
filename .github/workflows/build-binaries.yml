@@ -380,7 +380,9 @@ jobs:
           # 扁平 asset（安装器按 slash->dash 映射下载）——含每个平台的
           # release-manifest-linux-<arch>.json 与各 artifact
           mkdir -p flat
-          find . -maxdepth 2 -path '*/flat-*/*' -type f -exec cp -f {} flat/ \;
+          # flat 产物在 download-artifact 下形如 dist/flat-<os>-<arch>/<file>
+          # （文件处于第 3 层），用足够深度并去重复制。
+          find . -path '*/flat-*/*' -type f -exec cp -f {} flat/ \;
           find . -mindepth 1 -maxdepth 1 -type d -name 'flat-*' -exec rm -rf {} +
           sha256sum *.tar.gz > sha256sums.txt
           ls -la
