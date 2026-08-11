@@ -92,9 +92,13 @@ func ImportBundle(ctx context.Context, opts ImportOptions, store *secretstore.St
 		return nil, fmt.Errorf("bundle payload digest mismatch (manifest %s, got %s)", env.Manifest.PayloadDigest, got)
 	}
 
-	pubPEM, err := os.ReadFile(opts.PublicKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("read public key %s: %w", opts.PublicKeyFile, err)
+	// Release public key is optional: publication signing is disabled in this
+	// deployment, so verification is skipped when no key is present.
+	var pubPEM []byte
+	if opts.PublicKeyFile != "" {
+		if data, rerr := os.ReadFile(opts.PublicKeyFile); rerr == nil {
+			pubPEM = data
+		}
 	}
 	ageKey, err := os.ReadFile(opts.AgeKeyFile)
 	if err != nil {
@@ -207,8 +211,6 @@ func validateImportOptions(opts ImportOptions) error {
 		return fmt.Errorf("bundle import: bundle_url is required")
 	case opts.AgeKeyFile == "":
 		return fmt.Errorf("bundle import: age_key_file is required")
-	case opts.PublicKeyFile == "":
-		return fmt.Errorf("bundle import: public_key_file is required")
 	}
 	return nil
 }

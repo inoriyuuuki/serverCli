@@ -248,14 +248,16 @@ ServerCLI 的物理主机发布包含**三个二进制**：`servercli`（初始�
 - **安装器**：`deploy/install-servercli.sh` 面向全新 CentOS/RHEL（EL8/EL9，
   x86_64/aarch64）一键安装。它经 v2ray 本地代理（`--proxy`，如
   `http://127.0.0.1:8118` / `socks5h://127.0.0.1:1080`）从 GitHub Release（唯一
-  下载源，不走 OSS 回退）下载签名 Release Manifest，用发布公钥校验 Ed25519
-  签名并逐个校验 artifact 的 sha256，安装到 `/opt/servercli/releases/<version>`
+  下载源，不走 OSS 回退）下载 Release Manifest，按 manifest 内 sha256 摘要逐个
+  校验 artifact（发布签名已关闭，信任边界为 HTTPS GitHub），安装到
+  `/opt/servercli/releases/<version>`
   并原子切换 `current`/`previous` 软链接；仅在 TTY 下询问是否运行
   `servercli init`（`--yes` 直接运行，`--no-init-prompt` 跳过）。
 - **稳定命令接口**：`servercli init|init plan|init apply|init status|init resume|init repair`、
   `servercli config import plan|apply`、`servercli modules run`、`servercli ops update|backup|restore`、
   `servercli version`；稳定退出码见 `backend/internal/bootstrap`。
-- **安全模型**：root-only 安装、签名 Manifest 为唯一信任锚（fail-closed）、Secret 只进
+- **安全模型**：root-only 安装、Manifest sha256 摘要表为完整性锚（发布签名已关闭，
+  信任边界为 HTTPS GitHub）、Secret 只进
   加密 Bootstrap Store/0600 文件/单行环境变量、原子写 + fsync、拒绝符号链接、
   提交前由 `scripts/scan-secrets.sh` 扫描泄密；Bundle 明文只短暂存在于
   `/run/servercli/bootstrap` tmpfs。

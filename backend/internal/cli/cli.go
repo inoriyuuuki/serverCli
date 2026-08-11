@@ -240,9 +240,6 @@ func (a *app) requireBundleInputs() error {
 	if a.ageKeyFile == "" {
 		return errors.New("--age-key-file is required")
 	}
-	if _, err := os.Stat(a.pubKeyFile); err != nil {
-		return fmt.Errorf("release public key %s not found (install it or pass --pubkey-file): %w", a.pubKeyFile, err)
-	}
 	return nil
 }
 
@@ -991,15 +988,7 @@ func (a *app) cmdOps() int {
 			a.err("ops: parse release manifest: %v", rerr)
 			return bootstrap.ExitModule
 		}
-		pubPEM, perr := os.ReadFile(a.pubKeyFile)
-		if perr != nil {
-			a.err("ops: read release public key: %v", perr)
-			return bootstrap.ExitModule
-		}
-		if verr := bundle.VerifyReleaseManifest(rm, pubPEM); verr != nil {
-			a.err("ops: release manifest signature: %v", verr)
-			return bootstrap.ExitSignature
-		}
+		// 发布签名已按部署要求关闭：manifest 仅用于读取 schema 兼容区间。
 		ocfg.ReleaseCompat = &rm.SchemaCompat
 		ocfg.CurrentSchemaVersion = a.currentSchemaVersion
 	}

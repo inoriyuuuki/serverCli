@@ -9,11 +9,13 @@
 #
 # 信任模型（fail-closed）：
 #   1) 从 GitHub Release（唯一源，经 v2ray 代理）下载 release-manifest.json；
-#   2) 用发布公钥（--pubkey，或脚本内嵌占位公钥）以 openssl pkeyutl 校验
-#      Manifest 的 Ed25519 签名（签名消息 = 去除 signature 字段后按键名排序的
-#      紧凑 JSON，等价于 `jq -cS 'del(.signature)'`）；
-#   3) 按 Manifest 内 sha256 摘要表逐个下载并校验每个 artifact；
-#   4) 原子安装到 /opt/servercli/releases/<version>，并切换 current/previous 软链接。
+#   2) 按 Manifest 内 sha256 摘要表逐个下载并校验每个 artifact；
+#   3) 原子安装到 /opt/servercli/releases/<version>，并切换 current/previous 软链接。
+#
+# 信任边界（已按部署要求关闭发布签名）：
+#   - 不配置发布公钥/私钥，不做 Ed25519 签名校验；
+#   - 完整性由 Manifest 内 sha256 摘要表保证，传输信任边界为 HTTPS GitHub；
+#   - 这意味着能改写 GitHub Release 或中间人 HTTPS 者可替换产物（仅防损坏/误传）。
 #
 # 下载通道：仅使用 GitHub Release（主源），不配置 OSS 回退源。国内网络
 # 通过 v2ray 代理连接 GitHub：运行安装器前先在本机起好 v2ray 本地代理，
@@ -21,13 +23,12 @@
 #
 # 安全约定：
 #   - 仅允许 root 运行；目标系统限定 EL8/EL9 + x86_64/aarch64；
-#   - 不含任何真实 Secret / 私钥 / Token；内嵌公钥为占位值，生产必须
-#     `--pubkey <file>` 替换，否则验签必然失败；
-#   - 校验失败一律退出码 4（签名/认证失败），绝不信任裸 SHA256。
+#   - 不含任何真实 Secret / 私钥 / Token；
+#   - sha256 摘要校验失败一律退出码 4，绝不信任与摘要不符的产物。
 #
 # 退出码（与 backend/internal/bootstrap 的 Exit* 常量一致）：
-#   0 成功；2 参数错误；3 预检失败（OS/arch/缺少 openssl、curl、jq/python3）；
-#   4 签名或 sha256 摘要校验失败；5 网络/下载失败；6 安装/解压失败。
+#   0 成功；2 参数错误；3 预检失败（OS/arch/缺少 curl、jq/python3）；
+#   4 sha256 摘要校验失败；5 网络/下载失败；6 安装/解压失败。
 #
 # 参数：
 #   --version <v>         下载版本（默认 releases/latest；也可传 tag 如 v1.2.3）
@@ -35,7 +36,6 @@
 #                         （默认 https://github.com/inoriyuuuki/serverCli/releases/download）
 #   --proxy <url>         v2ray 本地代理地址（如 http://127.0.0.1:8118 /
 #                         socks5h://127.0.0.1:1080）；GitHub 仅经此代理连接
-#   --pubkey <file>       发布公钥文件（Ed25519 PKIX PEM）。不传则使用内嵌占位公钥
 #   --yes                 安装完成后直接运行 servercli init（不再询问）
 #   --no-init-prompt      安装完成后不询问、不运行 servercli init
 #   -h, --help            显示帮助
@@ -48,18 +48,10 @@ DEFAULT_GITHUB_BASE="https://github.com/inoriyuuuki/serverCli/releases/download"
 INSTALL_ROOT="/opt/servercli"
 RELEASES_DIR="${INSTALL_ROOT}/releases"
 
-# 内嵌占位发布公钥（Ed25519 PKIX PEM 形状）。
-# 注意：这不是真实密钥，openssl 无法把它解析为合法公钥，验签必然失败。
-# 生产环境必须用 --pubkey 提供真实发布公钥，并在发布方与安装方之间线下核对指纹。
-EMBEDDED_PUBKEY_PEM='-----BEGIN PUBLIC KEY-----
-U0VSVkVSQ0xJLVBMQUNFSE9MREVSLVBVQkxJQy1LRVktRE8tTk9ULVVTRQ==
------END PUBLIC KEY-----'
-
 # ---------- 参数 ----------
 VERSION="${DEFAULT_VERSION}"
 GITHUB_BASE="${DEFAULT_GITHUB_BASE}"
 PROXY=""
-PUBKEY_FILE=""
 YES=0
 NO_INIT_PROMPT=0
 
@@ -73,8 +65,6 @@ usage() {
                         （默认 https://github.com/inoriyuuuki/serverCli/releases/download）
   --proxy <url>         v2ray 本地代理地址（http://... 或 socks5h://...）；
                         GitHub 仅经此代理连接，不走 OSS 回退
-  --pubkey <file>       发布公钥文件（Ed25519 PKIX PEM）。
-                        不传则使用脚本内嵌占位公钥（必须替换，否则验签失败）
   --yes                 安装完成后直接运行 servercli init（不再询问）
   --no-init-prompt      安装完成后不询问、不运行 servercli init
   -h, --help            显示帮助
@@ -119,11 +109,6 @@ while [ "$#" -gt 0 ]; do
       PROXY="$2"; shift 2 ;;
     --proxy=*)
       PROXY="${1#*=}"; shift ;;
-    --pubkey)
-      [ "$#" -ge 2 ] || die_usage "--pubkey 需要一个参数"
-      PUBKEY_FILE="$2"; shift 2 ;;
-    --pubkey=*)
-      PUBKEY_FILE="${1#*=}"; shift ;;
     --yes)
       YES=1; shift ;;
     --no-init-prompt)
@@ -189,22 +174,10 @@ if [ -n "${PROXY}" ]; then
   info "已启用 v2ray 代理: ${PROXY}"
 fi
 if ! command -v jq >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
-  die 3 "未找到 jq 或 python3（用于重建签名消息与解析 manifest），请先安装其一：dnf install -y jq"
+  die 3 "未找到 jq 或 python3（用于解析 release-manifest.json），请先安装其一：dnf install -y jq"
 fi
 
 info "目标: ${ID} ${VERSION_ID} / ${ARCH}，版本选择: ${VERSION}"
-
-# ---------- 公钥 ----------
-if [ -n "${PUBKEY_FILE}" ]; then
-  [ -r "${PUBKEY_FILE}" ] || die_usage "无法读取公钥文件: ${PUBKEY_FILE}"
-  info "使用发布公钥: ${PUBKEY_FILE}"
-else
-  warn "使用脚本内嵌的占位发布公钥（非真实密钥）。"
-  warn "生产环境必须使用 --pubkey <file> 指定真实发布公钥，否则验签必然失败（fail-closed）。"
-  PUBKEY_FILE="$(mktemp "${TMPDIR:-/tmp}/servercli-pubkey.XXXXXX")"
-  printf '%s\n' "${EMBEDDED_PUBKEY_PEM}" > "${PUBKEY_FILE}"
-  chmod 600 "${PUBKEY_FILE}"
-fi
 
 # ---------- 下载基地址 ----------
 # GitHub 最新版资源 URL 形态: .../releases/latest/download/<asset>
@@ -241,40 +214,14 @@ MANIFEST="${WORK}/release-manifest.json"
 if ! download "${MANIFEST_ASSET}" "${MANIFEST}"; then
   die 5 "无法从 GitHub 下载 ${MANIFEST_ASSET}（可检查 --version / --github-base / --proxy / 网络）"
 fi
-info "${MANIFEST_ASSET} 下载完成，开始验签"
+info "${MANIFEST_ASSET} 下载完成"
 
-# 重建签名消息（canonical form）：去除 signature 字段后按键名排序的紧凑 JSON。
-# Go 侧等价实现：解码为 interface{} 后 json.Marshal（encoding/json 对 map 按键排序）。
+# 仅解析 release_version（发布签名已按部署要求关闭；完整性由 sha256 摘要表保证）。
 if command -v jq >/dev/null 2>&1; then
-  MSG="${WORK}/manifest.msg"
-  jq -cS 'del(.signature)' "${MANIFEST}" > "${MSG}"
-  SIG_B64="$(jq -r '.signature // empty' "${MANIFEST}")"
   RV="$(jq -r '.release_version // empty' "${MANIFEST}")"
 else
-  MSG="${WORK}/manifest.msg"
-  python3 - "${MANIFEST}" "${MSG}" <<'PY'
-import json, sys
-m = json.load(open(sys.argv[1]))
-m.pop("signature", None)
-open(sys.argv[2], "w").write(json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
-PY
-  SIG_B64="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("signature",""))' "${MANIFEST}")"
   RV="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("release_version",""))' "${MANIFEST}")"
 fi
-
-[ -n "${SIG_B64}" ] || die 4 "release-manifest.json 缺少 signature 字段（unsigned 产物会被拒绝）"
-
-SIGFILE="${WORK}/manifest.sig"
-printf '%s' "${SIG_B64}" | base64 -d > "${SIGFILE}" 2>/dev/null || die 4 "signature 不是合法 base64"
-
-# 校验 Ed25519 签名：签名消息 = 去除 signature 后按键排序的紧凑 JSON（与
-# Go CanonicalManifestBytes / CI python sort_keys 完全一致），Ed25519 对
-# canonical 原文直接签名/验签（无 SHA-256 预哈希）。
-if ! openssl pkeyutl -verify -rawin -pubin -inkey "${PUBKEY_FILE}" \
-     -in "${MSG}" -sigfile "${SIGFILE}" 2>/dev/null; then
-  die 4 "Release Manifest 签名校验失败（公钥: ${PUBKEY_FILE}）"
-fi
-info "Release Manifest 签名校验通过（release_version: ${RV}）"
 
 # ---------- 2) 解析 artifacts 摘要表 ----------
 [ -n "${RV}" ] || die 4 "release-manifest.json 缺少 release_version 字段"
@@ -358,7 +305,7 @@ while IFS="${TAB}" read -r path kind sha size; do
   esac
 done < "${ARTIFACTS_FILE}"
 
-# 保留安装依据的 manifest（含签名与摘要表）
+# 保留安装依据的 manifest（含 sha256 摘要表）
 install -m 0644 "${MANIFEST}" "${RELEASE_DIR}/release-manifest.json"
 
 # 基本完整性检查

@@ -36,8 +36,12 @@ func CanonicalManifestBytes(v any) ([]byte, error) {
 }
 
 // verifyManifestSignature verifies sigB64 over the canonical JSON of m using
-// the release Ed25519 public key.
+// the release Ed25519 public key. When pubPEM is empty (publication signing
+// disabled), verification is skipped.
 func verifyManifestSignature(m any, pubPEM []byte, sigB64 string) error {
+	if len(pubPEM) == 0 {
+		return nil
+	}
 	canon, err := CanonicalManifestBytes(m)
 	if err != nil {
 		return fmt.Errorf("canonical manifest: %w", err)
@@ -114,7 +118,8 @@ func validateBundleManifest(m *bootstrap.BundleManifest) error {
 }
 
 // VerifyReleaseManifest verifies the Ed25519 signature of a release manifest
-// against the release public key.
+// against the release public key. When pubPEM is empty (publication signing
+// disabled), verification is skipped.
 func VerifyReleaseManifest(m *bootstrap.ReleaseManifest, pubPEM []byte) error {
 	if m == nil {
 		return fmt.Errorf("release manifest: nil")

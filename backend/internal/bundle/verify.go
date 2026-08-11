@@ -20,10 +20,13 @@ var replayAllowedEnvs = map[string]bool{
 // bootstrapped version and replay is not permitted.
 var ErrReplayRejected = errors.New("bundle: low-version replay rejected (use config import plan/apply)")
 
-// VerifyBundleManifest verifies a Bundle Manifest against the release public
-// key and enforces the import-time gates:
+// VerifyBundleManifest verifies a Bundle Manifest and enforces the
+// import-time gates:
 //
-//   - Ed25519 signature over the canonical JSON (Signature field blanked);
+//   - Ed25519 signature over the canonical JSON (Signature field blanked),
+//     ONLY when a release public key (pubPEM) is provided. Publication
+//     signing is disabled by default in this deployment (pubPEM empty), so
+//     the signature check is skipped; the remaining gates still hold:
 //   - manifest environment must equal environment;
 //   - manifest must not be expired (ExpiresAt in the past);
 //   - minimum_bootstrap_version must be <= currentBootstrapVersion;
@@ -35,14 +38,13 @@ func VerifyBundleManifest(m *bootstrap.BundleManifest, pubPEM []byte, currentBoo
 	if m == nil {
 		return fmt.Errorf("verify bundle manifest: nil manifest")
 	}
-	if len(pubPEM) == 0 {
-		return fmt.Errorf("verify bundle manifest: empty public key")
-	}
 	if err := validateBundleManifest(m); err != nil {
 		return err
 	}
-	if err := verifyManifestSignature(m, pubPEM, m.Signature); err != nil {
-		return fmt.Errorf("verify bundle manifest: %w", err)
+	if len(pubPEM) > 0 {
+		if err := verifyManifestSignature(m, pubPEM, m.Signature); err != nil {
+			return fmt.Errorf("verify bundle manifest: %w", err)
+		}
 	}
 	if m.Environment != environment {
 		return fmt.Errorf("verify bundle manifest: environment mismatch (manifest %q, local %q)", m.Environment, environment)

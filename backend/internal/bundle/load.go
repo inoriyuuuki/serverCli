@@ -46,9 +46,11 @@ func LoadBundle(ctx context.Context, opts ImportOptions) (*LoadedBundle, error) 
 	if got := sha256Hex(env.Payload); !equalDigest(got, env.Manifest.PayloadDigest) {
 		return nil, fmt.Errorf("bundle payload digest mismatch (manifest %s, got %s)", env.Manifest.PayloadDigest, got)
 	}
-	pubPEM, err := os.ReadFile(opts.PublicKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("read public key %s: %w", opts.PublicKeyFile, err)
+	var pubPEM []byte
+	if opts.PublicKeyFile != "" {
+		if data, rerr := os.ReadFile(opts.PublicKeyFile); rerr == nil {
+			pubPEM = data
+		}
 	}
 	ageKey, err := os.ReadFile(opts.AgeKeyFile)
 	if err != nil {

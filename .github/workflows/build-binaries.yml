@@ -12,7 +12,7 @@
 #   - commands/（命令 manifest 与可执行文件）、modules/（公共模块）
 #   - deploy/（环境示例 + systemd 模板 + lease shell + install-servercli.sh 安装器）
 #   - release/（示例 manifest 等）、scripts/、VERSION、INSTALL.md
-#   - release-manifest.json（签名步骤生成：artifact sha256 摘要表 + 可选 Ed25519 签名）
+#   - release-manifest.json（生成：artifact sha256 摘要表，unsigned，信任边界为 HTTPS GitHub）
 #
 # 旧的 Docker 镜像构建工作流已停用，见 .github/workflows/docker-build.yml.disabled
 # =============================================================================
@@ -227,17 +227,12 @@ jobs:
           ls -lh "${ARCHIVE}"
 
       # -----------------------------------------------------------------------
-      # 签名 Release Manifest（可选）
+      # 生成 Release Manifest（unsigned）
       # -----------------------------------------------------------------------
       # 生成 bundle 内 release-manifest.json（各 artifact 的 sha256 摘要表）。
-      # 若配置了 SERVERCLI_RELEASE_SIGNING_KEY（base64 编码的 Ed25519 私钥 PEM），
-      # 用 openssl 对 canonical 消息（去除 signature 字段、按键排序的紧凑 JSON）
-      # 直接做标准 Ed25519 签名（无 SHA-256 预哈希）并写入 signature 字段；
-      # 未配置时生成 unsigned 标记的 manifest，签名步骤跳过并输出警告。
-      # 注意：manifest 内 sha256 摘要表是信任锚，安装器绝不相信裸 SHA256。
-      - name: Sign release manifest
-        env:
-          SERVERCLI_RELEASE_SIGNING_KEY: ${{ secrets.SERVERCLI_RELEASE_SIGNING_KEY }}
+      # 已按部署要求关闭发布签名：manifest 标记 unsigned，安装器只按摘要表
+      # 校验每个 artifact（信任边界为 HTTPS GitHub）。
+      - name: Generate release manifest
         run: |
           set -euo pipefail
           ROOT="${ARCHIVE_NAME}"
@@ -302,8 +297,8 @@ jobs:
               "schema_version": "1.0",
               "release_version": version,
               "created_at": now,
-              "signing_key_id": "ci-release-key-placeholder",
               "artifacts": artifacts,
+              "unsigned": True,
               "schema_compat": {
                   "min_schema_version": "1.0",
                   "max_schema_version": "1.0",
@@ -317,50 +312,7 @@ jobs:
           print("release-manifest.json artifacts: %d" % len(artifacts))
           PY
 
-          # ---- 2) 可选签名：存在 SERVERCLI_RELEASE_SIGNING_KEY 时用 openssl 生成 Ed25519 签名 ----
-          KEY_B64="${SERVERCLI_RELEASE_SIGNING_KEY:-}"
-          if [ -n "${KEY_B64}" ]; then
-            KEYFILE="$(mktemp)"
-            MSG="$(mktemp)"
-            SIG="$(mktemp)"
-            trap 'rm -f "${KEYFILE}" "${MSG}" "${SIG}"' EXIT
-
-            # 密钥为 base64 编码的 Ed25519 私钥 PEM
-            printf '%s' "${KEY_B64}" | base64 -d > "${KEYFILE}"
-
-            # canonical 消息 = 去除 signature 字段后按键名排序的紧凑 JSON
-            python3 - "${MANIFEST}" "${MSG}" <<'PY'
-          import json, sys
-          m = json.load(open(sys.argv[1]))
-          m.pop("signature", None)
-          open(sys.argv[2], "w").write(json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
-          PY
-
-            # 对消息 SHA-256 摘要做 Ed25519 签名（与安装器
-            # Ed25519 直接对 canonical 原文签名（无 SHA-256 预哈希），与 Go
-            # CanonicalManifestBytes / 安装器 pkeyutl -verify -rawin 一致。
-            # 注：无 SERVERCLI_RELEASE_SIGNING_KEY 时生成 unsigned 标记，安装器会拒绝。
-            openssl pkeyutl -sign -rawin -inkey "${KEYFILE}" -in "${MSG}" -out "${SIG}"
-            SIG_B64="$(base64 -w0 "${SIG}")"
-
-            python3 - "${MANIFEST}" "${SIG_B64}" <<'PY'
-          import json, sys
-          m = json.load(open(sys.argv[1]))
-          m["signature"] = sys.argv[2]
-          open(sys.argv[1], "w").write(json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
-          PY
-            echo "::notice::release-manifest.json 已使用 SERVERCLI_RELEASE_SIGNING_KEY 签名"
-          else
-            python3 - "${MANIFEST}" <<'PY'
-          import json, sys
-          m = json.load(open(sys.argv[1]))
-          m["signature"] = ""
-          m["unsigned"] = True
-          open(sys.argv[1], "w").write(json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
-          PY
-            echo "::warning::SERVERCLI_RELEASE_SIGNING_KEY 未配置：release-manifest.json 标记为 unsigned，跳过签名步骤"
-          fi
-          echo "Generated manifest:"
+          echo "Generated manifest (unsigned, sha256-only trust):"
           ls -l "${MANIFEST}"
 
           # ---- 生成扁平 asset 布局（安装器按 slash->dash 映射下载） ----
@@ -368,7 +320,7 @@ jobs:
           #   bin/servercli            -> bin-servercli
           #   deploy/install-servercli.sh -> deploy-install-servercli.sh
           #   modules/                 -> modules.tar.gz（目录打包）
-          #   release-manifest-linux-<arch>.json（按平台命名的签名 manifest）
+          #   release-manifest-linux-<arch>.json（按平台命名的 manifest）
           FLAT="$(mktemp -d)/flat-${GOOS}-${GOARCH}"
           mkdir -p "${FLAT}"
           while IFS= read -r path; do
@@ -423,7 +375,7 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          # 平台整包 tar.gz + 签名摘要
+          # 平台整包 tar.gz + 摘要表
           find . -maxdepth 2 -type f -name '*.tar.gz' -exec mv -f {} . \;
           # 扁平 asset（安装器按 slash->dash 映射下载）——含每个平台的
           # release-manifest-linux-<arch>.json 与各 artifact

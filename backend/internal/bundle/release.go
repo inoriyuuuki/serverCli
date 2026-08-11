@@ -43,9 +43,6 @@ func FetchAndVerifyRelease(ctx context.Context, githubBaseURL, ossBaseURL string
 	if githubBaseURL == "" {
 		return nil, "", fmt.Errorf("fetch release: github base URL is required")
 	}
-	if len(pubPEM) == 0 {
-		return nil, "", fmt.Errorf("fetch release: empty public key")
-	}
 
 	m, err := fetchAndVerifyReleaseFrom(ctx, githubBaseURL, pubPEM)
 	if err == nil {

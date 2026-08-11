@@ -27,18 +27,14 @@ Secret 入加密 Store → 状态机推进 → 形成可用的 Control Plane + N
 flowchart TD
     subgraph 发布侧
         CI[GitHub Actions build-binaries.yml]
-        CI --> BND[bundle tar.gz + release-manifest.json]
-        CI --> SIGN{配置签名私钥?}
-        SIGN -->|是| SIG[openssl Ed25519 签名]
-        SIGN -->|否| UNS[产物标记 unsigned]
-        SIG --> REL[GitHub Release（唯一下载源）]
-        UNS --> REL
+        CI --> BND[bundle tar.gz + release-manifest.json（unsigned）]
+        BND --> REL[GitHub Release（唯一下载源）]
     end
 
     subgraph 安装侧 EL8/9 全新主机
         INS[deploy/install-servercli.sh 仅 root]
         INS --> MAN[经 v2ray 代理从 GitHub 下载 release-manifest.json]
-        MAN --> VRF[openssl pkeyutl 验签 + 逐 artifact sha256 校验]
+        MAN --> VRF[按 manifest 逐 artifact sha256 校验]
         VRF -->|失败 exit 4| ABORT[终止安装 fail-closed]
         VRF -->|通过| INST[/opt/servercli/releases/vX 原子切换 current/previous]
         INST --> PRM{TTY 且非 --no-init-prompt?}
@@ -119,7 +115,7 @@ servercli version
 | 0 | ok | 成功 |
 | 2 | usage_error | 参数/用法错误 |
 | 3 | preflight_failed | OS/arch/DNS/端口/依赖等预检失败 |
-| 4 | signature_failed | 签名/认证失败（Release/Bundle 验签、age 解密、claim 鉴权） |
+| 4 | signature_failed | 认证失败（age 解密、claim 鉴权等；Release 发布签名已关闭） |
 | 5 | network_failed | 临时网络失败（可重试） |
 | 6 | module_failed | 模块执行失败 |
 | 7 | partial_success | 部分成功 |
@@ -130,42 +126,27 @@ servercli version
 
 ### 5.1 信任模型
 
-- **Release Manifest**（`release-manifest.json`）由同一 Ed25519 发布私钥签名；
+- **Release Manifest**（`release-manifest.json`）在 CI 生成并标记 `unsigned`；
   **GitHub Release 是唯一下载源**（国内网络经 v2ray 本地代理连接）。需求中的
-  OSS 镜像回退在本部署中不启用（`bundle.FetchAndVerifyRelease` 的 OSS 回退是
-  显式 opt-in，`ossBaseURL` 为空即关闭）；如未来启用，仍须同一公钥验证。
-- Manifest 内 `artifacts[].sha256` 摘要表是唯一信任锚；**禁止只信裸 SHA256**。
-- 发布私钥绝不进入仓库/CI 日志；CI 通过 Secret `SERVERCLI_RELEASE_SIGNING_KEY`
-  注入 base64 编码的 Ed25519 私钥 PEM。
-- 发布公钥由运维线下分发（`--pubkey <file>`）；安装器内嵌的占位公钥不是真实密钥，
-  使用它验签必然失败（fail-closed）。
+  OSS 镜像回退与发布签名在本部署中均不启用：`bundle.FetchAndVerifyRelease` 的
+  OSS 回退为显式 opt-in（`ossBaseURL` 为空即关闭）；Bundle/Release 验签在未提供
+  发布公钥时跳过。
+- Manifest 内 `artifacts[].sha256` 摘要表是完整性锚，安装器逐个 `sha256sum -c`
+  校验；**禁止只信裸 SHA256**。信任边界为 HTTPS GitHub（能改写 GitHub Release
+  或中间人 HTTPS 者可替换产物，仅防损坏/误传）。
 
-### 5.2 签名消息（canonical form）——三端必须一致
+### 5.2 发布签名（已关闭）
 
-签名消息 = **去除 `signature` 字段后，按键名排序的紧凑 JSON**。三端等价实现：
+按部署要求，发布签名（Ed25519 公钥/私钥）**已关闭**：
 
-- CI（Python）：`json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
-- 安装器（jq）：`jq -cS 'del(.signature)'`
-- Go 验签端：解码为 `map[string]interface{}` 后 `json.Marshal`（encoding/json 对
-  map 按键名排序，与上述输出字节一致；已做字节级互操作验证）
-
-签名流程（CI 签名步骤）：
-
-1. 生成 canonical 消息（jq/Python 与 Go 字节一致）。
-2. `openssl pkeyutl -sign -rawin -inkey <私钥PEM> -in <canonical>` 直接对 canonical
-   原文做标准 Ed25519 签名（无 SHA-256 预哈希）。
-3. 签名 base64 后写入 manifest 的 `signature` 字段。
-
-验签流程（安装器）：
-
-1. 重建 canonical 消息（jq 或 python3，与 CI/Go 相同实现）。
-2. 解 base64 得到签名。
-3. `openssl pkeyutl -verify -rawin -pubin -inkey <公钥> -in <canonical> -sigfile <签名>`
-   —— 与 Go `ed25519.Verify(pub, canonical, sig)` 语义一致（均验 raw canonical 原文）。
-4. 失败即 `exit 4`，不继续安装。
-
-Go 端 `bundle.CanonicalManifestBytes` 与 `sigverify.VerifyEd25519` 遵循同一约定，
-并有 `canonical_test.go` 锁定与 `jq -cS 'del(.signature)'` 字节一致的固定向量。
+- CI 生成 `release-manifest.json` 时不再签名，标记 `"unsigned": true`；
+- 安装器不再要求 `--pubkey`、不再做 openssl Ed25519 验签，只按 manifest 内
+  sha256 摘要表逐个校验 artifact；
+- Go 侧 `VerifyBundleManifest` / `VerifyReleaseManifest` 在未提供发布公钥时
+  跳过签名校验（`pubPEM` 为空即跳过）；
+- canonical 约定（去除 `signature` 字段后按键名排序的紧凑 JSON，与
+  `jq -cS 'del(.signature)'` / Python `sort_keys` 字节一致）仍保留，用于未来
+  重新启用签名时三端互通。
 
 ### 5.3 安装器流程（deploy/install-servercli.sh）
 
@@ -175,10 +156,11 @@ Go 端 `bundle.CanonicalManifestBytes` 与 `sigverify.VerifyEd25519` 遵循同�
 2. 参数：`--version`（默认 `releases/latest`）、`--github-base`（默认
    `https://github.com/inoriyuuuki/serverCli/releases/download`）、`--proxy`（v2ray
    本地代理，如 `http://127.0.0.1:8118` / `socks5h://127.0.0.1:1080`；设置后导出
-   `http_proxy/https_proxy/all_proxy` 供 curl/wget 使用）、`--pubkey`（缺省用内嵌
-   占位公钥并打印必须替换警告）、`--yes`、`--no-init-prompt`。**无 OSS 回退。**
+   `http_proxy/https_proxy/all_proxy` 供 curl/wget 使用）、`--yes`、
+   `--no-init-prompt`。**无 OSS 回退、无发布签名。**
 3. 下载 `release-manifest.json`：仅 GitHub（经 v2ray 代理）；失败 `exit 5`。
-4. 验签（见 5.2）；失败 `exit 4`。
+4. 按 manifest 内 `artifacts[].sha256` 摘要表逐个 `sha256sum -c` 校验；
+   不匹配 `exit 4`。
 5. 按 `artifacts[]` 逐项下载并 `sha256sum -c` 校验；目录型 artifact
    （`modules/`、`templates/`、`schema/`）以 `<name>.tar.gz` 发布，解压时
    `--strip-components=1` 落到对应子目录；二进制/安装器 `install -D -m 0755`。
@@ -321,7 +303,7 @@ legacy-init -> migration-frozen -> adopting -> servercli -> rollback-pending
 ## 11. 安全门禁
 
 1. **root-only + 最小权限**：安装器仅 root；目录 0700、敏感文件 0600。
-2. **fail-closed 验签**：Manifest 签名或任一 artifact sha256 不匹配即终止（exit 4）；
+2. **fail-closed 摘要校验**：任一 artifact sha256 与 manifest 摘要表不匹配即终止（exit 4）；
    无 `signature` 字段的 unsigned 产物直接拒绝。
 3. **无明文 Secret**：Secret 只进加密 Store / 0600 文件 / 单行 env；
    Bundle 明文只短暂存在于 `/run/servercli/bootstrap` tmpfs。
@@ -339,10 +321,10 @@ legacy-init -> migration-frozen -> adopting -> servercli -> rollback-pending
 
 | 验收场景 | 要求 | 实现位置 | 验证方式 |
 | --- | --- | --- | --- |
-| 全新 EL9 x86_64 主机一键安装 | root 检测、EL8/9 + x86_64/aarch64、经 v2ray 代理从 GitHub 下载、验签、sha256、原子 current/previous | `deploy/install-servercli.sh` | 脚本离线审查 + bash -n；EL 主机手工 |
-| 下载产物被篡改 | 验签/摘要失败即 exit 4，不落盘 | 安装器 5.2/5.3 | 篡改 manifest/artifact 后运行 |
+| 全新 EL9 x86_64 主机一键安装 | root 检测、EL8/9 + x86_64/aarch64、经 v2ray 代理从 GitHub 下载、sha256 摘要校验、原子 current/previous | `deploy/install-servercli.sh` | 脚本离线审查 + bash -n；EL 主机手工 |
+| 下载产物被篡改 | 摘要与 manifest 不符即 exit 4，不落盘 | 安装器 5.2/5.3 | 篡改 manifest/artifact 后运行 |
 | CI 无签名私钥 | 生成 unsigned 标记 manifest，跳过签名并告警 | `build-binaries.yml` Sign step | 不设置 Secret 运行 workflow |
-| CI 有签名私钥 | openssl Ed25519 签名写入 manifest，含 sha256 摘要表 | `build-binaries.yml` Sign step | 设置 Secret 运行 workflow，安装器可验签 |
+| CI 生成 manifest | 含 sha256 摘要表、标记 unsigned | `build-binaries.yml` Generate step | 打 tag 运行 workflow |
 | 三个二进制发布 | servercli / control-plane / node-agent 同 -ldflags 构建 | `build-binaries.yml` binaries job | workflow 运行后检查 bin/ |
 | bundle 内容完整 | modules/、deploy/install-servercli.sh、release/ 打进 bundle 且安装器可执行 | `build-binaries.yml` Package step | 解包检查 + `test -x` |
 | 模块按序执行 | foundation-core 严格顺序与依赖图 | `backend/internal/modman` + `modules/` | `go test ./...` + 状态机回放 |
@@ -363,7 +345,7 @@ legacy-init -> migration-frozen -> adopting -> servercli -> rollback-pending
 | `backend/internal/initstate/` | 状态机、步骤、commit points、resume/repair |
 | `backend/internal/secretstore/` | MasterKey、加密 Store、.env 解析 |
 | `backend/internal/modman/` | 模块 manifest、依赖图、受限 Runner |
-| `backend/internal/sigverify/` | Ed25519 验签/签名、age 解密 |
+| `backend/internal/sigverify/` | age 解密（Ed25519 验签保留备用，发布签名已关闭） |
 | `backend/internal/bundle/` | Bundle 导入与重放保护 |
 | `backend/internal/ownership/` | owner 状态机与 adopt 流程 |
 | `backend/internal/ops/` | update/backup/restore 与锁 |
