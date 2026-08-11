@@ -4,6 +4,8 @@ package opsv2
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -207,4 +209,30 @@ func (r *OperationRequest) ToOperation(id, requestedBy string, now ...time.Time)
 		RequestedBy:       requestedBy,
 		CreatedAt:         createdAt,
 	}, nil
+}
+
+// RequestFingerprint returns a stable sha256 fingerprint of the semantic
+// content of an OperationRequest (excluding idempotency key and deadline).
+// It is used to detect idempotency-key reuse with a different payload.
+func RequestFingerprint(req *OperationRequest) string {
+	canon := struct {
+		OperationType     string          `json:"operation_type"`
+		ClusterID         string          `json:"cluster_id"`
+		NodeID            string          `json:"node_id"`
+		ModuleID          string          `json:"module_id"`
+		ServiceInstanceID string          `json:"service_instance_id"`
+		DesiredRevision   string          `json:"desired_revision"`
+		Arguments         json.RawMessage `json:"arguments"`
+	}{
+		OperationType:     req.OperationType,
+		ClusterID:         req.ClusterID,
+		NodeID:            req.NodeID,
+		ModuleID:          req.ModuleID,
+		ServiceInstanceID: req.ServiceInstanceID,
+		DesiredRevision:   req.DesiredRevision,
+		Arguments:         req.Arguments,
+	}
+	raw, _ := json.Marshal(&canon)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }

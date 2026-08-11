@@ -2,6 +2,7 @@ package releasecache
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"servercli/internal/bootstrap"
+	"servercli/internal/bundle"
 	"servercli/internal/oss"
 )
 
@@ -66,6 +69,8 @@ type SyncPlan struct {
 	Artifacts        []PlannedArtifact `json:"artifacts"`
 	ManifestOSSKey   string            `json:"manifest_oss_key"`
 	SHA256SumsOSSKey string            `json:"sha256sums_oss_key"`
+	// OSSBase is the normalized base key (e.g. "servercli/releases").
+	OSSBase string `json:"oss_base,omitempty"`
 }
 
 // SyncResult reports a completely verified sync. Additional source fields are
@@ -162,6 +167,7 @@ func PlanSync(ctx context.Context, opts SyncOptions) (*SyncPlan, error) {
 		Artifacts:        planned,
 		ManifestOSSKey:   objectKey(base, version, manifestFileName),
 		SHA256SumsOSSKey: objectKey(base, version, shaSumsFileName),
+		OSSBase:          base,
 	}, nil
 }
 
@@ -251,6 +257,39 @@ func ApplySync(ctx context.Context, opts SyncOptions) (*SyncResult, error) {
 	}
 	if !strings.EqualFold(returnedSHA, manifestSHA) {
 		return nil, errors.New("releasecache: OSS returned unexpected manifest sha256")
+	}
+
+	// Also publish a bootstrap-compatible Release Manifest so the OSS-first
+	// bootstrap (which reads bootstrap.ReleaseManifest via
+	// bundle.ReleaseManifestName) can consume the same release. The bootstrap
+	// manifest is the trust anchor for artifact sha256 lists in V1 (release
+	// signing is disabled); it must live under the same version prefix.
+	bootstrapManifest := &bootstrap.ReleaseManifest{
+		SchemaVersion:  "1.0",
+		ReleaseVersion: plan.Version,
+		CreatedAt:      now,
+		Artifacts:      make([]bootstrap.Artifact, 0, len(cacheArtifacts)),
+		SchemaCompat: bootstrap.SchemaCompat{
+			MinSchemaVersion: opts.Schema.Min,
+			MaxSchemaVersion: opts.Schema.Max,
+			Reversible:       true,
+		},
+	}
+	for _, ca := range cacheArtifacts {
+		bootstrapManifest.Artifacts = append(bootstrapManifest.Artifacts, bootstrap.Artifact{
+			Path:   ca.Name,
+			Kind:   "binary",
+			SHA256: ca.SHA256,
+			Size:   ca.Size,
+		})
+	}
+	bmData, err := json.Marshal(bootstrapManifest)
+	if err != nil {
+		return nil, fmt.Errorf("releasecache: marshal bootstrap release manifest: %w", err)
+	}
+	bmKey := objectKey(plan.OSSBase, plan.Version, bundle.ReleaseManifestName)
+	if _, err := opts.OSS.PutVerified(ctx, bmKey, bmData, "application/json"); err != nil {
+		return nil, fmt.Errorf("releasecache: upload and verify bootstrap release manifest: %w", err)
 	}
 
 	if opts.Log != nil {

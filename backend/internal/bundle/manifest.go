@@ -83,9 +83,10 @@ func validateReleaseManifest(m *bootstrap.ReleaseManifest) error {
 	if m.ReleaseVersion == "" {
 		return fmt.Errorf("release manifest: missing release_version")
 	}
-	if m.Signature == "" {
-		return fmt.Errorf("release manifest: missing signature")
-	}
+	// V1 disables publication signing: an empty signature is acceptable and
+	// the trust anchor is the artifact sha256 list (verified when a release
+	// public key is configured). A non-empty signature is verified when a
+	// pubkey is present.
 	for i := range m.Artifacts {
 		a := &m.Artifacts[i]
 		if a.Path == "" {

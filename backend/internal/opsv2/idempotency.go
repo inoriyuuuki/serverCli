@@ -67,6 +67,22 @@ func MatchIdempotency(existing *model.Operation, req *OperationRequest) bool {
 	return key != "" && existing.IdempotencyKey == key
 }
 
+// MatchIdempotencyFingerprint reports whether the stored request fingerprint
+// (persisted at creation) equals the fingerprint of the new request. It is
+// stricter than MatchIdempotency: reusing the same idempotency key with a
+// different payload is a conflict, not a replay.
+func MatchIdempotencyFingerprint(existing *model.Operation, req *OperationRequest) bool {
+	if existing == nil || req == nil {
+		return false
+	}
+	stored := strings.TrimSpace(existing.RequestFingerprint)
+	if stored == "" {
+		// Older records without a fingerprint fall back to key matching.
+		return MatchIdempotency(existing, req)
+	}
+	return stored == RequestFingerprint(req)
+}
+
 func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("empty JSON")

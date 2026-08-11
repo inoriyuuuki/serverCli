@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"servercli/internal/bundle"
 	"servercli/internal/oss"
 )
 
@@ -154,8 +155,20 @@ func TestPlanSyncAndApplySync(t *testing.T) {
 	if !result.Verified || result.AlreadyUploaded || len(result.Uploaded) != 2 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if objectStore.putVerifiedCalls != 4 { // 2 artifacts + sums + manifest
-		t.Fatalf("PutVerified calls = %d, want 4", objectStore.putVerifiedCalls)
+	if objectStore.putVerifiedCalls != 5 { // 2 artifacts + sums + cache manifest + bootstrap release manifest
+		t.Fatalf("PutVerified calls = %d, want 5", objectStore.putVerifiedCalls)
+	}
+	// The bootstrap-compatible release manifest must be parseable by bundle.
+	bmData, err := objectStore.Get(context.Background(), "servercli/releases/v1.2.3/"+bundle.ReleaseManifestName)
+	if err != nil {
+		t.Fatalf("bootstrap release manifest missing: %v", err)
+	}
+	bm, err := bundle.LoadReleaseManifest(bmData)
+	if err != nil {
+		t.Fatalf("bootstrap release manifest does not parse: %v", err)
+	}
+	if bm.ReleaseVersion != "v1.2.3" || len(bm.Artifacts) != 2 {
+		t.Fatalf("unexpected bootstrap manifest: %#v", bm)
 	}
 	manifestData, err := objectStore.Get(context.Background(), plan.ManifestOSSKey)
 	if err != nil {

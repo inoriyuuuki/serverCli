@@ -758,8 +758,8 @@ func (s *Server) handleCreateOperationV2(w http.ResponseWriter, r *http.Request)
 		req.IdempotencyKey = key
 	}
 	if existing, err := s.store.OperationByIdempotency(r.Context(), requestedBy, key); err == nil {
-		if !opsv2.MatchIdempotency(existing, req) {
-			writeError(w, r, s.log, http.StatusConflict, "CONFLICT", "idempotency key conflicts with an existing operation", nil)
+		if !opsv2.MatchIdempotencyFingerprint(existing, req) {
+			writeError(w, r, s.log, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "idempotency key was reused with a different operation payload", nil)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"operation": newOperationView(existing), "created": false})
@@ -782,12 +782,20 @@ func (s *Server) handleCreateOperationV2(w http.ResponseWriter, r *http.Request)
 		writeError(w, r, s.log, http.StatusBadRequest, "BAD_REQUEST", "invalid operation request", nil)
 		return
 	}
+	op.RequestFingerprint = opsv2.RequestFingerprint(req)
+	if req.Approval == "manual" {
+		op.Status = model.OpStatusAwaitingApproval
+	}
 	if err := s.store.CreateOperation(r.Context(), op); err != nil {
 		if isConstraintConflict(err) {
-			if existing, getErr := s.store.OperationByIdempotency(r.Context(), requestedBy, key); getErr == nil && opsv2.MatchIdempotency(existing, req) {
+			var existing *model.Operation
+			existing, getErr := s.store.OperationByIdempotency(r.Context(), requestedBy, key)
+			if getErr == nil && opsv2.MatchIdempotencyFingerprint(existing, req) {
 				writeJSON(w, http.StatusOK, map[string]any{"operation": newOperationView(existing), "created": false})
 				return
 			}
+			writeError(w, r, s.log, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "idempotency key was reused with a different operation payload", nil)
+			return
 		}
 		s.writeDeclarativeStoreError(w, r, err)
 		return
@@ -837,12 +845,17 @@ func (s *Server) handleApproveOperationV2(w http.ResponseWriter, r *http.Request
 		s.writeDeclarativeStoreError(w, r, err)
 		return
 	}
-	if op.Status != model.OpStatusPlanned || !opsv2.CanTransition(op.Status, model.OpStatusQueued) {
+	if (op.Status != model.OpStatusPlanned && op.Status != model.OpStatusAwaitingApproval) || !opsv2.CanTransition(op.Status, model.OpStatusQueued) {
 		writeError(w, r, s.log, http.StatusConflict, "INVALID_TRANSITION", "operation cannot be approved from its current status", nil)
 		return
 	}
-	if err := s.store.UpdateOperationStatus(r.Context(), op.ID, model.OpStatusQueued, "", ""); err != nil {
+	changed, err := s.store.UpdateOperationStatusCAS(r.Context(), op.ID, op.Status, model.OpStatusQueued, "", "")
+	if err != nil {
 		s.writeDeclarativeStoreError(w, r, err)
+		return
+	}
+	if !changed {
+		writeError(w, r, s.log, http.StatusConflict, "CONFLICT", "operation status changed concurrently", nil)
 		return
 	}
 	op.Status = model.OpStatusQueued
@@ -861,12 +874,17 @@ func (s *Server) handleCancelOperationV2(w http.ResponseWriter, r *http.Request)
 		s.writeDeclarativeStoreError(w, r, err)
 		return
 	}
-	if op.Status != model.OpStatusPlanned || !opsv2.CanTransition(op.Status, model.OpStatusCancelled) {
+	if !opsv2.CanTransition(op.Status, model.OpStatusCancelled) {
 		writeError(w, r, s.log, http.StatusConflict, "INVALID_TRANSITION", "operation cannot be cancelled from its current status", nil)
 		return
 	}
-	if err := s.store.UpdateOperationStatus(r.Context(), op.ID, model.OpStatusCancelled, "", ""); err != nil {
+	changed, err := s.store.UpdateOperationStatusCAS(r.Context(), op.ID, op.Status, model.OpStatusCancelled, "", "")
+	if err != nil {
 		s.writeDeclarativeStoreError(w, r, err)
+		return
+	}
+	if !changed {
+		writeError(w, r, s.log, http.StatusConflict, "CONFLICT", "operation status changed concurrently", nil)
 		return
 	}
 	op.Status = model.OpStatusCancelled
@@ -897,8 +915,13 @@ func (s *Server) handleUpdateOperationStatusV2(w http.ResponseWriter, r *http.Re
 		writeError(w, r, s.log, http.StatusConflict, "INVALID_TRANSITION", "operation status transition is not allowed", nil)
 		return
 	}
-	if err := s.store.UpdateOperationStatus(r.Context(), op.ID, in.Status, in.ErrorCode, in.ErrorMessage); err != nil {
+	changed, err := s.store.UpdateOperationStatusCAS(r.Context(), op.ID, op.Status, in.Status, in.ErrorCode, in.ErrorMessage)
+	if err != nil {
 		s.writeDeclarativeStoreError(w, r, err)
+		return
+	}
+	if !changed {
+		writeError(w, r, s.log, http.StatusConflict, "CONFLICT", "operation status changed concurrently", nil)
 		return
 	}
 	op.Status = in.Status
@@ -929,9 +952,21 @@ type releaseCacheInput struct {
 	SchemaMin        string     `json:"schema_min,omitempty"`
 	SchemaMax        string     `json:"schema_max,omitempty"`
 	OSSKey           string     `json:"oss_key,omitempty"`
-	Status           string     `json:"status,omitempty"`
-	UploadedAt       *time.Time `json:"uploaded_at,omitempty"`
-	VerifiedAt       *time.Time `json:"verified_at,omitempty"`
+}
+
+// validSHA256Hex reports whether s is a 64-character lowercase/uppercase hex
+// SHA-256 digest. Used to reject arbitrary non-digest strings on the API.
+func validSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleListReleaseCache(w http.ResponseWriter, r *http.Request) {
@@ -949,16 +984,19 @@ func (s *Server) handleCreateReleaseCache(w http.ResponseWriter, r *http.Request
 	if !decodeJSON(w, r, s.log, &in) {
 		return
 	}
-	if strings.TrimSpace(in.Version) == "" || strings.TrimSpace(in.ArtifactName) == "" || strings.TrimSpace(in.SHA256) == "" {
-		writeError(w, r, s.log, http.StatusBadRequest, "BAD_REQUEST", "version, artifact_name, and sha256 are required", nil)
+	if strings.TrimSpace(in.Version) == "" || strings.TrimSpace(in.ArtifactName) == "" || !validSHA256Hex(in.SHA256) {
+		writeError(w, r, s.log, http.StatusBadRequest, "BAD_REQUEST", "version, artifact_name, and a 64-hex sha256 are required", nil)
 		return
 	}
+	// Clients never set status or verification timestamps: entries are
+	// created pending and only the control-plane sync flow may mark them
+	// available after OSS read-back verification.
 	entry := &model.ReleaseCacheEntry{
 		ID: model.NewUUID(), Version: in.Version, SourceRepository: in.SourceRepository,
 		SourceRelease: in.SourceRelease, OS: in.OS, Arch: in.Arch, ArtifactName: in.ArtifactName,
 		ArtifactSize: in.ArtifactSize, SHA256: in.SHA256, ModulesVersion: in.ModulesVersion,
-		SchemaMin: in.SchemaMin, SchemaMax: in.SchemaMax, OSSKey: in.OSSKey, Status: in.Status,
-		UploadedAt: in.UploadedAt, VerifiedAt: in.VerifiedAt,
+		SchemaMin: in.SchemaMin, SchemaMax: in.SchemaMax, OSSKey: in.OSSKey,
+		Status: model.ReleaseCachePending,
 	}
 	if err := s.store.CreateReleaseCacheEntry(r.Context(), entry); err != nil {
 		s.writeDeclarativeStoreError(w, r, err)
@@ -977,9 +1015,25 @@ func (s *Server) handleGetReleaseCache(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMarkReleaseCacheAvailable(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Verified bool `json:"verified"`
+	}
+	if !decodeJSON(w, r, s.log, &in) {
+		return
+	}
+	// Only a flow that actually performed OSS read-back + SHA256 verification
+	// may mark an entry available; clients cannot self-verify.
+	if !in.Verified {
+		writeError(w, r, s.log, http.StatusBadRequest, "BAD_REQUEST", "verified=true is required to mark a release cache entry available", nil)
+		return
+	}
 	entry, err := s.store.ReleaseCacheEntryByID(r.Context(), r.PathValue("id"))
 	if err != nil {
 		s.writeDeclarativeStoreError(w, r, err)
+		return
+	}
+	if entry.Status != model.ReleaseCachePending {
+		writeError(w, r, s.log, http.StatusConflict, "INVALID_TRANSITION", "only pending entries can be marked available", nil)
 		return
 	}
 	now := time.Now().UTC()

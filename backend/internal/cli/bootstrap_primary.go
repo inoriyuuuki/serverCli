@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"log/slog"
 	"io"
+	"log/slog"
+	"runtime"
 
 	"servercli/internal/bootstrap"
 	"servercli/internal/bootstrapv2"
@@ -179,35 +180,59 @@ func installServerCLIFromArtifacts(ctx context.Context, manifest *bootstrap.Rele
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	installed := 0
+	// Select the servercli binary artifact for this platform. The generic
+	// `servercli` artifact (bin/servercli) is accepted; platform-specific
+	// names like servercli-linux-amd64 are preferred when present.
+	candidate := ""
 	for _, art := range manifest.Artifacts {
 		if art.Kind != "binary" {
 			continue
 		}
-		// Only the generic servercli binary is installed by bootstrap; the
-		// control-plane/agent binaries are managed by their modules.
-		if !strings.HasPrefix(art.Path, "servercli-") || strings.Contains(art.Path, "control-plane") || strings.Contains(art.Path, "node-agent") {
+		base := filepath.Base(filepath.FromSlash(art.Path))
+		if strings.Contains(art.Path, "control-plane") || strings.Contains(art.Path, "node-agent") {
 			continue
 		}
-		src := filepath.Join(artifactDir, filepath.FromSlash(art.Path))
-		if _, err := os.Stat(src); err != nil {
-			return fmt.Errorf("install servercli: missing artifact %s: %w", art.Path, err)
+		if base != "servercli" && !strings.HasPrefix(base, "servercli-") {
+			continue
 		}
-		for _, binDir := range []string{"/usr/local/bin", "/opt/servercli/bin", "/home/inori/serverCli/bin"} {
-			if err := os.MkdirAll(binDir, 0o755); err != nil {
-				continue
-			}
-			dst := filepath.Join(binDir, "servercli")
-			if err := copyFileMode(src, dst, 0o755); err != nil {
-				return fmt.Errorf("install servercli to %s: %w", dst, err)
-			}
-			installed++
+		if base == "servercli" && candidate == "" {
+			candidate = art.Path
+			continue
 		}
+		if strings.HasPrefix(base, "servercli-") && platformMatches(base, runtime.GOOS, runtime.GOARCH) {
+			candidate = art.Path
+			break
+		}
+	}
+	if candidate == "" {
+		return fmt.Errorf("install servercli: no servercli binary artifact for %s/%s in release manifest", runtime.GOOS, runtime.GOARCH)
+	}
+	src := filepath.Join(artifactDir, filepath.FromSlash(candidate))
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("install servercli: missing artifact %s: %w", candidate, err)
+	}
+	installed := 0
+	for _, binDir := range []string{"/usr/local/bin", "/opt/servercli/bin", "/home/inori/serverCli/bin"} {
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			continue
+		}
+		dst := filepath.Join(binDir, "servercli")
+		if err := installBinarySafely(src, dst, 0o755); err != nil {
+			return fmt.Errorf("install servercli to %s: %w", dst, err)
+		}
+		installed++
 	}
 	if installed == 0 {
-		return fmt.Errorf("install servercli: no installable servercli binary artifact in release manifest")
+		return fmt.Errorf("install servercli: no writable bin directory")
 	}
 	return nil
+}
+
+// platformMatches reports whether an artifact basename like
+// "servercli-linux-amd64" matches the target os/arch.
+func platformMatches(base, osName, arch string) bool {
+	lower := strings.ToLower(base)
+	return strings.Contains(lower, strings.ToLower(osName)) && strings.Contains(lower, strings.ToLower(arch))
 }
 
 // runFoundationModule executes one foundation module lifecycle operation
@@ -255,21 +280,92 @@ func mapBootstrapErr(err error) int {
 	}
 }
 
-// copyFileMode copies src to dst with the given mode. Used to install the
-// verified servercli binary.
-func copyFileMode(src, dst string, mode os.FileMode) error {
+// installBinarySafely installs src to dst with the given mode without
+// following symlinks. It refuses to write through a symlinked destination or
+// into a symlinked parent directory, and writes via a temp file in the target
+// directory (same filesystem) so the final rename is atomic. This prevents a
+// local attacker from pre-placing a symlink that a root install would follow.
+func installBinarySafely(src, dst string, mode os.FileMode) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	dir := filepath.Dir(dst)
+	if err := ensureNoSymlinkPath(dir); err != nil {
 		return err
 	}
-	tmp := dst + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.Rename(tmp, dst)
+	// Re-check after MkdirAll in case a symlink appeared in the path.
+	if err := ensureNoSymlinkPath(dir); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".servercli-install-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op after successful rename
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(dst)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		os.Remove(dst)
+		return fmt.Errorf("install: destination %s is a symlink", dst)
+	}
+	return nil
+}
+
+// ensureNoSymlinkPath rejects symlinks in the writable install path. It
+// ascends from dir to the nearest existing ancestor: components the installer
+// itself creates (MkdirAll) are regular directories by construction, and any
+// pre-existing component in the writable region that is a symlink is rejected.
+// System symlinks above the nearest existing ancestor (e.g. /var on macOS)
+// are intentionally not traversed.
+func ensureNoSymlinkPath(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	rest := abs
+	for {
+		fi, lerr := os.Lstat(rest)
+		if lerr == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("install: refusing to write through symlinked directory %s", rest)
+			}
+			// Nearest existing regular directory: stop ascending.
+			return nil
+		}
+		if !os.IsNotExist(lerr) {
+			return lerr
+		}
+		parent := filepath.Dir(rest)
+		if parent == rest {
+			return nil
+		}
+		rest = parent
+	}
 }
 
 // opsUploader returns a real OSS-backed uploader when a root-only

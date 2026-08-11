@@ -28,6 +28,7 @@ import (
 	"servercli/internal/modman"
 	"servercli/internal/modules"
 	"servercli/internal/ops"
+	"servercli/internal/opsv2"
 	"servercli/internal/ownership"
 	"servercli/internal/secretstore"
 )
@@ -923,8 +924,15 @@ func (a *app) cmdModules() int {
 
 func (a *app) cmdOps() int {
 	if len(a.args) == 0 {
-		a.err("ops: expected update|backup|restore")
+		a.err("ops: expected update|backup|restore|context")
 		return bootstrap.ExitUsage
+	}
+	if a.args[0] == "context" {
+		if len(a.args) != 2 {
+			a.err("ops context: usage: servercli ops context <operation-context.json>")
+			return bootstrap.ExitUsage
+		}
+		return a.opsFromContext(a.args[1])
 	}
 	op := a.args[0]
 	services := a.args[1:]
@@ -932,6 +940,57 @@ func (a *app) cmdOps() int {
 		a.err("ops: unknown operation %q", op)
 		return bootstrap.ExitUsage
 	}
+	return a.runOps(op, services)
+}
+
+// opsFromContext executes an Operation V2 structured context file. The context
+// is a 0600 JSON file written by the Agent executor
+// (SERVERCLI_OPERATION_CONTEXT). Only the structured fields are honored;
+// operation_type/module_id/backup_id come from the fixed top-level schema, so
+// nested arguments can never re-route a privileged operation.
+func (a *app) opsFromContext(contextPath string) int {
+	raw, err := os.ReadFile(contextPath)
+	if err != nil {
+		a.err("ops context: read context: %v", err)
+		return bootstrap.ExitUsage
+	}
+	req, err := opsv2.ParseOperationRequest(raw)
+	if err != nil {
+		a.err("ops context: parse operation request: %v", err)
+		return bootstrap.ExitUsage
+	}
+	if err := req.Validate(); err != nil {
+		a.err("ops context: invalid operation request: %v", err)
+		return bootstrap.ExitUsage
+	}
+	op := req.OperationType
+	services := []string{req.ModuleID}
+	if op == "restore" {
+		// backup_id must come from the top-level arguments block (structured),
+		// extracted via a controlled decode, never a regex over raw JSON.
+		backupID := ""
+		if len(req.Arguments) > 0 {
+			var args struct {
+				BackupID string `json:"backup_id"`
+			}
+			if err := json.Unmarshal(req.Arguments, &args); err != nil {
+				a.err("ops context: decode arguments: %v", err)
+				return bootstrap.ExitUsage
+			}
+			backupID = args.BackupID
+		}
+		if backupID == "" {
+			a.err("ops context: restore requires backup_id in arguments")
+			return bootstrap.ExitUsage
+		}
+		services = append(services, backupID)
+	}
+	return a.runOps(op, services)
+}
+
+// runOps executes an ops operation against the given services. It is shared by
+// the legacy positional entrypoint and the structured context entrypoint.
+func (a *app) runOps(op string, services []string) int {
 	store := ownership.NewStore(a.ownershipPath)
 	store.SetLockDir(a.lockDir)
 	if err := store.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
