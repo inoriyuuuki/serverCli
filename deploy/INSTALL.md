@@ -54,8 +54,8 @@ cd /opt/servercli
 ## 5. 使用 servercli CLI 安装器（推荐用于全新节点）
 
 对全新的 CentOS/RHEL（EL8/EL9，x86_64/aarch64）物理主机，推荐使用一键安装器
-`deploy/install-servercli.sh`：它下载签名 Release Manifest（GitHub 主源 + OSS 回退源）、
-用发布公钥校验 Ed25519 签名、按 Manifest 逐个校验并安装三个二进制
+`deploy/install-servercli.sh`：它经 v2ray 本地代理从 GitHub 下载签名 Release Manifest
+（唯一下载源，不走 OSS 回退）、用发布公钥校验 Ed25519 签名、按 Manifest 逐个校验并安装三个二进制
 （`servercli` / `servercli-control-plane` / `servercli-node-agent`）、公共模块
 `modules/`、模板与 Schema，并原子切换 `/opt/servercli/current`、`/opt/servercli/previous`。
 
@@ -78,7 +78,7 @@ sudo bash deploy/install-servercli.sh --pubkey /path/to/release.pub \
 | --- | --- |
 | `--version` | 下载版本，默认 `releases/latest`，也可传 tag（如 `v1.2.3`） |
 | `--github-base` | GitHub Release 下载基地址（默认 `https://github.com/inoriyuuuki/serverCli/releases/download`） |
-| `--oss-base` | 可选 OSS 回退源基地址（GitHub 下载失败时使用） |
+| `--proxy` | v2ray 本地代理地址（`http://127.0.0.1:8118` / `socks5h://127.0.0.1:1080`）；GitHub 仅经此代理连接，不走 OSS 回退 |
 | `--pubkey` | 发布公钥文件（Ed25519 PKIX PEM）；缺省使用内嵌占位公钥（必须替换） |
 | `--yes` | 安装完成后直接运行 `servercli init`，不再询问 |
 | `--no-init-prompt` | 安装完成后不询问、不运行 `servercli init` |

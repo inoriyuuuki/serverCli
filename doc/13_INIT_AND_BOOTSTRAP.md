@@ -31,13 +31,13 @@ flowchart TD
         CI --> SIGN{配置签名私钥?}
         SIGN -->|是| SIG[openssl Ed25519 签名]
         SIGN -->|否| UNS[产物标记 unsigned]
-        SIG --> REL[GitHub Release 主源 / OSS 回退源]
+        SIG --> REL[GitHub Release（唯一下载源）]
         UNS --> REL
     end
 
     subgraph 安装侧 EL8/9 全新主机
         INS[deploy/install-servercli.sh 仅 root]
-        INS --> MAN[下载 release-manifest.json 先 GitHub 后 OSS]
+        INS --> MAN[经 v2ray 代理从 GitHub 下载 release-manifest.json]
         MAN --> VRF[openssl pkeyutl 验签 + 逐 artifact sha256 校验]
         VRF -->|失败 exit 4| ABORT[终止安装 fail-closed]
         VRF -->|通过| INST[/opt/servercli/releases/vX 原子切换 current/previous]
@@ -131,7 +131,9 @@ servercli version
 ### 5.1 信任模型
 
 - **Release Manifest**（`release-manifest.json`）由同一 Ed25519 发布私钥签名；
-  GitHub Release 为主源、OSS 镜像为回退源，两源产物必须用同一公钥验证。
+  **GitHub Release 是唯一下载源**（国内网络经 v2ray 本地代理连接）。需求中的
+  OSS 镜像回退在本部署中不启用（`bundle.FetchAndVerifyRelease` 的 OSS 回退是
+  显式 opt-in，`ossBaseURL` 为空即关闭）；如未来启用，仍须同一公钥验证。
 - Manifest 内 `artifacts[].sha256` 摘要表是唯一信任锚；**禁止只信裸 SHA256**。
 - 发布私钥绝不进入仓库/CI 日志；CI 通过 Secret `SERVERCLI_RELEASE_SIGNING_KEY`
   注入 base64 编码的 Ed25519 私钥 PEM。
@@ -171,9 +173,11 @@ Go 端 `bundle.CanonicalManifestBytes` 与 `sigverify.VerifyEd25519` 遵循同�
    `x86_64` / `aarch64`；要求 openssl（缺失时提示先 `dnf install openssl`）、
    curl/wget、jq 或 python3。
 2. 参数：`--version`（默认 `releases/latest`）、`--github-base`（默认
-   `https://github.com/inoriyuuuki/serverCli/releases/download`）、`--oss-base`（可空）、
-   `--pubkey`（缺省用内嵌占位公钥并打印必须替换警告）、`--yes`、`--no-init-prompt`。
-3. 下载 `release-manifest.json`：GitHub 主源 → OSS 回退；失败 `exit 5`。
+   `https://github.com/inoriyuuuki/serverCli/releases/download`）、`--proxy`（v2ray
+   本地代理，如 `http://127.0.0.1:8118` / `socks5h://127.0.0.1:1080`；设置后导出
+   `http_proxy/https_proxy/all_proxy` 供 curl/wget 使用）、`--pubkey`（缺省用内嵌
+   占位公钥并打印必须替换警告）、`--yes`、`--no-init-prompt`。**无 OSS 回退。**
+3. 下载 `release-manifest.json`：仅 GitHub（经 v2ray 代理）；失败 `exit 5`。
 4. 验签（见 5.2）；失败 `exit 4`。
 5. 按 `artifacts[]` 逐项下载并 `sha256sum -c` 校验；目录型 artifact
    （`modules/`、`templates/`、`schema/`）以 `<name>.tar.gz` 发布，解压时
@@ -186,14 +190,16 @@ Go 端 `bundle.CanonicalManifestBytes` 与 `sigverify.VerifyEd25519` 遵循同�
    「是否运行 servercli init」；`--yes` 直接运行；非 TTY 或 `--no-init-prompt`
    只安装不等待。运行 init 时其退出码原样透传。
 
-下载 URL 形态：
+下载 URL 形态（仅 GitHub，经 v2ray 代理）：
 
 - GitHub 最新版：`https://github.com/inoriyuuuki/serverCli/releases/latest/download/<asset>`
 - GitHub 指定 tag：`https://github.com/inoriyuuuki/serverCli/releases/download/<tag>/<asset>`
-- OSS 镜像：`<oss-base>/<version>/<asset>`（`latest` 目录对应最新版）
 
 > 多架构发布约定：一个 Release 对应一个平台（默认 linux/amd64）；arm64 使用
-> 对应平台的 tag 或 OSS 目录。首版完整 Foundation 模块只保证 amd64。
+> 对应平台的 tag。首版完整 Foundation 模块只保证 amd64。
+> 服务器上 v2ray 代理通常由 Foundation 的 v2ray 模块安装（socks 1080 /
+> http 8118），但安装器在 v2ray 就绪前运行，因此需先在本机起好代理并传
+> `--proxy`；init 之后的模块下载/更新则复用 v2ray 模块写入的代理环境。
 
 ## 6. Bundle 与 age
 
@@ -333,7 +339,7 @@ legacy-init -> migration-frozen -> adopting -> servercli -> rollback-pending
 
 | 验收场景 | 要求 | 实现位置 | 验证方式 |
 | --- | --- | --- | --- |
-| 全新 EL9 x86_64 主机一键安装 | root 检测、EL8/9 + x86_64/aarch64、GitHub→OSS 回退、验签、sha256、原子 current/previous | `deploy/install-servercli.sh` | 脚本离线审查 + bash -n；EL 主机手工 |
+| 全新 EL9 x86_64 主机一键安装 | root 检测、EL8/9 + x86_64/aarch64、经 v2ray 代理从 GitHub 下载、验签、sha256、原子 current/previous | `deploy/install-servercli.sh` | 脚本离线审查 + bash -n；EL 主机手工 |
 | 下载产物被篡改 | 验签/摘要失败即 exit 4，不落盘 | 安装器 5.2/5.3 | 篡改 manifest/artifact 后运行 |
 | CI 无签名私钥 | 生成 unsigned 标记 manifest，跳过签名并告警 | `build-binaries.yml` Sign step | 不设置 Secret 运行 workflow |
 | CI 有签名私钥 | openssl Ed25519 签名写入 manifest，含 sha256 摘要表 | `build-binaries.yml` Sign step | 设置 Secret 运行 workflow，安装器可验签 |

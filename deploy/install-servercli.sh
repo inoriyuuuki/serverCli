@@ -8,12 +8,16 @@
 #       Schema（schema/）+ 安装器自身。
 #
 # 信任模型（fail-closed）：
-#   1) 从 GitHub Release（主源）或 OSS 镜像（回退源）下载 release-manifest.json；
+#   1) 从 GitHub Release（唯一源，经 v2ray 代理）下载 release-manifest.json；
 #   2) 用发布公钥（--pubkey，或脚本内嵌占位公钥）以 openssl pkeyutl 校验
 #      Manifest 的 Ed25519 签名（签名消息 = 去除 signature 字段后按键名排序的
 #      紧凑 JSON，等价于 `jq -cS 'del(.signature)'`）；
 #   3) 按 Manifest 内 sha256 摘要表逐个下载并校验每个 artifact；
 #   4) 原子安装到 /opt/servercli/releases/<version>，并切换 current/previous 软链接。
+#
+# 下载通道：仅使用 GitHub Release（主源），不配置 OSS 回退源。国内网络
+# 通过 v2ray 代理连接 GitHub：运行安装器前先在本机起好 v2ray 本地代理，
+# 用 --proxy 指定（如 http://127.0.0.1:8118 或 socks5h://127.0.0.1:1080）。
 #
 # 安全约定：
 #   - 仅允许 root 运行；目标系统限定 EL8/EL9 + x86_64/aarch64；
@@ -29,7 +33,8 @@
 #   --version <v>         下载版本（默认 releases/latest；也可传 tag 如 v1.2.3）
 #   --github-base <url>   GitHub Release 下载基地址
 #                         （默认 https://github.com/inoriyuuuki/serverCli/releases/download）
-#   --oss-base <url>      可选 OSS 回退源基地址（GitHub 失败时使用；默认空=不回退）
+#   --proxy <url>         v2ray 本地代理地址（如 http://127.0.0.1:8118 /
+#                         socks5h://127.0.0.1:1080）；GitHub 仅经此代理连接
 #   --pubkey <file>       发布公钥文件（Ed25519 PKIX PEM）。不传则使用内嵌占位公钥
 #   --yes                 安装完成后直接运行 servercli init（不再询问）
 #   --no-init-prompt      安装完成后不询问、不运行 servercli init
@@ -53,7 +58,7 @@ U0VSVkVSQ0xJLVBMQUNFSE9MREVSLVBVQkxJQy1LRVktRE8tTk9ULVVTRQ==
 # ---------- 参数 ----------
 VERSION="${DEFAULT_VERSION}"
 GITHUB_BASE="${DEFAULT_GITHUB_BASE}"
-OSS_BASE=""
+PROXY=""
 PUBKEY_FILE=""
 YES=0
 NO_INIT_PROMPT=0
@@ -66,7 +71,8 @@ usage() {
   --version <v>         下载版本（默认 releases/latest；也可传 tag 如 v1.2.3）
   --github-base <url>   GitHub Release 下载基地址
                         （默认 https://github.com/inoriyuuuki/serverCli/releases/download）
-  --oss-base <url>      可选 OSS 回退源基地址（GitHub 下载失败时使用；可为空）
+  --proxy <url>         v2ray 本地代理地址（http://... 或 socks5h://...）；
+                        GitHub 仅经此代理连接，不走 OSS 回退
   --pubkey <file>       发布公钥文件（Ed25519 PKIX PEM）。
                         不传则使用脚本内嵌占位公钥（必须替换，否则验签失败）
   --yes                 安装完成后直接运行 servercli init（不再询问）
@@ -108,11 +114,11 @@ while [ "$#" -gt 0 ]; do
       GITHUB_BASE="$2"; shift 2 ;;
     --github-base=*)
       GITHUB_BASE="${1#*=}"; shift ;;
-    --oss-base)
-      [ "$#" -ge 2 ] || die_usage "--oss-base 需要一个参数"
-      OSS_BASE="$2"; shift 2 ;;
-    --oss-base=*)
-      OSS_BASE="${1#*=}"; shift ;;
+    --proxy)
+      [ "$#" -ge 2 ] || die_usage "--proxy 需要一个参数"
+      PROXY="$2"; shift 2 ;;
+    --proxy=*)
+      PROXY="${1#*=}"; shift ;;
     --pubkey)
       [ "$#" -ge 2 ] || die_usage "--pubkey 需要一个参数"
       PUBKEY_FILE="$2"; shift 2 ;;
@@ -176,6 +182,12 @@ elif command -v wget >/dev/null 2>&1; then
 else
   die 3 "未找到 curl/wget，请先安装：dnf install -y curl"
 fi
+
+# 通过 v2ray 本地代理访问 GitHub（curl/wget 均识别这些环境变量）。
+if [ -n "${PROXY}" ]; then
+  export http_proxy="${PROXY}" https_proxy="${PROXY}" HTTP_PROXY="${PROXY}" HTTPS_PROXY="${PROXY}" ALL_PROXY="${PROXY}" all_proxy="${PROXY}"
+  info "已启用 v2ray 代理: ${PROXY}"
+fi
 if ! command -v jq >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
   die 3 "未找到 jq 或 python3（用于重建签名消息与解析 manifest），请先安装其一：dnf install -y jq"
 fi
@@ -197,10 +209,8 @@ fi
 # ---------- 下载基地址 ----------
 # GitHub 最新版资源 URL 形态: .../releases/latest/download/<asset>
 # GitHub 指定 tag 资源 URL 形态: .../releases/download/<tag>/<asset>
-# OSS 镜像按 <oss-base>/<version>/<asset> 布局（latest 目录对应最新版）。
 if [ "${VERSION}" = "releases/latest" ]; then
   GH_DL_BASE="${GITHUB_BASE%/download}/latest/download"
-  OSS_DL_BASE="${OSS_BASE%/}/latest"
 else
   case "${VERSION}" in
     ''|.|..|*/*|*..*|*[!A-Za-z0-9._-]*)
@@ -208,13 +218,12 @@ else
       ;;
   esac
   GH_DL_BASE="${GITHUB_BASE%/}/${VERSION}"
-  OSS_DL_BASE="${OSS_BASE%/}/${VERSION}"
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/servercli-install.XXXXXX")"
 chmod 700 "${WORK}"
 
-# 下载一个 asset：GitHub 主源 -> OSS 回退；全部失败返回 1。
+# 下载一个 asset：仅 GitHub Release（经 v2ray 代理），失败返回 1。
 download() {
   asset="$1"
   out="$2"
@@ -223,13 +232,6 @@ download() {
     info "  下载 [GitHub] ${url}"
     return 0
   fi
-  if [ -n "${OSS_BASE}" ]; then
-    url="${OSS_DL_BASE}/${asset}"
-    if ${DL} "${out}" "${url}" 2>/dev/null; then
-      info "  下载 [OSS]   ${url}"
-      return 0
-    fi
-  fi
   return 1
 }
 
@@ -237,7 +239,7 @@ download() {
 MANIFEST_ASSET="release-manifest-linux-${GOARCH}.json"
 MANIFEST="${WORK}/release-manifest.json"
 if ! download "${MANIFEST_ASSET}" "${MANIFEST}"; then
-  die 5 "无法从 GitHub/OSS 下载 ${MANIFEST_ASSET}（可检查 --version / --github-base / --oss-base）"
+  die 5 "无法从 GitHub 下载 ${MANIFEST_ASSET}（可检查 --version / --github-base / --proxy / 网络）"
 fi
 info "${MANIFEST_ASSET} 下载完成，开始验签"
 
@@ -331,7 +333,7 @@ while IFS="${TAB}" read -r path kind sha size; do
   info "下载并校验 artifact ${n}: ${path} (${kind})"
   ART="${WORK}/artifact-${n}"
   if ! download "${ASSET}" "${ART}"; then
-    die 5 "下载 artifact 失败: ${ASSET}"
+    die 5 "下载 artifact 失败: ${ASSET}（请确认 v2ray 代理已启用且 --proxy 正确）"
   fi
 
   if ! printf '%s  %s\n' "${sha}" "${ART}" | sha256sum -c - >/dev/null 2>&1; then

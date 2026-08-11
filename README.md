@@ -246,10 +246,12 @@ ServerCLI 的物理主机发布包含**三个二进制**：`servercli`（初始�
 `servercli-control-plane`（主控服务）、`servercli-node-agent`（节点 Agent）。
 
 - **安装器**：`deploy/install-servercli.sh` 面向全新 CentOS/RHEL（EL8/EL9，
-  x86_64/aarch64）一键安装。它从 GitHub Release（主源）/ OSS（回退源）下载
-  Release Manifest，用发布公钥校验 Ed25519 签名并逐个校验 artifact 的 sha256，
-  安装到 `/opt/servercli/releases/<version>` 并原子切换 `current`/`previous` 软链接；
-  仅在 TTY 下询问是否运行 `servercli init`（`--yes` 直接运行，`--no-init-prompt` 跳过）。
+  x86_64/aarch64）一键安装。它经 v2ray 本地代理（`--proxy`，如
+  `http://127.0.0.1:8118` / `socks5h://127.0.0.1:1080`）从 GitHub Release（唯一
+  下载源，不走 OSS 回退）下载签名 Release Manifest，用发布公钥校验 Ed25519
+  签名并逐个校验 artifact 的 sha256，安装到 `/opt/servercli/releases/<version>`
+  并原子切换 `current`/`previous` 软链接；仅在 TTY 下询问是否运行
+  `servercli init`（`--yes` 直接运行，`--no-init-prompt` 跳过）。
 - **稳定命令接口**：`servercli init|init plan|init apply|init status|init resume|init repair`、
   `servercli config import plan|apply`、`servercli modules run`、`servercli ops update|backup|restore`、
   `servercli version`；稳定退出码见 `backend/internal/bootstrap`。

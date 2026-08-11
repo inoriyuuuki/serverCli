@@ -28,17 +28,20 @@ const (
 )
 
 // FetchAndVerifyRelease downloads the signed Release Manifest from the GitHub
-// source (primary), falling back to the OSS mirror when the primary source is
-// unreachable or fails verification. Both sources verify against the same
-// release Ed25519 public key; every artifact sha256 is inside the signed
-// manifest, so a valid signature proves the digest list.
+// source. The OSS mirror is used ONLY as an explicit opt-in fallback: when
+// ossBaseURL is non-empty and the GitHub source is unreachable or fails
+// verification. The default deployment is GitHub-only (ossBaseURL empty),
+// with GitHub reached through the v2ray local proxy on the target node. Both
+// sources, when used, verify against the same release Ed25519 public key;
+// every artifact sha256 is inside the signed manifest, so a valid signature
+// proves the digest list.
 //
 // It returns the verified manifest and the source that supplied it
 // ("github" or "oss").
 func FetchAndVerifyRelease(ctx context.Context, githubBaseURL, ossBaseURL string, pubPEM []byte, log *slog.Logger) (*bootstrap.ReleaseManifest, string, error) {
 	logger := discardLogger(log)
-	if githubBaseURL == "" || ossBaseURL == "" {
-		return nil, "", fmt.Errorf("fetch release: github and oss base URLs are required")
+	if githubBaseURL == "" {
+		return nil, "", fmt.Errorf("fetch release: github base URL is required")
 	}
 	if len(pubPEM) == 0 {
 		return nil, "", fmt.Errorf("fetch release: empty public key")
@@ -48,6 +51,9 @@ func FetchAndVerifyRelease(ctx context.Context, githubBaseURL, ossBaseURL string
 	if err == nil {
 		logger.Info("release manifest verified from primary source", "source", SourceGitHub)
 		return m, SourceGitHub, nil
+	}
+	if ossBaseURL == "" {
+		return nil, "", fmt.Errorf("fetch release manifest from github: %w", err)
 	}
 	logger.Warn("primary source failed, falling back to OSS mirror", "source", SourceGitHub, "error", err)
 

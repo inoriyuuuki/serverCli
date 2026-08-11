@@ -2,7 +2,8 @@
 // release manifests and encrypted bundles:
 //
 //   - FetchAndVerifyRelease downloads and verifies the signed Release
-//     Manifest from GitHub Releases (primary) with an OSS mirror fallback;
+//     Manifest from GitHub Releases (primary; OSS mirror only as an explicit
+//     opt-in fallback, off by default — GitHub is reached via v2ray proxy);
 //   - DownloadArtifact downloads one release artifact and checks its sha256
 //     against the digest already covered by the signed manifest;
 //   - VerifyBundleManifest verifies a Bundle Manifest signature plus

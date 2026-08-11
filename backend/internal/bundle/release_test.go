@@ -154,3 +154,21 @@ func TestCanonicalManifestBytesStable(t *testing.T) {
 		t.Fatal("pointer and value canonical bytes differ")
 	}
 }
+
+func TestFetchAndVerifyReleaseGitHubOnlyNoFallback(t *testing.T) {
+	priv, pubPEM := testEd25519Key(t)
+	dir := t.TempDir()
+	rm := testReleaseManifest("1.0.0")
+	writeReleaseManifest(t, dir, priv, rm)
+
+	// GitHub OK, empty oss -> github source, no fallback involved.
+	got, src, err := FetchAndVerifyRelease(context.Background(), fileURL(dir), "", pubPEM, nil)
+	if err != nil || src != SourceGitHub || got.ReleaseVersion != rm.ReleaseVersion {
+		t.Fatalf("github-only success: src=%q err=%v", src, err)
+	}
+	// GitHub fails, empty oss -> error, no fallback attempt.
+	empty := t.TempDir()
+	if _, _, err := FetchAndVerifyRelease(context.Background(), fileURL(empty), "", pubPEM, nil); err == nil {
+		t.Fatal("expected error when GitHub source fails and no OSS fallback configured")
+	}
+}
