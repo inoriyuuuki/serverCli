@@ -78,7 +78,9 @@ const (
 	ResourceLeases        = "ai.leases"
 	ResourceNodes         = "nodes"
 	ResourceNotifications = "notifications"
-	ResourceMigrate       = "migrate"
+	// ResourceOps guards the declarative operations V2 control plane
+	// (clusters/profiles/nodes/operations/release cache/backups/transfers).
+	ResourceOps = "ops"
 
 	ActionCreate     = "create"
 	ActionRead       = "read"
@@ -136,7 +138,7 @@ func PermissionCategories() []PermissionCategory {
 	return []PermissionCategory{
 		{Category: "notifications", Label: "通知"},
 		{Category: "ai_credentials", Label: "AI 凭证"},
-		{Category: "migrate", Label: "迁移与运维"},
+		{Category: "ops", Label: "声明式运维"},
 	}
 }
 
@@ -151,8 +153,8 @@ func PermissionCatalog() []PermissionDef {
 		{Category: "ai_credentials", Resource: ResourceLeases, Action: ActionRenew, Label: "续期 Lease", Description: "允许续期本人持有的 Lease"},
 		{Category: "ai_credentials", Resource: ResourceLeases, Action: ActionHeartbeat, Label: "Lease 心跳", Description: "允许对本人持有的 Lease 发送心跳"},
 		{Category: "ai_credentials", Resource: ResourceLeases, Action: ActionDisconnect, Label: "断开 Lease", Description: "允许断开本人持有的 Lease"},
-		{Category: "migrate", Resource: ResourceMigrate, Action: ActionRead, Label: "迁移只读", Description: "查看服务归属与 adopt 计划（迁移与运维控制台只读）"},
-		{Category: "migrate", Resource: ResourceMigrate, Action: ActionOps, Label: "迁移运维操作", Description: "触发 adopt/update/backup/restore（高风险，会向节点派发任务）"},
+		{Category: "ops", Resource: ResourceOps, Action: ActionRead, Label: "运维只读", Description: "查看集群/配置/节点/操作/Release 缓存等（声明式运维只读）"},
+		{Category: "ops", Resource: ResourceOps, Action: ActionOps, Label: "运维操作", Description: "创建与推进结构化运维操作（高风险，会向节点派发任务）"},
 	}
 }
 

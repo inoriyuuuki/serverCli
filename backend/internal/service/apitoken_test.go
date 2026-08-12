@@ -174,7 +174,7 @@ func TestPermissionCatalog(t *testing.T) {
 			t.Fatalf("catalog entry %s:%s fails validation: %v", d.Resource, d.Action, err)
 		}
 	}
-	if cats["notifications"] != 1 || cats["ai_credentials"] != 6 || cats["migrate"] != 2 {
+	if cats["notifications"] != 1 || cats["ai_credentials"] != 6 || cats["ops"] != 2 {
 		t.Fatalf("unexpected category distribution: %v", cats)
 	}
 	categories := PermissionCategories()
@@ -185,7 +185,7 @@ func TestPermissionCatalog(t *testing.T) {
 	for _, c := range categories {
 		byCat[c.Category] = c.Label
 	}
-	if byCat["notifications"] != "通知" || byCat["ai_credentials"] != "AI 凭证" {
+	if byCat["notifications"] != "通知" || byCat["ai_credentials"] != "AI 凭证" || byCat["ops"] != "声明式运维" {
 		t.Fatalf("unexpected category labels: %v", byCat)
 	}
 	// The legacy wildcard constant must match the expansion struct exactly.

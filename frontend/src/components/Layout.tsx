@@ -13,7 +13,6 @@ interface NavItem {
 const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: '概览', icon: '◧', end: true },
   { to: '/servers', label: '服务器', icon: '▤' },
-  { to: '/migrate', label: '迁移运维', icon: '⇄' },
   { to: '/clusters', label: '集群', icon: '◈' },
   { to: '/operations', label: '运维操作', icon: '▶' },
   { to: '/release-cache', label: 'Release 缓存', icon: '⬡' },
