@@ -148,3 +148,121 @@ func TestRedactStringUppercaseSensitiveKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactAliyunAccessKeyID(t *testing.T) {
+	r := NewRedactor()
+	// LTAI prefix + 12..24 alphanumeric (full AccessKey ID forms).
+	cases := []string{
+		"LTAI5tExampleAccessKey1",
+		"accessKeyId=LTAI5tExampleAccessKey1",
+		"oss config: LTAI5tABCDEFGHIJKLMNOPQRSTUVWX",
+	}
+	for _, in := range cases {
+		out := r.RedactString(in)
+		if strings.Contains(out, "LTAI5tExampleAccessKey1") || strings.Contains(out, "LTAI5tABCDEFGHIJKLMNOPQRSTUVWX") {
+			t.Fatalf("aliyun AK ID leaked for input %q: %q", in, out)
+		}
+		if !strings.Contains(out, "LTAI***REDACTED***") {
+			t.Fatalf("expected LTAI***REDACTED*** marker for input %q, got %q", in, out)
+		}
+	}
+	// An AK ID embedded as the username of an HTTP URL must be masked too.
+	urlCase := "http://LTAI5tExampleAccessKey1:secret@oss-cn-hangzhou.aliyuncs.com/bucket"
+	out := r.RedactString(urlCase)
+	if strings.Contains(out, "LTAI5tExampleAccessKey1") || strings.Contains(out, "secret") {
+		t.Fatalf("aliyun AK ID leaked in URL for %q: %q", urlCase, out)
+	}
+	if !strings.Contains(out, "***:***@") {
+		t.Fatalf("expected ***:***@ marker for URL case, got %q", out)
+	}
+	if r.Count() == 0 {
+		t.Fatal("expected redaction count")
+	}
+}
+
+func TestRedactAliyunAKSecretKeyValue(t *testing.T) {
+	r := NewRedactor()
+	cases := []struct{ in, secret string }{
+		{"accessKeySecret=abcdefghijklmnop123456", "abcdefghijklmnop123456"},
+		{"access_key_secret: 'GHIJKLMNOPQRSTUVWXYZabcdefgh12'", "GHIJKLMNOPQRSTUVWXYZabcdefgh12"},
+		{"ak_secret = ABCDEFGHIJKLMNOPQRSTUVWXYZ012345", "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"},
+		{"aliyun_secret: abcdefghijklmnopqrstuvwxyz12345678", "abcdefghijklmnopqrstuvwxyz12345678"},
+		{"ACCESS_KEY_SECRET=AbCdEfGhIjKlMnOpQrStUvWxYz1234", "AbCdEfGhIjKlMnOpQrStUvWxYz1234"},
+	}
+	for _, c := range cases {
+		out := r.RedactString(c.in)
+		if strings.Contains(out, c.secret) {
+			t.Fatalf("AK secret leaked for input %q: %q", c.in, out)
+		}
+		if !strings.Contains(out, "[REDACTED]") {
+			t.Fatalf("expected [REDACTED] marker for input %q, got %q", c.in, out)
+		}
+	}
+	if r.Count() == 0 {
+		t.Fatal("expected redaction count")
+	}
+}
+
+func TestRedactHTTPBasicCredentialURL(t *testing.T) {
+	r := NewRedactor()
+	cases := []struct{ in, user, pass string }{
+		{"git clone http://gituser:gitpass@git.example.com/repo.git", "gituser", "gitpass"},
+		{"https://LTAI5tExampleAccessKey1:Sup3rSecret123456@oss.example.com/x", "LTAI5tExampleAccessKey1", "Sup3rSecret123456"},
+	}
+	for _, c := range cases {
+		out := r.RedactString(c.in)
+		if strings.Contains(out, c.user) || strings.Contains(out, c.pass) {
+			t.Fatalf("HTTP basic credential leaked for input %q: %q", c.in, out)
+		}
+		if !strings.Contains(out, "***:***@") {
+			t.Fatalf("expected ***:***@ marker for input %q, got %q", c.in, out)
+		}
+		if strings.Contains(out, c.in) {
+			t.Fatalf("input unchanged: %q", out)
+		}
+	}
+	if r.Count() == 0 {
+		t.Fatal("expected redaction count")
+	}
+}
+
+func TestRedactMixedAliyunSecrets(t *testing.T) {
+	r := NewRedactor()
+	ak := "LTAI5tMixedCaseAkId123456"
+	sk := "MixedCaseSecretValue987654"
+	in := "accessKeyID=" + ak + " accessKeySecret=" + sk + " endpoint=http://user:pw@oss.example.com"
+	out := r.RedactString(in)
+	for _, v := range []string{ak, sk, "user", "pw"} {
+		if strings.Contains(out, v) {
+			t.Fatalf("mixed input leaked %q: %q", v, out)
+		}
+	}
+	if !strings.Contains(out, "[REDACTED]") || !strings.Contains(out, "LTAI***REDACTED***") {
+		t.Fatalf("expected redaction markers, got %q", out)
+	}
+}
+
+func TestRedactAliyunAccessKeyIDKeyValueJSON(t *testing.T) {
+	// JSON redaction must also mask AK IDs used as access_key values.
+	r := NewRedactor()
+	in := `{"access_key_id":"LTAI5tJsonAkId123456","access_key_secret":"JsonSecretValue12345678","bucket":"b"}`
+	out := r.RedactJSON([]byte(in))
+	if strings.Contains(string(out), "LTAI5tJsonAkId123456") || strings.Contains(string(out), "JsonSecretValue12345678") {
+		t.Fatalf("JSON AK credentials leaked: %s", out)
+	}
+	if !strings.Contains(string(out), "[REDACTED]") {
+		t.Fatalf("expected redaction markers in %s", out)
+	}
+}
+
+func TestRedactDSNStillWorks(t *testing.T) {
+	// Existing DSN redaction must not regress with the new URL rule.
+	r := NewRedactor()
+	out := r.RedactString("postgres://user:s3cret@db.example:5432/servercli")
+	if strings.Contains(out, "s3cret") {
+		t.Fatalf("dsn password leaked: %s", out)
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Fatalf("expected dsn redaction marker, got %s", out)
+	}
+}

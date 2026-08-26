@@ -14,8 +14,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"servercli/internal/config"
 )
 
 // TaskPayload mirrors the control plane's signed task payload.
@@ -54,6 +58,9 @@ type Result struct {
 	ErrorMessage string    `json:"error_message"`
 	Truncated    bool      `json:"truncated"`
 	FinishedAt   time.Time `json:"finished_at"`
+	// SummaryJSON carries a machine-readable operation summary (e.g. the
+	// deployment backup result) that the control plane persists separately.
+	SummaryJSON string `json:"summary_json,omitempty"`
 }
 
 // TaskReporter sends events and results for a task.
@@ -101,16 +108,32 @@ func constantTimeHex(a, b string) bool {
 
 // Executor runs tasks with strict argv semantics, timeouts and output limits.
 type Executor struct {
-	repo      TaskReporter
-	log       *slog.Logger
-	mu        sync.Mutex
-	running   map[string]context.CancelFunc
-	cancelled map[string]bool
+	repo         TaskReporter
+	log          *slog.Logger
+	deployRunner *DeploymentRunner
+	mu           sync.Mutex
+	running      map[string]context.CancelFunc
+	cancelled    map[string]bool
+}
+
+// SetDeploymentRunner injects the built-in deployment.* runner. It is
+// optional: commands without a runner configured fail with a clear error.
+func (e *Executor) SetDeploymentRunner(r *DeploymentRunner) {
+	e.deployRunner = r
 }
 
 // NewExecutor builds an executor.
 func NewExecutor(repo TaskReporter, log *slog.Logger) *Executor {
 	return &Executor{repo: repo, log: log, running: map[string]context.CancelFunc{}, cancelled: map[string]bool{}}
+}
+
+// newExecutorWithDeployment builds an executor pre-wired with the built-in
+// deployment.* runner. It is used by the node agent; NewExecutor keeps its
+// signature for callers that do not need deployment commands.
+func newExecutorWithDeployment(cfg *config.Config, repo TaskReporter, log *slog.Logger) *Executor {
+	e := NewExecutor(repo, log)
+	e.SetDeploymentRunner(NewDeploymentRunner(cfg, log))
+	return e
 }
 
 // MarkCancelled flags a task for termination (from control plane).
@@ -161,13 +184,34 @@ func (e *Executor) Execute(ctx context.Context, payload *TaskPayload, cmd Comman
 	send(Event{EventType: "accepted", Message: "task accepted"})
 	send(Event{EventType: "started", Message: "task started"})
 
-	args := buildArgs(cmd, payload.Arguments)
-	execCtx, execCancel := context.WithCancel(runCtx)
-	defer execCancel()
+	// deployment.* commands are handled by the built-in DeploymentRunner
+	// (fixed argument whitelist, safe extraction, sudo wrapper hooks) instead
+	// of the generic exec path.
+	if strings.HasPrefix(cmd.CommandID, "deployment.") {
+		if e.deployRunner == nil {
+			e.finish(taskID, send, Result{Status: "failed", ErrorCode: "DEPLOY_RUNNER_NOT_CONFIGURED", ErrorMessage: "deployment runner not configured"})
+			return
+		}
+		res, err := e.deployRunner.Run(runCtx, payload)
+		if err != nil {
+			e.finish(taskID, send, Result{Status: "failed", ErrorCode: "DEPLOY_RUN_ERROR", ErrorMessage: err.Error(), FinishedAt: time.Now().UTC()})
+			return
+		}
+		if res == nil {
+			res = &Result{Status: "succeeded", FinishedAt: time.Now().UTC()}
+		}
+		e.finish(taskID, send, *res)
+		return
+	}
 
-	proc := exec.CommandContext(execCtx, cmd.ExecutablePath, args...)
+	args := buildArgs(cmd, payload.Arguments)
+
+	proc := exec.Command(cmd.ExecutablePath, args...)
 	proc.Dir = filepath.Dir(cmd.ExecutablePath)
 	proc.Env = minimalEnv()
+	// Run the child in its own process group so cancellation can terminate
+	// the whole group (SIGTERM, then SIGKILL) and no descendant survives.
+	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdout, err := proc.StdoutPipe()
 	if err != nil {
@@ -239,12 +283,13 @@ func (e *Executor) Execute(ctx context.Context, payload *TaskPayload, cmd Comman
 			select {
 			case <-t.C:
 				if e.isCancelled(taskID) {
-					execCancel()
+					terminateProcessGroup(proc)
 					return
 				}
 			case <-procDone:
 				return
 			case <-runCtx.Done():
+				terminateProcessGroup(proc)
 				return
 			}
 		}
@@ -307,6 +352,21 @@ func pipeStream(r io.Reader, ch chan<- string) {
 			return
 		}
 	}
+}
+
+// terminateProcessGroup sends SIGTERM to the process group led by cmd and
+// escalates to SIGKILL after a short grace period, ensuring the child and any
+// descendants it spawned exit together. It is safe to call after the process
+// already exited (Kill returns ESRCH, which is ignored).
+func terminateProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	pgid := cmd.Process.Pid
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	time.AfterFunc(3*time.Second, func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	})
 }
 
 func (e *Executor) finish(taskID string, send func(Event), res Result) {

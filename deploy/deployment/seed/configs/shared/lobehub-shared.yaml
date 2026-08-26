@@ -1,0 +1,25 @@
+# =============================================================================
+# 共享配置示例 — LobeHub (lobehub)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: lobehub-shared
+feature_key: lobehub
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/lobehub
+config_dir: /opt/servercli-deployment/configs/lobehub
+rendered_dir: /opt/servercli-deployment/rendered/lobehub
+ports: [3210]
+service_port: 3210
+image_tag: lobehub/lobehub:1.56.2
+# image_digest: sha256:xxxx  # 生产建议锁定 digest（优先级高于 image_tag）
+restart_policy: unless-stopped
+db_host: postgres.example.internal
+db_port: 5432
+db_name: lobehub
+redis_url: redis://redis.example.internal:6379/0
+app_url: https://lobehub.example.internal
+s3_endpoint: http://minio.example.internal:9022
+s3_bucket: lobehub

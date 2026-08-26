@@ -1,0 +1,127 @@
+# =============================================================================
+# Feature Manifest — Xray Bootstrap (xray-bootstrap)
+# ServerCLI Feature Bundle 契约（servercli/v1）
+# 本文件是控制面导入/上传 OSS 的权威内容模板；不含任何真实 Secret。
+# =============================================================================
+apiVersion: servercli/v1
+kind: Feature
+metadata:
+  name: Xray Bootstrap
+  description: Xray 代理基础能力（SOCKS/HTTP 出站代理，backup_mode=none）
+spec:
+  feature_key: xray-bootstrap
+  os: linux
+  arch: amd64
+  minimum_agent_version: "0.2.0"
+  dependencies:
+    []
+  backup_mode: none
+  rollback_capability: true
+  config_schema:
+    {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "required": [
+        "node_id",
+        "environment_id",
+        "hostname",
+        "feature_key",
+        "release_version",
+        "deployment_root_dir",
+        "operation_id"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "description": "控制面生成的节点 ID"
+        },
+        "environment_id": {
+          "type": "string",
+          "description": "环境 ID（如 production）"
+        },
+        "hostname": {
+          "type": "string",
+          "description": "目标主机名"
+        },
+        "feature_key": {
+          "type": "string",
+          "const": "xray-bootstrap"
+        },
+        "release_version": {
+          "type": "string",
+          "default": "0.1.0",
+          "description": "目标 release 版本"
+        },
+        "deployment_root_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment",
+          "description": "部署根目录"
+        },
+        "operation_id": {
+          "type": "string",
+          "description": "本次操作 ID（幂等与审计）"
+        },
+        "data_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment/data/xray-bootstrap",
+          "description": "数据目录"
+        },
+        "config_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment/configs/xray-bootstrap",
+          "description": "配置目录"
+        },
+        "rendered_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment/rendered/xray-bootstrap",
+          "description": "渲染产物目录"
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": [
+            10808,
+            10809
+          ],
+          "description": "服务端口列表"
+        },
+        "service_port": {
+          "type": "integer",
+          "default": 10809,
+          "description": "主服务端口"
+        },
+        "image_tag": {
+          "type": "string",
+          "default": "Xray v1.8.24",
+          "description": "固定镜像/制品 tag（生产锁定 digest）"
+        },
+        "version": {
+          "type": "string",
+          "default": "1.8.24",
+          "description": "Xray 固定版本"
+        },
+        "artifact_url": {
+          "type": "string",
+          "description": "Xray 制品下载地址（占位，由控制面配置）"
+        },
+        "config_source": {
+          "type": "string",
+          "default": "release",
+          "description": "config.json 来源：release|config"
+        },
+        "probe_url": {
+          "type": "string",
+          "default": "https://github.com",
+          "description": "代理探活目标"
+        }
+      },
+      "additionalProperties": true
+    }
+  hooks:
+    install: hooks/install.sh
+    update: hooks/update.sh
+    backup: hooks/backup.sh
+    health-check: hooks/health-check.sh
+    rollback: hooks/rollback.sh

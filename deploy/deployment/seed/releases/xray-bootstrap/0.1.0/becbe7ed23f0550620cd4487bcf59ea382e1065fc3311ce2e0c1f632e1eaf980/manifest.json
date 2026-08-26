@@ -1,0 +1,58 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "FeatureRelease",
+  "metadata": {
+    "feature_key": "xray-bootstrap",
+    "name": "Xray Bootstrap",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "feature_key": "xray-bootstrap",
+    "version": "0.1.0",
+    "os": "linux",
+    "arch": "amd64",
+    "bundle": {
+      "file": "bundle.tar.gz",
+      "sha256": "becbe7ed23f0550620cd4487bcf59ea382e1065fc3311ce2e0c1f632e1eaf980",
+      "size": 5534,
+      "content_type": "application/gzip"
+    },
+    "files": [
+      {
+        "path": "manifest.yaml",
+        "size": 3794,
+        "sha256": "afb826e92955edc72cfe7b7d2a860cb1f48336c76d014dd96ff93a09be83354e"
+      },
+      {
+        "path": "hooks/backup.sh",
+        "size": 687,
+        "sha256": "5e4385646325636c20091ed0c98974d09cbf3b9813ad87cf0161fec3f1cd409d"
+      },
+      {
+        "path": "hooks/health-check.sh",
+        "size": 1286,
+        "sha256": "54ce925e24a3571b7c7060aace0f7660aa20907682853753728cc8f6a3e76d97"
+      },
+      {
+        "path": "hooks/install.sh",
+        "size": 7339,
+        "sha256": "4e6360347ccc107ad1d5e3d55bc352c1355e91a8d9cfcfd64fc7e2f2df546b91"
+      },
+      {
+        "path": "hooks/rollback.sh",
+        "size": 1442,
+        "sha256": "b1aa62837264072d3b1343bee78218546baff2f5b2ab9fcbfcaf44feef5b29ca"
+      },
+      {
+        "path": "hooks/update.sh",
+        "size": 374,
+        "sha256": "a90dc0290ae05c2616ab174836eab321df6cf784bcd4a1eb7973e76d4858678d"
+      }
+    ],
+    "signature": {
+      "file": "bundle.sig",
+      "algorithm": "HMAC-SHA256",
+      "note": "占位签名：真实签名由控制面签发（HMAC-SHA256(secret, bundle.tar.gz sha256)）"
+    }
+  }
+}

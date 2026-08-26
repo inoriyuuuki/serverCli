@@ -76,3 +76,14 @@ frontend/.vite/
 *.rej
 *.pid
 .envrc
+
+# ============ 部署管理（Deployment Management）============
+# 部署根 / 本地镜像 / 本地状态，严禁入库
+/opt/servercli-deployment/
+deploy/deployment/repository/
+.servercli-local/
+# 部署 Secret 正文（*.secrets.yaml / OSS 配置）严禁入库，但 .example 模板需要入库
+*.secrets.yaml
+*.oss-profile.json
+!*.secrets.yaml.example
+!*.oss-profile.json.example

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# deployment.* 命令占位可执行文件。
+# 实际执行由 Node Agent 内置 DeploymentRunner（backend/internal/agent/deployment_runner.go）
+# 处理；本文件仅用于命令 manifest 注册（LoadCommands 校验可执行文件存在且可执行）。
+# 直接执行本文件是不受支持的路径。
+echo "deployment.* commands are handled by the built-in DeploymentRunner; direct execution is not supported" >&2
+exit 3

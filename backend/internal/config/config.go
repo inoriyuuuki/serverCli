@@ -40,6 +40,7 @@ type Config struct {
 	HTTPInsecureSkipVerify                 bool
 	LogLevel                               string
 	FrontendDistDir                        string
+	DeploymentRootDir                       string
 	MaxTaskOutputBytes                     int64
 	TaskPollMaxWaitSeconds                 int
 	NotificationFeishuWebhookURL           string
@@ -76,6 +77,7 @@ func Default() *Config {
 		HTTPInsecureSkipVerify:                 false,
 		LogLevel:                               "info",
 		FrontendDistDir:                        "../frontend/dist",
+		DeploymentRootDir:                      "/opt/servercli-deployment",
 		MaxTaskOutputBytes:                     262144,
 		TaskPollMaxWaitSeconds:                 25,
 		NotificationFeishuWebhookURL:           "",
@@ -154,6 +156,7 @@ func Load() (*Config, error) {
 	str("LEASE_SHELL_BIN", &cfg.LeaseShellBin)
 	str("LOG_LEVEL", &cfg.LogLevel)
 	str("FRONTEND_DIST_DIR", &cfg.FrontendDistDir)
+	str("DEPLOYMENT_ROOT_DIR", &cfg.DeploymentRootDir)
 	boolean("HTTP_INSECURE_SKIP_VERIFY", &cfg.HTTPInsecureSkipVerify)
 	intv("AI_LEASE_DEFAULT_MINUTES", &cfg.AILeaseDefaultMinutes)
 	intv("AI_LEASE_MAX_HOURS", &cfg.AILeaseMaxHours)

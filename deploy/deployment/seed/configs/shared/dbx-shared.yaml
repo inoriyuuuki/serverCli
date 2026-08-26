@@ -1,0 +1,21 @@
+# =============================================================================
+# 共享配置示例 — DBX (dbx)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: dbx-shared
+feature_key: dbx
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/dbx
+config_dir: /opt/servercli-deployment/configs/dbx
+rendered_dir: /opt/servercli-deployment/rendered/dbx
+ports: [9025]
+service_port: 9025
+image_tag: t8y2/dbx:1.7.3
+# image_digest: sha256:xxxx  # 生产建议锁定 digest（优先级高于 image_tag）
+restart_policy: unless-stopped
+mongo_host: mongo.example.internal
+mongo_port: 27017
+mongo_db: dbx

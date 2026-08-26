@@ -1,0 +1,50 @@
+apiVersion: servercli/v1
+kind: Command
+metadata:
+  id: deployment.health-check
+  version: 1.0.0
+  category: deployment
+  title: 部署健康检查
+  description: 经 sudo wrapper 以固定参数执行健康检查 Hook；退出码 0 表示健康，非 0 表示不健康
+spec:
+  executable: ./deployment/deployment-runner
+  permissionProfile: root
+  timeoutSeconds: 900
+  maxOutputBytes: 1048576
+  concurrency: 1
+  parameters:
+    type: object
+    additionalProperties: false
+    required: [operation_id, target_id, node_id]
+    properties:
+      operation_id:
+        type: string
+      target_id:
+        type: string
+      node_id:
+        type: string
+      feature_key:
+        type: string
+      release_id:
+        type: string
+      config_hash:
+        type: string
+      release_version:
+        type: string
+      secret_refs:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [ref_id, object_key, version, content_hash, encryption_mode]
+          properties:
+            ref_id:
+              type: string
+            object_key:
+              type: string
+            version:
+              type: string
+            content_hash:
+              type: string
+            encryption_mode:
+              type: string

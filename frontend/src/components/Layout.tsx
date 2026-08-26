@@ -14,6 +14,7 @@ const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: '概览', icon: '◧', end: true },
   { to: '/servers', label: '服务器', icon: '▤' },
   { to: '/commands', label: '命令中心', icon: '⚙' },
+  { to: '/deployments', label: '部署管理', icon: '🚀' },
   { to: '/tasks', label: '任务', icon: '☰' },
   { to: '/ai-credentials', label: 'AI 凭证', icon: '🔑' },
   { to: '/api-tokens', label: 'API Token', icon: '🎫' },

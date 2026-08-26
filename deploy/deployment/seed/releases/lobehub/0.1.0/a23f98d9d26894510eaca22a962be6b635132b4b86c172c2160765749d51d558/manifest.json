@@ -1,0 +1,58 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "FeatureRelease",
+  "metadata": {
+    "feature_key": "lobehub",
+    "name": "LobeHub",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "feature_key": "lobehub",
+    "version": "0.1.0",
+    "os": "linux",
+    "arch": "amd64",
+    "bundle": {
+      "file": "bundle.tar.gz",
+      "sha256": "a23f98d9d26894510eaca22a962be6b635132b4b86c172c2160765749d51d558",
+      "size": 5363,
+      "content_type": "application/gzip"
+    },
+    "files": [
+      {
+        "path": "manifest.yaml",
+        "size": 3922,
+        "sha256": "3b4fc23df0474f9149e4dc17f405a4e5e65559bc64230f607e4610adcc91891f"
+      },
+      {
+        "path": "hooks/backup.sh",
+        "size": 1205,
+        "sha256": "68bd60d5f96f3ed9479aa34b1f3a856547caebb0b49d21ba24ae00261d0df582"
+      },
+      {
+        "path": "hooks/health-check.sh",
+        "size": 1414,
+        "sha256": "97be28b4e51e8898e145b21789e46b7142cc686b39474523eddab16f8e3fe709"
+      },
+      {
+        "path": "hooks/install.sh",
+        "size": 6006,
+        "sha256": "45ea1cf85a6e76ed1c661fdb0a822a4d91645e2df11453c5d354432e237c7658"
+      },
+      {
+        "path": "hooks/rollback.sh",
+        "size": 2221,
+        "sha256": "9fd1ee1c907c733cb573c3c79723d3350d43b508f79b6895da9f010bbef049b1"
+      },
+      {
+        "path": "hooks/update.sh",
+        "size": 430,
+        "sha256": "f27124e7848ca4a6db4e3f205ae44cfdc22ae2efed5aad8889df96bfc8dbcc7c"
+      }
+    ],
+    "signature": {
+      "file": "bundle.sig",
+      "algorithm": "HMAC-SHA256",
+      "note": "占位签名：真实签名由控制面签发（HMAC-SHA256(secret, bundle.tar.gz sha256)）"
+    }
+  }
+}

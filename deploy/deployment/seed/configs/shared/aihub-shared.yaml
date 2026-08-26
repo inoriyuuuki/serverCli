@@ -1,0 +1,24 @@
+# =============================================================================
+# 共享配置示例 — AIHub (aihub)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: aihub-shared
+feature_key: aihub
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/aihub
+config_dir: /opt/servercli-deployment/configs/aihub
+rendered_dir: /opt/servercli-deployment/rendered/aihub
+ports: [8080]
+service_port: 8080
+image_tag: inoriyuuki/aihub:0.3.0
+# image_digest: sha256:xxxx  # 生产建议锁定 digest（优先级高于 image_tag）
+restart_policy: unless-stopped
+db_host: postgres.example.internal
+db_port: 5432
+db_name: aihub
+minio_endpoint: http://minio.example.internal:9022
+minio_bucket: aihub
+public_base_url: http://node.example.internal:8080

@@ -180,6 +180,13 @@ func run() error {
 	sched := scheduler.New(log, srv.NodeService(), srv.LeaseService(), srv.CleanupService(), srv.SettingsService(), cfg.NodeRole == "child")
 	go sched.Run(ctx)
 
+	// Deployment scheduler (primary only: the primary owns deployment
+	// operation execution and OSS repository sync).
+	if cfg.NodeRole == "primary" {
+		deploySched := service.NewDeploymentScheduler(srv.DeploymentService(), st, cfg, log, srv.TaskService(), srv.NodeService())
+		go deploySched.Run(ctx)
+	}
+
 	// The control plane serves both the browser frontend port and the API port
 	// with the same handler (doc/03 §1.1). API/agent routes live under /api,
 	// everything else falls through to the SPA.

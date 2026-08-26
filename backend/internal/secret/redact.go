@@ -50,6 +50,20 @@ var (
 	hookURLRe    = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
 	// commonSecretValueRe matches typical high-entropy secret values inside JSON.
 	commonSecretValueRe = regexp.MustCompile(`(?i)(sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|sct_[A-Za-z0-9_-]+|lrt_[A-Za-z0-9_.-]+)`)
+	// aliyunAKIDRe matches Alibaba Cloud AccessKey IDs (LTAI prefix), e.g.
+	// LTAI5t8x... which appear in OSS/TTS/OSS client configurations. The value
+	// itself is a credential and must never be persisted or logged.
+	aliyunAKIDRe = regexp.MustCompile(`LTAI[a-zA-Z0-9]{12,24}`)
+	// aliyunAKSecretRe matches AccessKey Secret values written as an explicit
+	// key=value / key: value pair (accessKeySecret=..., access_key_secret: ...,
+	// ak_secret=..., aliyun_secret: ...). Restricting to key=value avoids
+	// false positives on ordinary prose.
+	aliyunAKSecretRe = regexp.MustCompile(`(?i)(access[_-]?key[_-]?secret|access[_-]?key[_-]?id|ak[_-]?secret|aliyun[_-]?secret)\s*[:=]\s*['"]?[A-Za-z0-9+/=]{16,64}`)
+	// httpBasicCredRe matches user:password embedded directly in an HTTP(S)
+	// URL (e.g. http://user:pass@host). Both parts are masked so an AccessKey
+	// used as the username is not leaked either. It runs after dsnRe (which
+	// only masks the password), so the username is masked as well.
+	httpBasicCredRe = regexp.MustCompile(`(?i)(https?://)[^/@\s]+:[^/@\s]+@`)
 )
 
 // MaskSecret replaces the given value with a safe placeholder, counting it.
@@ -87,6 +101,31 @@ func (r *Redactor) RedactString(s string) string {
 		return dsnRe.ReplaceAllString(m, "${1}${2}:[REDACTED]@")
 	}); dsn != out {
 		out = dsn
+	}
+	// HTTP(S) URLs with embedded user:password (e.g. Git clone over HTTP)
+	// must have BOTH parts masked. Runs after dsnRe (which only masks the
+	// password) so an AccessKey used as the username is masked too.
+	if strings.Contains(strings.ToLower(out), "://") {
+		cred := httpBasicCredRe.ReplaceAllStringFunc(out, func(m string) string {
+			changed = true
+			return httpBasicCredRe.ReplaceAllString(m, "${1}***:***@")
+		})
+		if cred != out {
+			out = cred
+		}
+	}
+	// Alibaba Cloud AccessKey credentials (OSS profiles etc.).
+	if m := aliyunAKIDRe.ReplaceAllStringFunc(out, func(m string) string {
+		changed = true
+		return "LTAI***REDACTED***"
+	}); m != out {
+		out = m
+	}
+	if m := aliyunAKSecretRe.ReplaceAllStringFunc(out, func(m string) string {
+		changed = true
+		return "[REDACTED]"
+	}); m != out {
+		out = m
 	}
 	// Common cloud key formats.
 	if m := commonSecretValueRe.ReplaceAllStringFunc(out, func(m string) string {

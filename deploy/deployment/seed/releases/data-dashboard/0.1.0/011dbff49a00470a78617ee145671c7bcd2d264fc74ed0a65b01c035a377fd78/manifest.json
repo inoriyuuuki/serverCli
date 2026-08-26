@@ -1,0 +1,58 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "FeatureRelease",
+  "metadata": {
+    "feature_key": "data-dashboard",
+    "name": "DataDashboard",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "feature_key": "data-dashboard",
+    "version": "0.1.0",
+    "os": "linux",
+    "arch": "amd64",
+    "bundle": {
+      "file": "bundle.tar.gz",
+      "sha256": "011dbff49a00470a78617ee145671c7bcd2d264fc74ed0a65b01c035a377fd78",
+      "size": 5242,
+      "content_type": "application/gzip"
+    },
+    "files": [
+      {
+        "path": "manifest.yaml",
+        "size": 3318,
+        "sha256": "228eca4a5099e2923feb59cd21cb9331ec908209aaba0ea0605e26d2ef1d464b"
+      },
+      {
+        "path": "hooks/backup.sh",
+        "size": 1172,
+        "sha256": "90c9a922db345840e0987a3a163ee13503fd8fc6365300390e19e36666a779e3"
+      },
+      {
+        "path": "hooks/health-check.sh",
+        "size": 1238,
+        "sha256": "98e9b73dad42f14afa247283d89f0717012a4b8b0b424dcc66447682211c5674"
+      },
+      {
+        "path": "hooks/install.sh",
+        "size": 6069,
+        "sha256": "fe6f1fe3595ba0b3143600723d3ee2d2c905ad5a76e91742843efe2f939d9b69"
+      },
+      {
+        "path": "hooks/rollback.sh",
+        "size": 1441,
+        "sha256": "ad8fa82c54071d2f842f56575a605cc2eae8a7c67a027c223d87b493d3a31066"
+      },
+      {
+        "path": "hooks/update.sh",
+        "size": 353,
+        "sha256": "4fdaacdc5052bcbd11a5d7aa1c07d40f4e1e3945755ddc4b173b8f0399bc8cac"
+      }
+    ],
+    "signature": {
+      "file": "bundle.sig",
+      "algorithm": "HMAC-SHA256",
+      "note": "占位签名：真实签名由控制面签发（HMAC-SHA256(secret, bundle.tar.gz sha256)）"
+    }
+  }
+}

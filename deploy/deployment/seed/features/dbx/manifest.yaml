@@ -1,0 +1,119 @@
+# =============================================================================
+# Feature Manifest — DBX (dbx)
+# ServerCLI Feature Bundle 契约（servercli/v1）
+# 本文件是控制面导入/上传 OSS 的权威内容模板；不含任何真实 Secret。
+# =============================================================================
+apiVersion: servercli/v1
+kind: Feature
+metadata:
+  name: DBX
+  description: DBX 数据库工具/面板服务（外部 MongoDB，backup_mode=application_snapshot）
+spec:
+  feature_key: dbx
+  os: linux
+  arch: amd64
+  minimum_agent_version: "0.2.0"
+  dependencies:
+    - docker-prerequisite
+  backup_mode: application_snapshot
+  rollback_capability: true
+  config_schema:
+    {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "required": [
+        "node_id",
+        "environment_id",
+        "hostname",
+        "feature_key",
+        "release_version",
+        "deployment_root_dir",
+        "operation_id"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "description": "控制面生成的节点 ID"
+        },
+        "environment_id": {
+          "type": "string",
+          "description": "环境 ID（如 production）"
+        },
+        "hostname": {
+          "type": "string",
+          "description": "目标主机名"
+        },
+        "feature_key": {
+          "type": "string",
+          "const": "dbx"
+        },
+        "release_version": {
+          "type": "string",
+          "default": "0.1.0",
+          "description": "目标 release 版本"
+        },
+        "deployment_root_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment",
+          "description": "部署根目录"
+        },
+        "operation_id": {
+          "type": "string",
+          "description": "本次操作 ID（幂等与审计）"
+        },
+        "data_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment/data/dbx",
+          "description": "数据目录"
+        },
+        "config_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment/configs/dbx",
+          "description": "配置目录"
+        },
+        "rendered_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment/rendered/dbx",
+          "description": "渲染产物目录"
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": [
+            9025
+          ],
+          "description": "服务端口列表"
+        },
+        "service_port": {
+          "type": "integer",
+          "default": 9025,
+          "description": "主服务端口"
+        },
+        "image_tag": {
+          "type": "string",
+          "default": "t8y2/dbx:1.7.3",
+          "description": "固定镜像/制品 tag（生产锁定 digest）"
+        },
+        "mongo_host": {
+          "type": "string",
+          "default": "mongo.example.internal"
+        },
+        "mongo_port": {
+          "type": "integer",
+          "default": 27017
+        },
+        "mongo_db": {
+          "type": "string",
+          "default": "dbx"
+        }
+      },
+      "additionalProperties": true
+    }
+  hooks:
+    install: hooks/install.sh
+    update: hooks/update.sh
+    backup: hooks/backup.sh
+    health-check: hooks/health-check.sh
+    rollback: hooks/rollback.sh

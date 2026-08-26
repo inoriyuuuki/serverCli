@@ -79,12 +79,27 @@ const (
 	ResourceNodes         = "nodes"
 	ResourceNotifications = "notifications"
 
+	// Deployment management resources (deployments, deployment secrets and
+	// node bootstrap sessions) used by the AI self-service / operator grants.
+	ResourceDeployments       = "deployments"
+	ResourceDeploymentSecrets = "deployment_secrets"
+	ResourceBootstrapSessions = "bootstrap_sessions"
+
 	ActionCreate     = "create"
 	ActionRead       = "read"
 	ActionRenew      = "renew"
 	ActionHeartbeat  = "heartbeat"
 	ActionDisconnect = "disconnect"
 	ActionSend       = "send"
+
+	// Deployment action verbs (skipped when already defined above).
+	ActionInstall   = "install"
+	ActionUpdate    = "update"
+	ActionBackup    = "backup"
+	ActionRollback  = "rollback"
+	ActionConfigure = "configure"
+	ActionManage    = "manage"
+	ActionRevoke    = "revoke"
 )
 
 // TokenPrincipal is the authenticated identity for a request carrying a
@@ -148,6 +163,16 @@ func PermissionCatalog() []PermissionDef {
 		{Category: "ai_credentials", Resource: ResourceLeases, Action: ActionRenew, Label: "续期 Lease", Description: "允许续期本人持有的 Lease"},
 		{Category: "ai_credentials", Resource: ResourceLeases, Action: ActionHeartbeat, Label: "Lease 心跳", Description: "允许对本人持有的 Lease 发送心跳"},
 		{Category: "ai_credentials", Resource: ResourceLeases, Action: ActionDisconnect, Label: "断开 Lease", Description: "允许断开本人持有的 Lease"},
+		{Category: "部署管理", Resource: ResourceDeployments, Action: ActionRead, Label: "部署管理（只读）", Description: "允许读取部署管理信息（只读）"},
+		{Category: "部署管理", Resource: ResourceDeployments, Action: ActionConfigure, Label: "配置部署", Description: "允许配置部署（Feature、配置 Profile、仓库同步等）"},
+		{Category: "部署管理", Resource: ResourceDeployments, Action: ActionInstall, Label: "安装部署", Description: "允许执行安装部署操作"},
+		{Category: "部署管理", Resource: ResourceDeployments, Action: ActionUpdate, Label: "更新部署", Description: "允许执行更新部署操作"},
+		{Category: "部署管理", Resource: ResourceDeployments, Action: ActionBackup, Label: "备份部署", Description: "允许执行备份部署操作"},
+		{Category: "部署管理", Resource: ResourceDeployments, Action: ActionRollback, Label: "回滚部署", Description: "允许执行回滚部署操作"},
+		{Category: "部署管理", Resource: ResourceDeploymentSecrets, Action: ActionManage, Label: "部署 Secret 管理", Description: "允许覆盖/管理部署 Secret"},
+		{Category: "部署管理", Resource: ResourceBootstrapSessions, Action: ActionCreate, Label: "节点引导会话（创建）", Description: "允许创建节点引导会话"},
+		{Category: "部署管理", Resource: ResourceBootstrapSessions, Action: ActionRead, Label: "节点引导会话（查看）", Description: "允许查看节点引导会话"},
+		{Category: "部署管理", Resource: ResourceBootstrapSessions, Action: ActionRevoke, Label: "节点引导会话（撤销）", Description: "允许撤销节点引导会话"},
 	}
 }
 

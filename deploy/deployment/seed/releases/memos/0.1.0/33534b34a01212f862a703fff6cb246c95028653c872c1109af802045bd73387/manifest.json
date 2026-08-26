@@ -1,0 +1,58 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "FeatureRelease",
+  "metadata": {
+    "feature_key": "memos",
+    "name": "Memos",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "feature_key": "memos",
+    "version": "0.1.0",
+    "os": "linux",
+    "arch": "amd64",
+    "bundle": {
+      "file": "bundle.tar.gz",
+      "sha256": "33534b34a01212f862a703fff6cb246c95028653c872c1109af802045bd73387",
+      "size": 5318,
+      "content_type": "application/gzip"
+    },
+    "files": [
+      {
+        "path": "manifest.yaml",
+        "size": 3525,
+        "sha256": "077c4f60add74da4bb903ef9a343f6eef25a75425be512174c0efda170301a79"
+      },
+      {
+        "path": "hooks/backup.sh",
+        "size": 1201,
+        "sha256": "95ec827e53f13902f19685b655e5221cfe515c1d811447da446dbbcdf0bd349f"
+      },
+      {
+        "path": "hooks/health-check.sh",
+        "size": 1410,
+        "sha256": "1b6809527cf184e739d6932eb0e866a4825f0b9fe07426be03bf3ef141053582"
+      },
+      {
+        "path": "hooks/install.sh",
+        "size": 5956,
+        "sha256": "06dcd04d268edbf42827ce3b07e4a4586fac3feb50fb6c594c18c177a8837f3f"
+      },
+      {
+        "path": "hooks/rollback.sh",
+        "size": 2217,
+        "sha256": "99bfac82f4b0b21bfd643f41d6d8d4026bd7b464639d0a70d0b3e26b9f36401a"
+      },
+      {
+        "path": "hooks/update.sh",
+        "size": 426,
+        "sha256": "4196dd20a044d5186b4c9c613c5369f3a2211cb5014794924d3f81aa54d75f5b"
+      }
+    ],
+    "signature": {
+      "file": "bundle.sig",
+      "algorithm": "HMAC-SHA256",
+      "note": "占位签名：真实签名由控制面签发（HMAC-SHA256(secret, bundle.tar.gz sha256)）"
+    }
+  }
+}

@@ -1,0 +1,50 @@
+apiVersion: servercli/v1
+kind: Command
+metadata:
+  id: deployment.sync
+  version: 1.0.0
+  category: deployment
+  title: 部署仓库同步
+  description: 从私有 OSS 同步 deployment-repository 制品到节点部署根目录 repository/，并按仓库级 Manifest 逐对象校验（sha256/size）后修正权限
+spec:
+  executable: ./deployment/deployment-runner
+  permissionProfile: root
+  timeoutSeconds: 900
+  maxOutputBytes: 1048576
+  concurrency: 1
+  parameters:
+    type: object
+    additionalProperties: false
+    required: [operation_id, target_id, node_id]
+    properties:
+      operation_id:
+        type: string
+      target_id:
+        type: string
+      node_id:
+        type: string
+      feature_key:
+        type: string
+      release_id:
+        type: string
+      config_hash:
+        type: string
+      release_version:
+        type: string
+      secret_refs:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [ref_id, object_key, version, content_hash, encryption_mode]
+          properties:
+            ref_id:
+              type: string
+            object_key:
+              type: string
+            version:
+              type: string
+            content_hash:
+              type: string
+            encryption_mode:
+              type: string

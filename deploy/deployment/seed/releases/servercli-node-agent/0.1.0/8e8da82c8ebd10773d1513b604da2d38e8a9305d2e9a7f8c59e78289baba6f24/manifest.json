@@ -1,0 +1,58 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "FeatureRelease",
+  "metadata": {
+    "feature_key": "servercli-node-agent",
+    "name": "ServerCLI Node Agent",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "feature_key": "servercli-node-agent",
+    "version": "0.1.0",
+    "os": "linux",
+    "arch": "amd64",
+    "bundle": {
+      "file": "bundle.tar.gz",
+      "sha256": "8e8da82c8ebd10773d1513b604da2d38e8a9305d2e9a7f8c59e78289baba6f24",
+      "size": 4765,
+      "content_type": "application/gzip"
+    },
+    "files": [
+      {
+        "path": "manifest.yaml",
+        "size": 3666,
+        "sha256": "97662f7281ea9561c305a12b09e4751b88d86ff2122289bf997bb7e00d3319fb"
+      },
+      {
+        "path": "hooks/backup.sh",
+        "size": 705,
+        "sha256": "ae7436690f95b34efb183f6110f98427780a1ce9df32aff22fc1e26f675e445f"
+      },
+      {
+        "path": "hooks/health-check.sh",
+        "size": 1115,
+        "sha256": "eba56a4e5f23ae68760e48ee2674f9090ca80e3be7695e6b53ea50b8f33b97c5"
+      },
+      {
+        "path": "hooks/install.sh",
+        "size": 5942,
+        "sha256": "1ad86f5883b7ee4552ade562fc920c08dd5e72d9f88bc600d8c6b75e0f34eadf"
+      },
+      {
+        "path": "hooks/rollback.sh",
+        "size": 458,
+        "sha256": "3652b91a32600e22637803234084c1101379fad238de354e1b4a674d1119c2ab"
+      },
+      {
+        "path": "hooks/update.sh",
+        "size": 378,
+        "sha256": "0d1ae4abbc07572e2e5f029a0b8f34f6cf689dc08688719bf0529c01c9251e75"
+      }
+    ],
+    "signature": {
+      "file": "bundle.sig",
+      "algorithm": "HMAC-SHA256",
+      "note": "占位签名：真实签名由控制面签发（HMAC-SHA256(secret, bundle.tar.gz sha256)）"
+    }
+  }
+}

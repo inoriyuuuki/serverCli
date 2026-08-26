@@ -1,0 +1,18 @@
+# =============================================================================
+# 共享配置示例 — OSS Internal Endpoint (oss-internal-endpoint)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: oss-internal-endpoint-shared
+feature_key: oss-internal-endpoint
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/oss-internal-endpoint
+config_dir: /opt/servercli-deployment/configs/oss-internal-endpoint
+rendered_dir: /opt/servercli-deployment/rendered/oss-internal-endpoint
+restart_policy: unless-stopped
+oss_region: cn-hangzhou
+oss_endpoint: oss-cn-hangzhou-internal.aliyuncs.com
+oss_bucket: your-oss-bucket
+oss_prefix: deployment-repository/

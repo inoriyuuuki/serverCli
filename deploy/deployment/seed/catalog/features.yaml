@@ -1,0 +1,72 @@
+# =============================================================================
+# 种子仓库 Feature 目录索引（catalog）
+# 由控制面读取，用于发现可用 feature 与最新版本。
+# =============================================================================
+catalog_version: 1
+features:
+  - feature_key: caddy
+    name: Caddy
+    latest_version: "0.1.0"
+    summary: Caddy 反向代理（自动 TLS 证书签发），作为入口网关统一暴露服务
+    backup_mode: application_snapshot
+    rollback_capability: true
+  - feature_key: memos
+    name: Memos
+    latest_version: "0.1.0"
+    summary: Memos 轻量笔记服务（默认 SQLite 存储，backup_mode=application_snapshot）
+    backup_mode: application_snapshot
+    rollback_capability: true
+  - feature_key: hedgedoc
+    name: HedgeDoc
+    latest_version: "0.1.0"
+    summary: HedgeDoc 协作文档（外部 PostgreSQL，backup_mode=application_snapshot）
+    backup_mode: application_snapshot
+    rollback_capability: true
+  - feature_key: lobehub
+    name: LobeHub
+    latest_version: "0.1.0"
+    summary: LobeHub AI 聊天前端（外部 PostgreSQL+Redis，backup_mode=application_snapshot）
+    backup_mode: application_snapshot
+    rollback_capability: true
+  - feature_key: aihub
+    name: AIHub
+    latest_version: "0.1.0"
+    summary: AIHub 统一网关服务（外部 PostgreSQL+MinIO，backup_mode=application_snapshot）
+    backup_mode: application_snapshot
+    rollback_capability: true
+  - feature_key: dbx
+    name: DBX
+    latest_version: "0.1.0"
+    summary: DBX 数据库工具/面板服务（外部 MongoDB，backup_mode=application_snapshot）
+    backup_mode: application_snapshot
+    rollback_capability: true
+  - feature_key: data-dashboard
+    name: DataDashboard
+    latest_version: "0.1.0"
+    summary: 数据看板服务（Python 项目进程，backup_mode=application_snapshot）
+    backup_mode: application_snapshot
+    rollback_capability: true
+  - feature_key: xray-bootstrap
+    name: Xray Bootstrap
+    latest_version: "0.1.0"
+    summary: Xray 代理基础能力（SOCKS/HTTP 出站代理，backup_mode=none）
+    backup_mode: none
+    rollback_capability: true
+  - feature_key: docker-prerequisite
+    name: Docker Prerequisite
+    latest_version: "0.1.0"
+    summary: Docker 引擎 + Compose 插件基础依赖（backup_mode=none）
+    backup_mode: none
+    rollback_capability: false
+  - feature_key: servercli-node-agent
+    name: ServerCLI Node Agent
+    latest_version: "0.1.0"
+    summary: ServerCLI 节点 Agent（固定版本 GitHub Release + sha256 校验，backup_mode=none）
+    backup_mode: none
+    rollback_capability: false
+  - feature_key: oss-internal-endpoint
+    name: OSS Internal Endpoint
+    latest_version: "0.1.0"
+    summary: 阿里云 OSS 内网 Endpoint 基础配置（backup_mode=none）
+    backup_mode: none
+    rollback_capability: false

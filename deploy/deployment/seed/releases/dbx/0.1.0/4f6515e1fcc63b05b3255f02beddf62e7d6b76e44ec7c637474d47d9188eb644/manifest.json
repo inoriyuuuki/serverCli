@@ -1,0 +1,58 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "FeatureRelease",
+  "metadata": {
+    "feature_key": "dbx",
+    "name": "DBX",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "feature_key": "dbx",
+    "version": "0.1.0",
+    "os": "linux",
+    "arch": "amd64",
+    "bundle": {
+      "file": "bundle.tar.gz",
+      "sha256": "4f6515e1fcc63b05b3255f02beddf62e7d6b76e44ec7c637474d47d9188eb644",
+      "size": 5278,
+      "content_type": "application/gzip"
+    },
+    "files": [
+      {
+        "path": "manifest.yaml",
+        "size": 3429,
+        "sha256": "2e91747ca1a0bd7b9c29c0c116b000fdf04e51cc1682f729e9e9d527bb17a94b"
+      },
+      {
+        "path": "hooks/backup.sh",
+        "size": 1197,
+        "sha256": "034e74a0a5c68513edf43a054a12b2b2ace78296c2e59cb37cf5831d5a3257d4"
+      },
+      {
+        "path": "hooks/health-check.sh",
+        "size": 1406,
+        "sha256": "1b21b666ec183f258e6fbbfbc8df81a7707923482a083d372b89fd0a1e48a13e"
+      },
+      {
+        "path": "hooks/install.sh",
+        "size": 5966,
+        "sha256": "9e286b34b91833d0f78cc688d7daf5b20169fa9c81f82f99368b56c4a3e011d6"
+      },
+      {
+        "path": "hooks/rollback.sh",
+        "size": 2213,
+        "sha256": "5548f1aaf293cdf2915f425f6a75b98d2ea9917309d37f294772eb0adc4b33ef"
+      },
+      {
+        "path": "hooks/update.sh",
+        "size": 422,
+        "sha256": "ba77d755015a6488d32aed733264c4da99be3e1f8501664836cbd85ea1b92576"
+      }
+    ],
+    "signature": {
+      "file": "bundle.sig",
+      "algorithm": "HMAC-SHA256",
+      "note": "占位签名：真实签名由控制面签发（HMAC-SHA256(secret, bundle.tar.gz sha256)）"
+    }
+  }
+}

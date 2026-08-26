@@ -1,0 +1,117 @@
+# =============================================================================
+# Feature Manifest — ServerCLI Node Agent (servercli-node-agent)
+# ServerCLI Feature Bundle 契约（servercli/v1）
+# 本文件是控制面导入/上传 OSS 的权威内容模板；不含任何真实 Secret。
+# =============================================================================
+apiVersion: servercli/v1
+kind: Feature
+metadata:
+  name: ServerCLI Node Agent
+  description: ServerCLI 节点 Agent（固定版本 GitHub Release + sha256 校验，backup_mode=none）
+spec:
+  feature_key: servercli-node-agent
+  os: linux
+  arch: amd64
+  minimum_agent_version: "0.2.0"
+  dependencies:
+    - xray-bootstrap
+  backup_mode: none
+  rollback_capability: false
+  config_schema:
+    {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "required": [
+        "node_id",
+        "environment_id",
+        "hostname",
+        "feature_key",
+        "release_version",
+        "deployment_root_dir",
+        "operation_id"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "description": "控制面生成的节点 ID"
+        },
+        "environment_id": {
+          "type": "string",
+          "description": "环境 ID（如 production）"
+        },
+        "hostname": {
+          "type": "string",
+          "description": "目标主机名"
+        },
+        "feature_key": {
+          "type": "string",
+          "const": "servercli-node-agent"
+        },
+        "release_version": {
+          "type": "string",
+          "default": "0.1.0",
+          "description": "目标 release 版本"
+        },
+        "deployment_root_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment",
+          "description": "部署根目录"
+        },
+        "operation_id": {
+          "type": "string",
+          "description": "本次操作 ID（幂等与审计）"
+        },
+        "data_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment/data/servercli-node-agent",
+          "description": "数据目录"
+        },
+        "config_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment/configs/servercli-node-agent",
+          "description": "配置目录"
+        },
+        "rendered_dir": {
+          "type": "string",
+          "default": "/opt/servercli-deployment/rendered/servercli-node-agent",
+          "description": "渲染产物目录"
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": [],
+          "description": "服务端口列表"
+        },
+        "image_tag": {
+          "type": "string",
+          "default": "servercli 0.2.0",
+          "description": "固定镜像/制品 tag（生产锁定 digest）"
+        },
+        "agent_version": {
+          "type": "string",
+          "default": "0.2.0",
+          "description": "Agent 固定版本"
+        },
+        "agent_release_url": {
+          "type": "string",
+          "description": "Agent 制品下载地址（占位，GitHub Release）"
+        },
+        "agent_sha256": {
+          "type": "string",
+          "description": "Agent 二进制 sha256（生产必填）"
+        },
+        "control_plane_url": {
+          "type": "string",
+          "description": "主控地址（直接访问，不走代理）"
+        }
+      },
+      "additionalProperties": true
+    }
+  hooks:
+    install: hooks/install.sh
+    update: hooks/update.sh
+    backup: hooks/backup.sh
+    health-check: hooks/health-check.sh
+    rollback: hooks/rollback.sh

@@ -1,0 +1,26 @@
+# =============================================================================
+# 共享配置示例 — Xray Bootstrap (xray-bootstrap)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: xray-bootstrap-shared
+feature_key: xray-bootstrap
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/xray-bootstrap
+config_dir: /opt/servercli-deployment/configs/xray-bootstrap
+rendered_dir: /opt/servercli-deployment/rendered/xray-bootstrap
+ports: [10808, 10809]
+service_port: 10809
+image_tag: Xray v1.8.24
+# image_digest: sha256:xxxx  # 生产建议锁定 digest（优先级高于 image_tag）
+restart_policy: unless-stopped
+# Xray 固定版本
+version: 1.8.24
+# Xray 制品下载地址（占位，由控制面配置）
+artifact_url: xxx-placeholder-xxx
+# config.json 来源：release|config
+config_source: release
+# 代理探活目标
+probe_url: https://github.com

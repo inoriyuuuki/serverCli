@@ -508,3 +508,282 @@ type TaskParameterHistory struct {
 	LastUsedAt     time.Time      `json:"last_used_at"`
 	UseCount       int            `json:"use_count"`
 }
+
+// ─── 部署管理（Deployment Management）─────────────────────────────────────────────
+// 以下类型对应 backend/internal/db/migrations/0007_deployment.sql 中的表。
+
+// Deployment operation actions.
+const (
+	DeploymentActionInstall     = "install"
+	DeploymentActionUpdate      = "update"
+	DeploymentActionBackup      = "backup"
+	DeploymentActionRollback    = "rollback"
+	DeploymentActionHealthCheck = "health_check"
+)
+
+// Deployment operation statuses.
+const (
+	DeploymentStatusDraft                = "draft"
+	DeploymentStatusValidated            = "validated"
+	DeploymentStatusAwaitingConfirmation = "awaiting_confirmation"
+	DeploymentStatusQueued               = "queued"
+	DeploymentStatusRunning              = "running"
+	DeploymentStatusSucceeded            = "succeeded"
+	DeploymentStatusPartialFailed        = "partial_failed"
+	DeploymentStatusFailed               = "failed"
+	DeploymentStatusCancelled            = "cancelled"
+	DeploymentStatusRolledBack           = "rolled_back"
+	DeploymentStatusRollbackFailed       = "rollback_failed"
+)
+
+// Bootstrap session statuses: repository/agent bootstrap pipeline states and
+// their failure states.
+const (
+	BootstrapStatusCreated              = "created"
+	BootstrapStatusRepositorySyncing    = "repository_syncing"
+	BootstrapStatusRepositoryVerified   = "repository_verified"
+	BootstrapStatusXrayInstalling       = "xray_installing"
+	BootstrapStatusProxyChecking        = "proxy_checking"
+	BootstrapStatusProxyReady           = "proxy_ready"
+	BootstrapStatusAgentDownloading     = "agent_downloading"
+	BootstrapStatusAgentVerifying       = "agent_verifying"
+	BootstrapStatusAgentInstalling      = "agent_installing"
+	BootstrapStatusEnrollmentPending    = "enrollment_pending"
+	BootstrapStatusNodeOnline           = "node_online"
+	BootstrapStatusCompleted            = "completed"
+	BootstrapStatusRepositorySyncFailed = "repository_sync_failed"
+	BootstrapStatusManifestInvalid      = "manifest_invalid"
+	BootstrapStatusSignatureFailed      = "signature_failed"
+	BootstrapStatusXrayFailed           = "xray_failed"
+	BootstrapStatusProxyFailed          = "proxy_failed"
+	BootstrapStatusAgentDownloadFailed  = "agent_download_failed"
+	BootstrapStatusAgentVerifyFailed    = "agent_verify_failed"
+	BootstrapStatusAgentStartFailed     = "agent_start_failed"
+	BootstrapStatusEnrollmentFailed     = "enrollment_failed"
+	BootstrapStatusExpired              = "expired"
+	BootstrapStatusCancelled            = "cancelled"
+)
+
+// Secret scope types for deployment secret references.
+const (
+	SecretScopeShared = "shared"
+	SecretScopeNode   = "node"
+)
+
+// Config scope types for deployment config profiles.
+const (
+	ConfigScopeShared = "shared"
+	ConfigScopeNode   = "node"
+)
+
+// Deployment target statuses.
+const (
+	TargetStatusPending    = "pending"
+	TargetStatusInstalling = "installing"
+	TargetStatusRunning    = "running"
+	TargetStatusHealthy    = "healthy"
+	TargetStatusUnhealthy  = "unhealthy"
+	TargetStatusError      = "error"
+)
+
+// DeploymentFeature mirrors deployment_feature.
+type DeploymentFeature struct {
+	ID                  string    `json:"id"`
+	FeatureKey          string    `json:"feature_key"`
+	Name                string    `json:"name"`
+	Description         string    `json:"description"`
+	OS                  string    `json:"os"`
+	Arch                string    `json:"arch"`
+	ConfigSchemaJSON    string    `json:"config_schema_json,omitempty"`
+	BackupMode          string    `json:"backup_mode"`
+	RollbackCapability  string    `json:"rollback_capability"`
+	DependenciesJSON    string    `json:"dependencies_json,omitempty"`
+	MinimumAgentVersion string    `json:"minimum_agent_version"`
+	DefaultVersion      string    `json:"default_version,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+// DeploymentRelease mirrors deployment_release: an immutable feature version.
+type DeploymentRelease struct {
+	ID                        string    `json:"id"`
+	FeatureID                 string    `json:"feature_id"`
+	Version                   string    `json:"version"`
+	SourceCommit              string    `json:"source_commit,omitempty"`
+	ObjectKey                 string    `json:"object_key"`
+	Size                      int64     `json:"size"`
+	SHA256                    string    `json:"sha256"`
+	Signature                 string    `json:"signature,omitempty"`
+	InstallHook               string    `json:"install_hook,omitempty"`
+	UpdateHook                string    `json:"update_hook,omitempty"`
+	BackupHook                string    `json:"backup_hook,omitempty"`
+	HealthHook                string    `json:"health_hook,omitempty"`
+	RollbackHook              string    `json:"rollback_hook,omitempty"`
+	BackupMode                string    `json:"backup_mode"`
+	DataMigrationMetadataJSON string    `json:"data_migration_metadata_json,omitempty"`
+	ManifestHash              string    `json:"manifest_hash,omitempty"`
+	CreatedAt                 time.Time `json:"created_at"`
+}
+
+// OSSProfile mirrors oss_profile. Access key material is NEVER stored in
+// plaintext: access_key_id_enc / access_key_secret_enc hold the ciphertext or
+// a key-reference produced by the service layer.
+type OSSProfile struct {
+	ID                 string     `json:"id"`
+	Name               string     `json:"name"`
+	Endpoint           string     `json:"endpoint"`
+	Region             string     `json:"region"`
+	Bucket             string     `json:"bucket"`
+	Prefix             string     `json:"prefix"`
+	AccessKeyIDEnc     string     `json:"access_key_id_enc"`
+	AccessKeySecretEnc string     `json:"access_key_secret_enc"`
+	IsPrivate          bool       `json:"is_private"`
+	LastTestedAt       *time.Time `json:"last_tested_at"`
+	LastTestResult     string     `json:"last_test_result,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+// DeploymentConfigProfile mirrors deployment_config_profile.
+type DeploymentConfigProfile struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	ScopeType   string    `json:"scope_type"`
+	ScopeID     string    `json:"scope_id"`
+	FeatureID   string    `json:"feature_id"`
+	ContentJSON string    `json:"content_json"`
+	ContentHash string    `json:"content_hash"`
+	Version     int       `json:"version"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// DeploymentSecretReference mirrors deployment_secret_reference. It only
+// stores a reference (object key + content hash + encryption mode) and NEVER
+// the secret body; the plaintext secret is resolved by the service layer.
+type DeploymentSecretReference struct {
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	FeatureID      string    `json:"feature_id"`
+	ScopeType      string    `json:"scope_type"`
+	ScopeID        string    `json:"scope_id"`
+	ObjectKey      string    `json:"object_key"`
+	Version        int       `json:"version"`
+	ContentHash    string    `json:"content_hash"`
+	EncryptionMode string    `json:"encryption_mode"`
+	Size           int64     `json:"size"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// DeploymentTarget mirrors deployment_target: a feature pinned to a node.
+type DeploymentTarget struct {
+	ID                    string     `json:"id"`
+	FeatureID             string     `json:"feature_id"`
+	NodeID                string     `json:"node_id"`
+	ConfigProfileID       string     `json:"config_profile_id,omitempty"`
+	OverrideReferenceJSON string     `json:"override_reference_json,omitempty"`
+	DesiredReleaseID      string     `json:"desired_release_id,omitempty"`
+	CurrentReleaseID      string     `json:"current_release_id,omitempty"`
+	LastHealthyReleaseID  string     `json:"last_healthy_release_id,omitempty"`
+	ActualStatus          string     `json:"actual_status"`
+	LastHealthCheckAt     *time.Time `json:"last_health_check_at"`
+	ConfigRevision        int        `json:"config_revision"`
+	Enabled               bool       `json:"enabled"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
+}
+
+// DeploymentTargetSecret mirrors deployment_target_secret: binding of a secret
+// reference to a target's filesystem path.
+type DeploymentTargetSecret struct {
+	ID                string    `json:"id"`
+	TargetID          string    `json:"target_id"`
+	SecretReferenceID string    `json:"secret_reference_id"`
+	BindingPath       string    `json:"binding_path"`
+	Version           int       `json:"version"`
+	ContentHash       string    `json:"content_hash"`
+	EncryptionMode    string    `json:"encryption_mode"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// DeploymentOperation mirrors deployment_operation.
+type DeploymentOperation struct {
+	ID               string     `json:"id"`
+	Action           string     `json:"action"`
+	FeatureID        string     `json:"feature_id"`
+	ReleaseID        string     `json:"release_id,omitempty"`
+	Strategy         string     `json:"strategy"`
+	Status           string     `json:"status"`
+	RequestedBy      string     `json:"requested_by"`
+	Reason           string     `json:"reason,omitempty"`
+	EnvironmentID    string     `json:"environment_id"`
+	FrozenConfigHash string     `json:"frozen_config_hash,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	StartedAt        *time.Time `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
+}
+
+// DeploymentOperationTarget mirrors deployment_operation_target: one target
+// inside a deployment operation.
+type DeploymentOperationTarget struct {
+	ID               string     `json:"id"`
+	OperationID      string     `json:"operation_id"`
+	TargetID         string     `json:"target_id"`
+	NodeID           string     `json:"node_id"`
+	Status           string     `json:"status"`
+	CurrentReleaseID string     `json:"current_release_id,omitempty"`
+	DesiredReleaseID string     `json:"desired_release_id,omitempty"`
+	FrozenConfigHash string     `json:"frozen_config_hash,omitempty"`
+	FrozenSecretHash string     `json:"frozen_secret_hash,omitempty"`
+	ErrorMessage     string     `json:"error_message,omitempty"`
+	StartedAt        *time.Time `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
+}
+
+// DeploymentStep mirrors deployment_step: one hook/command step of a target.
+type DeploymentStep struct {
+	ID                string     `json:"id"`
+	OperationID       string     `json:"operation_id"`
+	OperationTargetID string     `json:"operation_target_id"`
+	NodeID            string     `json:"node_id"`
+	StepType          string     `json:"step_type"`
+	Status            string     `json:"status"`
+	CommandID         string     `json:"command_id,omitempty"`
+	TaskID            string     `json:"task_id,omitempty"`
+	Message           string     `json:"message,omitempty"`
+	StartedAt         *time.Time `json:"started_at"`
+	FinishedAt        *time.Time `json:"finished_at"`
+}
+
+// DeploymentBackup mirrors deployment_backup: a backup artifact produced
+// before a risky operation step.
+type DeploymentBackup struct {
+	ID           string    `json:"id"`
+	OperationID  string    `json:"operation_id"`
+	TargetID     string    `json:"target_id"`
+	NodeID       string    `json:"node_id"`
+	FeatureID    string    `json:"feature_id"`
+	BackupMode   string    `json:"backup_mode"`
+	ObjectKey    string    `json:"object_key"`
+	Size         int64     `json:"size"`
+	SHA256       string    `json:"sha256"`
+	MetadataJSON string    `json:"metadata_json,omitempty"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// BootstrapSession mirrors bootstrap_session: a node bootstrap workflow with
+// an OSS-backed repository and agent install pipeline.
+type BootstrapSession struct {
+	ID        string     `json:"id"`
+	NodeID    string     `json:"node_id"`
+	Status    string     `json:"status"`
+	TokenHash string     `json:"-"`
+	Bucket    string     `json:"bucket"`
+	Prefix    string     `json:"prefix"`
+	Region    string     `json:"region"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	RevokedAt *time.Time `json:"revoked_at"`
+	LastState string     `json:"last_state,omitempty"`
+}

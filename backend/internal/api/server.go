@@ -38,6 +38,8 @@ type Server struct {
 	notifications *service.NotificationService
 	notifyLimiter *service.NotificationLimiter
 
+	deployments *service.DeploymentService
+
 	version    string
 	build      string
 	commit     string
@@ -128,6 +130,10 @@ func New(opts Options) (*Server, error) {
 	cleanup := service.NewCleanupService(opts.Store, opts.Config, opts.Log, auditor, settings)
 	notifyLimiter := service.NewNotificationLimiter(opts.Config.NotificationRateLimitPerTokenPerMinute, opts.Config.NotificationRateLimitGlobalPerMinute)
 	notifications := service.NewNotificationService(opts.Config, opts.Log, auditor, notifyLimiter)
+	deployments, err := service.NewDeploymentService(opts.Store, opts.Config, opts.Log, auditor, tasks, nodes)
+	if err != nil {
+		return nil, err
+	}
 	srv := &Server{
 		cfg:      opts.Config,
 		log:      opts.Log,
@@ -144,6 +150,7 @@ func New(opts Options) (*Server, error) {
 
 		notifications: notifications,
 		notifyLimiter: notifyLimiter,
+		deployments:   deployments,
 		version:       opts.Version,
 		build:         opts.Build,
 		commit:        opts.Commit,
@@ -184,6 +191,9 @@ func (s *Server) Store() *store.Store { return s.store }
 
 // TaskService exposes task operations for startup maintenance.
 func (s *Server) TaskService() *service.TaskService { return s.tasks }
+
+// DeploymentService exposes the deployment service for scheduler wiring.
+func (s *Server) DeploymentService() *service.DeploymentService { return s.deployments }
 
 // Handler builds the full HTTP handler (API + static hosting).
 func (s *Server) Handler() http.Handler {
@@ -292,6 +302,9 @@ func (s *Server) Handler() http.Handler {
 	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/cleanup/run", Group: "设置", Auth: AuthAdmin, Summary: "手动触发清理", Debug: true}, s.requireAdmin(s.handleCleanupRun))
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/cleanup/runs", Group: "设置", Auth: AuthAdmin, Summary: "清理记录", Debug: true}, s.requireAdmin(s.handleCleanupRuns))
 
+	// Deployment management.
+	s.registerDeploymentRoutes(mux)
+
 	// Static frontend + SPA fallback. On child control planes the scoped
 	// self-view requests are proxied to the primary before reaching the mux.
 	return s.wrap(s.withFrontend(s.childProxyWrap(mux)))
@@ -372,7 +385,7 @@ func (s *Server) withFrontend(mux http.Handler) http.Handler {
 	if err != nil || !info.IsDir() {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// API routes were already matched by the mux; unknown routes get a hint.
-			if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health") || r.URL.Path == "/version" || r.URL.Path == "/notice" {
+			if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health") || r.URL.Path == "/version" || r.URL.Path == "/notice" || r.URL.Path == "/deployment-bootstrap.sh" {
 				mux.ServeHTTP(w, r)
 				return
 			}
@@ -383,7 +396,7 @@ func (s *Server) withFrontend(mux http.Handler) http.Handler {
 	}
 	fileServer := http.FileServer(http.Dir(dist))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health") || r.URL.Path == "/version" || r.URL.Path == "/notice" {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health") || r.URL.Path == "/version" || r.URL.Path == "/notice" || r.URL.Path == "/deployment-bootstrap.sh" {
 			mux.ServeHTTP(w, r)
 			return
 		}

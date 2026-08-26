@@ -1,0 +1,58 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "FeatureRelease",
+  "metadata": {
+    "feature_key": "caddy",
+    "name": "Caddy",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "feature_key": "caddy",
+    "version": "0.1.0",
+    "os": "linux",
+    "arch": "amd64",
+    "bundle": {
+      "file": "bundle.tar.gz",
+      "sha256": "27a1390b03d0ee69c54a19d58228e7271d2176b9a40e134875c13cca96fce75d",
+      "size": 5390,
+      "content_type": "application/gzip"
+    },
+    "files": [
+      {
+        "path": "manifest.yaml",
+        "size": 3614,
+        "sha256": "3900612e366421155f175e178007fc48e857613639c9d482d129b4d3b03ace4d"
+      },
+      {
+        "path": "hooks/backup.sh",
+        "size": 1201,
+        "sha256": "edfc5cd1767be323fb3863f9ccee32c611c30dd946390da862031b05c4660a47"
+      },
+      {
+        "path": "hooks/health-check.sh",
+        "size": 1410,
+        "sha256": "081a564d46e5742cd253fb3501c935bc026949560e4d4f18d9f919b41e560de6"
+      },
+      {
+        "path": "hooks/install.sh",
+        "size": 6029,
+        "sha256": "fa147425ee64ac16fb7470960a71c1e0c0b2935f00fa2e0989f2cb9756bf760f"
+      },
+      {
+        "path": "hooks/rollback.sh",
+        "size": 2217,
+        "sha256": "cd91544f4d3e0368e7fffee87231a068554baa37a150ab88b1dd8830f4766087"
+      },
+      {
+        "path": "hooks/update.sh",
+        "size": 426,
+        "sha256": "884e274e701e4f73a2d95a983db7e0ff920d3e779decade1945880b8c79d76b1"
+      }
+    ],
+    "signature": {
+      "file": "bundle.sig",
+      "algorithm": "HMAC-SHA256",
+      "note": "占位签名：真实签名由控制面签发（HMAC-SHA256(secret, bundle.tar.gz sha256)）"
+    }
+  }
+}
