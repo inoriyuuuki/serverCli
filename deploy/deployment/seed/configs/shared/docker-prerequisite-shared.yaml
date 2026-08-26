@@ -1,0 +1,22 @@
+# =============================================================================
+# 共享配置示例 — Docker Prerequisite (docker-prerequisite)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: docker-prerequisite-shared
+feature_key: docker-prerequisite
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/docker-prerequisite
+config_dir: /opt/servercli-deployment/configs/docker-prerequisite
+rendered_dir: /opt/servercli-deployment/rendered/docker-prerequisite
+image_tag: docker 28.0.0
+# image_digest: sha256:xxxx  # 生产建议锁定 digest（优先级高于 image_tag）
+restart_policy: unless-stopped
+# docker 静态包版本
+docker_version: 28.0.0
+# docker 静态包下载基址（占位）
+download_base_url: xxx-placeholder-xxx
+# 下载代理（如 http://127.0.0.1:10809）
+download_proxy: 

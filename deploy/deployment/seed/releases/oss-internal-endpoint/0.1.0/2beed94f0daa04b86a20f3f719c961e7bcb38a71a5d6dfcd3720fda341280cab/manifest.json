@@ -1,0 +1,58 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "FeatureRelease",
+  "metadata": {
+    "feature_key": "oss-internal-endpoint",
+    "name": "OSS Internal Endpoint",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "feature_key": "oss-internal-endpoint",
+    "version": "0.1.0",
+    "os": "linux",
+    "arch": "amd64",
+    "bundle": {
+      "file": "bundle.tar.gz",
+      "sha256": "2beed94f0daa04b86a20f3f719c961e7bcb38a71a5d6dfcd3720fda341280cab",
+      "size": 4312,
+      "content_type": "application/gzip"
+    },
+    "files": [
+      {
+        "path": "manifest.yaml",
+        "size": 3322,
+        "sha256": "d690cd4928613fee87d1c07f16d3b6c7db1644c037208cf1a40ec52d0d6e380d"
+      },
+      {
+        "path": "hooks/backup.sh",
+        "size": 708,
+        "sha256": "1f4bb182aba4628002e22c5ab63253bae634247f252bd228e619dc1298149388"
+      },
+      {
+        "path": "hooks/health-check.sh",
+        "size": 1413,
+        "sha256": "a2031fcd4417cf1b7779e68b4b8d7ff52bb5e5fe37ff068030c42fdf6dad6509"
+      },
+      {
+        "path": "hooks/install.sh",
+        "size": 4953,
+        "sha256": "a9a24184cdf08a82e75f5e61a0b985ba6da9ae155f6bfb829204f978b3e893dc"
+      },
+      {
+        "path": "hooks/rollback.sh",
+        "size": 461,
+        "sha256": "51875ca10dd006029575573706255333136157b2548defb6aece9d5abd4e8b58"
+      },
+      {
+        "path": "hooks/update.sh",
+        "size": 368,
+        "sha256": "bca045eb532feda0b25ed141ea78443441fb6dc10451dc89a3f92a55c7218acb"
+      }
+    ],
+    "signature": {
+      "file": "bundle.sig",
+      "algorithm": "HMAC-SHA256",
+      "note": "占位签名：真实签名由控制面签发（HMAC-SHA256(secret, bundle.tar.gz sha256)）"
+    }
+  }
+}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -113,10 +114,17 @@ func (s *TaskService) CreateTask(ctx context.Context, nodeID, requestedBy, actor
 	if err := s.store.CreateTask(ctx, t); err != nil {
 		return nil, err
 	}
-	if err := s.store.RecordTaskParameterUsage(ctx, t.NodeID, t.CommandID, t.CommandVersion, t.ArgumentsJSON, "", t.ID); err != nil {
-		// History is a convenience feature; a recording failure must not
-		// block task creation.
-		s.log.Warn("record task parameter history failed", "task_id", t.ID, "error", err)
+	// deployment.* task arguments carry reference metadata only (secret
+	// refs, frozen config/secret hashes, operation routing), never secret
+	// bodies, but the refs still describe live secret versions and object
+	// keys. Recording them in parameter history adds no replay value and
+	// widens the secret-reference blast radius, so they are skipped.
+	if !strings.HasPrefix(in.CommandID, "deployment.") {
+		if err := s.store.RecordTaskParameterUsage(ctx, t.NodeID, t.CommandID, t.CommandVersion, t.ArgumentsJSON, "", t.ID); err != nil {
+			// History is a convenience feature; a recording failure must not
+			// block task creation.
+			s.log.Warn("record task parameter history failed", "task_id", t.ID, "error", err)
+		}
 	}
 	s.auditor.OK(ctx, AuditInput{
 		ActorType: actorType, ActorID: requestedBy, NodeID: nodeID, Action: "task.create",
@@ -274,7 +282,10 @@ type EventInput struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
-// RecordEvent stores an agent task event, enforcing state transitions.
+// RecordEvent stores an agent task event, enforcing state transitions. The
+// event message is redacted before persistence so credentials echoed by an
+// agent (AccessKey, token, DSN, embedded URL credentials, ...) can never land
+// in task_event rows. EventType is an enum and is not free text.
 func (s *TaskService) RecordEvent(ctx context.Context, nodeID, taskID string, in EventInput) error {
 	t, err := s.store.TaskByID(ctx, taskID)
 	if err != nil {
@@ -291,11 +302,12 @@ func (s *TaskService) RecordEvent(ctx context.Context, nodeID, taskID string, in
 		}
 		in.Sequence = maxSeq + 1
 	}
+	redactor := secret.NewRedactor()
 	ev := &model.TaskEvent{
 		TaskID:     taskID,
 		Sequence:   in.Sequence,
 		EventType:  in.EventType,
-		Message:    in.Message,
+		Message:    redactor.RedactString(in.Message),
 		OccurredAt: in.OccurredAt,
 		Source:     "agent",
 	}
@@ -386,7 +398,9 @@ func (s *TaskService) RecordResult(ctx context.Context, nodeID, taskID string, i
 		t.FinishedAt = &finished
 		t.ExitCode = in.ExitCode
 		t.ErrorCode = in.ErrorCode
-		t.ErrorMessage = in.ErrorMessage
+		// ErrorMessage may echo command output; redact before it lands in the
+		// task row (stdout/stderr are already redacted below).
+		t.ErrorMessage = secret.NewRedactor().RedactString(in.ErrorMessage)
 		if err := s.store.UpdateTask(ctx, t); err != nil {
 			return nil, err
 		}

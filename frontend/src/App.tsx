@@ -8,6 +8,7 @@ import OverviewPage from './pages/OverviewPage';
 import ServersPage from './pages/ServersPage';
 import ServerDetailPage from './pages/ServerDetailPage';
 import CommandCenterPage from './pages/CommandCenterPage';
+import DeploymentsPage from './pages/DeploymentsPage';
 import TasksPage from './pages/TasksPage';
 import TaskDetailPage from './pages/TaskDetailPage';
 import AiCredentialsPage from './pages/AiCredentialsPage';
@@ -45,6 +46,14 @@ function AppRoutes() {
           }
         />
         <Route path="commands" element={<CommandCenterPage />} />
+        <Route
+          path="deployments"
+          element={
+            <RequirePrimary>
+              <DeploymentsPage />
+            </RequirePrimary>
+          }
+        />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="tasks/:taskId" element={<TaskDetailPage />} />
         <Route path="ai-credentials" element={<AiCredentialsPage />} />

@@ -360,3 +360,259 @@ export interface VersionInfo {
   database_migration_version?: string;
   [key: string]: unknown;
 }
+
+/* ------------------------------ 部署管理 ------------------------------ */
+/** 契约：doc/13_DEPLOYMENT_MANAGEMENT.md §9；时间 RFC3339 UTC。 */
+
+export interface DeploymentFeature {
+  id: string;
+  feature_key: string;
+  name?: string;
+  description?: string | null;
+  os?: string | null;
+  arch?: string | null;
+  backup_mode?: string | null;
+  rollback_capability?: string | null;
+  minimum_agent_version?: string | null;
+  config_schema_json?: unknown;
+  created_at?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DeploymentRelease {
+  id: string;
+  feature_id: string;
+  version: string;
+  source_commit?: string | null;
+  object_key?: string | null;
+  size?: number | null;
+  sha256?: string | null;
+  signature?: string | null;
+  install_hook?: string | null;
+  update_hook?: string | null;
+  backup_hook?: string | null;
+  health_hook?: string | null;
+  rollback_hook?: string | null;
+  backup_mode?: string | null;
+  data_migration_metadata_json?: string | null;
+  manifest_hash?: string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface OSSProfile {
+  id: string;
+  name: string;
+  endpoint?: string | null;
+  region?: string | null;
+  bucket?: string | null;
+  prefix?: string | null;
+  is_private?: boolean;
+  last_test_result?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  // 不含 access_key_id / access_key_secret：AK 只写不读。
+  [key: string]: unknown;
+}
+
+export interface DeploymentConfigProfile {
+  id: string;
+  name: string;
+  scope_type?: string | null;
+  scope_id?: string | null;
+  feature_id?: string | null;
+  content_hash?: string | null;
+  version?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DeploymentTarget {
+  id: string;
+  feature_id: string;
+  feature_key?: string | null;
+  node_id: string;
+  node_name?: string | null;
+  config_profile_id?: string | null;
+  desired_release_id?: string | null;
+  current_release_id?: string | null;
+  last_healthy_release_id?: string | null;
+  actual_status?: string | null;
+  last_health_check_at?: string | null;
+  config_revision?: number | null;
+  enabled?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DeploymentSecretReference {
+  id: string;
+  name: string;
+  feature_id?: string | null;
+  scope_type?: string | null;
+  scope_id?: string | null;
+  object_key?: string | null;
+  version?: number | null;
+  content_hash?: string | null;
+  encryption_mode?: string | null;
+  size?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  // 只含引用元数据，绝不返回正文。
+  [key: string]: unknown;
+}
+
+/** 新建 Secret Reference 请求体（仅元数据，正文通过覆盖写入）。scope_type 为 shared / node。 */
+export interface SecretReferenceCreate {
+  name: string;
+  feature_id: string;
+  scope_type: 'shared' | 'node';
+  scope_id?: string;
+}
+
+export interface DeploymentOperation {
+  id: string;
+  action?: string | null;
+  feature_id?: string | null;
+  feature_key?: string | null;
+  strategy?: string | null;
+  status?: string | null;
+  requested_by?: string | null;
+  environment_id?: string | null;
+  frozen_config_hash?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DeploymentOperationTarget {
+  id: string;
+  target_id: string;
+  node_id?: string | null;
+  status?: string | null;
+  current_release_id?: string | null;
+  desired_release_id?: string | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DeploymentStep {
+  id: string;
+  operation_target_id?: string | null;
+  node_id?: string | null;
+  step_type?: string | null;
+  status?: string | null;
+  command_id?: string | null;
+  task_id?: string | null;
+  message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface DeploymentOperationDetail {
+  operation: DeploymentOperation;
+  targets: DeploymentOperationTarget[];
+  steps: DeploymentStep[];
+}
+
+export interface DeploymentBackup {
+  id: string;
+  operation_id?: string | null;
+  target_id?: string | null;
+  node_id?: string | null;
+  feature_id?: string | null;
+  feature_key?: string | null;
+  backup_mode?: string | null;
+  object_key?: string | null;
+  size?: number | null;
+  sha256?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface BootstrapSession {
+  id: string;
+  node_id?: string | null;
+  status?: string | null;
+  bucket?: string | null;
+  prefix?: string | null;
+  region?: string | null;
+  created_at?: string | null;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+  [key: string]: unknown;
+}
+
+/* ---------------------- 部署管理：list/detail 响应包装 ---------------------- */
+
+export interface DeploymentFeatureListResponse {
+  features: DeploymentFeature[];
+}
+export interface DeploymentFeatureResponse {
+  feature: DeploymentFeature;
+}
+export interface DeploymentReleaseListResponse {
+  releases: DeploymentRelease[];
+}
+export interface DeploymentReleaseResponse {
+  release: DeploymentRelease;
+}
+export interface OSSProfileListResponse {
+  profiles: OSSProfile[];
+}
+export interface OSSProfileResponse {
+  profile: OSSProfile;
+}
+export interface OSSTestResponse {
+  ok: boolean;
+  message?: string;
+}
+export interface RepositorySyncResponse {
+  sync: { started_at?: string; status?: string };
+}
+export interface DeploymentConfigProfileListResponse {
+  profiles: DeploymentConfigProfile[];
+}
+export interface DeploymentConfigProfileResponse {
+  profile: DeploymentConfigProfile;
+}
+export interface DeploymentTargetListResponse {
+  targets: DeploymentTarget[];
+}
+export interface DeploymentTargetResponse {
+  target: DeploymentTarget;
+}
+export interface DeploymentSecretReferenceListResponse {
+  secrets: DeploymentSecretReference[];
+}
+export interface DeploymentSecretResponse {
+  secret: DeploymentSecretReference;
+}
+export interface DeploymentOperationListResponse {
+  operations: DeploymentOperation[];
+}
+export interface DeploymentOperationResponse {
+  operation: DeploymentOperation;
+}
+export interface DeploymentBackupListResponse {
+  backups: DeploymentBackup[];
+}
+export interface DeploymentBackupResponse {
+  backup: DeploymentBackup;
+}
+export interface BootstrapSessionListResponse {
+  sessions: BootstrapSession[];
+}
+export interface BootstrapSessionCreateResponse {
+  session: BootstrapSession;
+  command: string;
+  token: string;
+}

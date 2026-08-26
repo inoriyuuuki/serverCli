@@ -21,6 +21,10 @@ ServerCLI 是一个“一台固定主服务器 + 多台节点服务器”的轻�
 | [10_CHANGE_TARGETS.md](10_CHANGE_TARGETS.md) | 本轮确认需求、目标变动、待确认事项和变更记录 |
 | [11_IMPLEMENTATION_CONTRACT.md](11_IMPLEMENTATION_CONTRACT.md) | 接口契约（权威）：目录、环境变量、API 端点、命令 Manifest 格式 |
 | [12_NOTIFICATION_MIGRATION.md](12_NOTIFICATION_MIGRATION.md) | 通知模块迁移与运维：旧 Flask 调用方回归、Webhook 重建、9103 下线与回滚 |
+| [13_DEPLOYMENT_MANAGEMENT.md](13_DEPLOYMENT_MANAGEMENT.md) | 部署管理总体设计：分层架构、部署根目录、OSS 布局、状态机、数据模型、配置合并、API 契约、审计白名单与非目标 |
+| [14_DEPLOYMENT_SECURITY.md](14_DEPLOYMENT_SECURITY.md) | 部署管理安全设计：OSS/RAM 最小权限、SSRF 与 key 白名单、Secret 处理、P0 整改项、制品与解压校验 |
+| [15_FEATURE_BUNDLE_CONTRACT.md](15_FEATURE_BUNDLE_CONTRACT.md) | Feature Bundle 发布契约：Feature Manifest、Release 制品、仓库级 Manifest、Secret 命名与配置 Schema |
+| [16_PLAINTEXT_OSS_SECRETS_V1.md](16_PLAINTEXT_OSS_SECRETS_V1.md) | V1 明文敏感配置说明：20 条保护要求、加密接口预留、数据库只存引用与已知安全债务 |
 
 ## 当前确认的核心约束
 

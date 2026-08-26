@@ -1,0 +1,20 @@
+# =============================================================================
+# 共享配置示例 — DataDashboard (data-dashboard)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: data-dashboard-shared
+feature_key: data-dashboard
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/data-dashboard
+config_dir: /opt/servercli-deployment/configs/data-dashboard
+rendered_dir: /opt/servercli-deployment/rendered/data-dashboard
+ports: [9080]
+service_port: 9080
+restart_policy: unless-stopped
+# 目标 Python 版本
+python_version: 3.11
+# uvicorn/gunicorn 应用入口
+app_module: app:app

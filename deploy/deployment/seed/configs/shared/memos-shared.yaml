@@ -1,0 +1,22 @@
+# =============================================================================
+# 共享配置示例 — Memos (memos)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: memos-shared
+feature_key: memos
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/memos
+config_dir: /opt/servercli-deployment/configs/memos
+rendered_dir: /opt/servercli-deployment/rendered/memos
+ports: [5230]
+service_port: 5230
+image_tag: neosmemo/memos:0.22.5
+# image_digest: sha256:xxxx  # 生产建议锁定 digest（优先级高于 image_tag）
+restart_policy: unless-stopped
+# 数据存储类型
+db_type: sqlite
+# 外部数据库 DSN（占位，真实值由控制面注入）
+db_dsn: xxx-placeholder-xxx

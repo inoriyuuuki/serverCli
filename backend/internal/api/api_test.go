@@ -52,6 +52,9 @@ func setupAPI(t *testing.T) *testEnv {
 	cfg := config.Default()
 	cfg.AgentStateDir = dir
 	cfg.DatabaseURL = filepath.Join(dir, "test.db")
+	// Keep the deployment repository (signing key, secrets, bootstrap script
+	// hash) inside the per-test temp dir instead of the production default.
+	cfg.DeploymentRootDir = filepath.Join(dir, "deployment")
 	cfg.LogLevel = "error"
 	cfg.InstanceName = "test-primary"
 	cfg.NodeRole = "primary"

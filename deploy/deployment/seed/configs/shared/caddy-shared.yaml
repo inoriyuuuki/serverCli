@@ -1,0 +1,24 @@
+# =============================================================================
+# 共享配置示例 — Caddy (caddy)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: caddy-shared
+feature_key: caddy
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/caddy
+config_dir: /opt/servercli-deployment/configs/caddy
+rendered_dir: /opt/servercli-deployment/rendered/caddy
+ports: [80, 443, 9018]
+service_port: 9018
+image_tag: caddy:2.9.1
+# image_digest: sha256:xxxx  # 生产建议锁定 digest（优先级高于 image_tag）
+restart_policy: unless-stopped
+# TLS 证书申请邮箱（占位）
+tls_email: xxx-placeholder-xxx
+# Caddyfile 来源：release|config
+caddyfile_source: config
+# docker 网络名
+network_name: caddy_net

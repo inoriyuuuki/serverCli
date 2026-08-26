@@ -1,0 +1,13 @@
+# =============================================================================
+# 节点覆盖示例 — Caddy (caddy) @ aliyun-node-001
+# 注意：真实 node_id 由控制面生成（如 UUID），aliyun-node-001 仅为示例。
+# 合并顺序：shared < node < operation（operation 优先级最高）
+# =============================================================================
+node_id: aliyun-node-001
+environment_id: production
+hostname: aliyun-node-001.example.internal
+feature_key: caddy
+release_version: "0.1.0"
+service_port: 9018
+image_tag: caddy:2.9.1
+# 节点级覆盖项（示例）可在此追加：

@@ -1,0 +1,13 @@
+# =============================================================================
+# 节点覆盖示例 — DBX (dbx) @ aliyun-node-001
+# 注意：真实 node_id 由控制面生成（如 UUID），aliyun-node-001 仅为示例。
+# 合并顺序：shared < node < operation（operation 优先级最高）
+# =============================================================================
+node_id: aliyun-node-001
+environment_id: production
+hostname: aliyun-node-001.example.internal
+feature_key: dbx
+release_version: "0.1.0"
+service_port: 9025
+image_tag: t8y2/dbx:1.7.3
+# 节点级覆盖项（示例）可在此追加：

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"servercli/internal/model"
 	"servercli/internal/service"
@@ -55,10 +56,27 @@ func (s *Server) handleAgentGetTask(w http.ResponseWriter, r *http.Request) {
 // Scope is enforced by CreateTask (the node id is forced to the caller) and the
 // command must be registered on that same node. Idempotency-Key is required,
 // matching the admin task-creation endpoint.
+//
+// Deployment commands ("deployment.*") are deliberately rejected here: they
+// carry release/secret material and may only be created by the control plane
+// (DeploymentService), never self-executed by a node. The denial is audited.
 func (s *Server) handleAgentCreateTask(w http.ResponseWriter, r *http.Request) {
 	node := nodeFrom(r.Context())
 	var in service.CreateTaskInput
 	if !decodeJSON(w, r, s.log, &in) {
+		return
+	}
+	if strings.HasPrefix(in.CommandID, "deployment.") {
+		s.auditor.Denied(r.Context(), service.AuditInput{
+			ActorType:    model.ActorNode,
+			ActorID:      node.ID,
+			NodeID:       node.ID,
+			Action:       "agent.self-execute.denied",
+			ResourceType: "task",
+			Summary:      "agent self-execute of deployment command denied",
+			Details:      map[string]any{"command_id": in.CommandID, "node_id": node.ID},
+		})
+		writeServiceError(w, r, s.log, service.ErrForbidden)
 		return
 	}
 	idem := r.Header.Get("Idempotency-Key")

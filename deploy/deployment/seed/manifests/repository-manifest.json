@@ -1,0 +1,740 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "RepositoryManifest",
+  "metadata": {
+    "name": "servercli-deployment-seed",
+    "version": "0.1.0",
+    "generated_at": "2026-08-26T14:22:50Z",
+    "note": "对象路径相对 repository 根目录；不含本文件自身。"
+  },
+  "spec": {
+    "object_count": 145,
+    "objects": [
+      {
+        "path": "README.md",
+        "size": 6132,
+        "sha256": "e834025a42c0b6aae2c66caf4834e258cbacd9dc6fe167c8bd727ee7b13ed81a"
+      },
+      {
+        "path": "catalog/features.yaml",
+        "size": 2895,
+        "sha256": "7af50379cbfdfbbaab2b4beed8d6af18d6aff0188f340cd70b9a33c36e38df0f"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/aihub.yaml",
+        "size": 627,
+        "sha256": "60d32ca19fde9c1c9fb7072043af3b3a29cb51d061c635caa5daf542c1cd735b"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/caddy.yaml",
+        "size": 616,
+        "sha256": "9a86579da698e213ed88aa9e2369a78f6eebc173be856fa7fb9c68ac3d1907e3"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/data-dashboard.yaml",
+        "size": 619,
+        "sha256": "cc5dc4ed54b5bc9a2e63629f166f936f55e4c5b2a0cf299f02e463611740fc0a"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/dbx.yaml",
+        "size": 613,
+        "sha256": "96e47d8d66b56d035a23e0f44d48d25087691c8187f4ab773bb7b601e4650f68"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/docker-prerequisite.yaml",
+        "size": 641,
+        "sha256": "da66d77bb0f7b6f689c2fb5206d25e6044036e38650ae1680a31cc0c0001df10"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/hedgedoc.yaml",
+        "size": 646,
+        "sha256": "7ba6a8fa971d8c7cb8816cc2a372373a9299bd1a6a3514cf2ca26413f69f18a3"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/lobehub.yaml",
+        "size": 633,
+        "sha256": "4c890c6b8d466cac4bf5cd57b8ebd55f61e3cdd50564b0c372907c3fcfe9a3eb"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/memos.yaml",
+        "size": 626,
+        "sha256": "3031cd18eb5c023d070778aa08119ebf0447896f8909387b183a55930c5d5368"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/oss-internal-endpoint.yaml",
+        "size": 622,
+        "sha256": "5400a3e4af1c035db297578dc0b12a882c0fa8127e41020cf8f314f01e56a289"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/servercli-node-agent.yaml",
+        "size": 646,
+        "sha256": "0935fa70d62d637671fe7c5360698b792b00ad00a9330f898ad8f74daa6cfff1"
+      },
+      {
+        "path": "configs/nodes/aliyun-node-001/xray-bootstrap.yaml",
+        "size": 645,
+        "sha256": "330cce5d4e8497cd4dd838f590d7bc897bc2f6501522d1b34a4910950e7c8b5f"
+      },
+      {
+        "path": "configs/shared/aihub-shared.yaml",
+        "size": 1048,
+        "sha256": "0a6a41fe51fb8070d37561b0d6082d4fa6638b2b8cf255e636a079cb3b8aab9b"
+      },
+      {
+        "path": "configs/shared/caddy-shared.yaml",
+        "size": 1032,
+        "sha256": "f114dfcd90ed94b88e926510d505c195b8c2cffdf8b033c1863050f3455e2302"
+      },
+      {
+        "path": "configs/shared/data-dashboard-shared.yaml",
+        "size": 898,
+        "sha256": "89a9cc7430b78006cf9e9cf548fc3a74284c2f7fd8d01474dc7e14204034b68c"
+      },
+      {
+        "path": "configs/shared/dbx-shared.yaml",
+        "size": 907,
+        "sha256": "295195d95f72c82997d22b3a3184a78624854fad648992ee89bfeb0520241b0e"
+      },
+      {
+        "path": "configs/shared/docker-prerequisite-shared.yaml",
+        "size": 1112,
+        "sha256": "b1f6941fefc762799af6df3d565301e9279ac913e733159b190a615d41eab684"
+      },
+      {
+        "path": "configs/shared/hedgedoc-shared.yaml",
+        "size": 1021,
+        "sha256": "f9cf6469a045825d89391052e113d3c010c021817035762790798fc83d099e5e"
+      },
+      {
+        "path": "configs/shared/lobehub-shared.yaml",
+        "size": 1100,
+        "sha256": "e76384e0b3a4e0b402083e6470d31981f6c745a6696d19c0e8e1f7bafcc44442"
+      },
+      {
+        "path": "configs/shared/memos-shared.yaml",
+        "size": 990,
+        "sha256": "cc690603e5e46b7b8767d04b8334ef9d623cbb475221c39f8c8316fbeace54d4"
+      },
+      {
+        "path": "configs/shared/oss-internal-endpoint-shared.yaml",
+        "size": 958,
+        "sha256": "8390124710309cfd7073b279123b10e4a6cc4e525a9ad22f710cc39029b33015"
+      },
+      {
+        "path": "configs/shared/servercli-node-agent-shared.yaml",
+        "size": 1228,
+        "sha256": "09a15ba3d5e0b7fd9b950a44911192663cc60c5a932f119b1ad6ed8ec809d048"
+      },
+      {
+        "path": "configs/shared/xray-bootstrap-shared.yaml",
+        "size": 1165,
+        "sha256": "ccc108bc3015322fd4e21f83e76a73bba60f92d0ef3736ca4145cca05010b9d7"
+      },
+      {
+        "path": "features/aihub/hooks/backup.sh",
+        "size": 1201,
+        "sha256": "3659d9901f404c310385f8d42c9a7c5f7436e8799a7b9871385c530cfa563e2a"
+      },
+      {
+        "path": "features/aihub/hooks/health-check.sh",
+        "size": 1410,
+        "sha256": "ae47da1c6fd5f0ed13ede0e9b2defa6b96df581f2e3864e6cf22cb63a6c44478"
+      },
+      {
+        "path": "features/aihub/hooks/install.sh",
+        "size": 6060,
+        "sha256": "1db15db25a08a7983e3f2b12fc50defdcb2c312a5eb328e00f56163e5ac1be7f"
+      },
+      {
+        "path": "features/aihub/hooks/rollback.sh",
+        "size": 2217,
+        "sha256": "9363a2167483ec4d79ceb988b54c56432f92c1bbedf706e2e10facd3acd26a4f"
+      },
+      {
+        "path": "features/aihub/hooks/update.sh",
+        "size": 426,
+        "sha256": "f4a427c7be6886a2065e2858a1a3392c43b5b393f2099523a356abfa3707805b"
+      },
+      {
+        "path": "features/aihub/manifest.yaml",
+        "size": 3795,
+        "sha256": "bdb8cc5727cf59ac8462f9e3ff5b3ee1a804cfef2b514cfd2ffc603d290b2f14"
+      },
+      {
+        "path": "features/caddy/hooks/backup.sh",
+        "size": 1201,
+        "sha256": "edfc5cd1767be323fb3863f9ccee32c611c30dd946390da862031b05c4660a47"
+      },
+      {
+        "path": "features/caddy/hooks/health-check.sh",
+        "size": 1410,
+        "sha256": "081a564d46e5742cd253fb3501c935bc026949560e4d4f18d9f919b41e560de6"
+      },
+      {
+        "path": "features/caddy/hooks/install.sh",
+        "size": 6029,
+        "sha256": "fa147425ee64ac16fb7470960a71c1e0c0b2935f00fa2e0989f2cb9756bf760f"
+      },
+      {
+        "path": "features/caddy/hooks/rollback.sh",
+        "size": 2217,
+        "sha256": "cd91544f4d3e0368e7fffee87231a068554baa37a150ab88b1dd8830f4766087"
+      },
+      {
+        "path": "features/caddy/hooks/update.sh",
+        "size": 426,
+        "sha256": "884e274e701e4f73a2d95a983db7e0ff920d3e779decade1945880b8c79d76b1"
+      },
+      {
+        "path": "features/caddy/manifest.yaml",
+        "size": 3614,
+        "sha256": "3900612e366421155f175e178007fc48e857613639c9d482d129b4d3b03ace4d"
+      },
+      {
+        "path": "features/data-dashboard/hooks/backup.sh",
+        "size": 1172,
+        "sha256": "90c9a922db345840e0987a3a163ee13503fd8fc6365300390e19e36666a779e3"
+      },
+      {
+        "path": "features/data-dashboard/hooks/health-check.sh",
+        "size": 1238,
+        "sha256": "98e9b73dad42f14afa247283d89f0717012a4b8b0b424dcc66447682211c5674"
+      },
+      {
+        "path": "features/data-dashboard/hooks/install.sh",
+        "size": 6069,
+        "sha256": "fe6f1fe3595ba0b3143600723d3ee2d2c905ad5a76e91742843efe2f939d9b69"
+      },
+      {
+        "path": "features/data-dashboard/hooks/rollback.sh",
+        "size": 1441,
+        "sha256": "ad8fa82c54071d2f842f56575a605cc2eae8a7c67a027c223d87b493d3a31066"
+      },
+      {
+        "path": "features/data-dashboard/hooks/update.sh",
+        "size": 353,
+        "sha256": "4fdaacdc5052bcbd11a5d7aa1c07d40f4e1e3945755ddc4b173b8f0399bc8cac"
+      },
+      {
+        "path": "features/data-dashboard/manifest.yaml",
+        "size": 3318,
+        "sha256": "228eca4a5099e2923feb59cd21cb9331ec908209aaba0ea0605e26d2ef1d464b"
+      },
+      {
+        "path": "features/dbx/hooks/backup.sh",
+        "size": 1197,
+        "sha256": "034e74a0a5c68513edf43a054a12b2b2ace78296c2e59cb37cf5831d5a3257d4"
+      },
+      {
+        "path": "features/dbx/hooks/health-check.sh",
+        "size": 1406,
+        "sha256": "1b21b666ec183f258e6fbbfbc8df81a7707923482a083d372b89fd0a1e48a13e"
+      },
+      {
+        "path": "features/dbx/hooks/install.sh",
+        "size": 5966,
+        "sha256": "9e286b34b91833d0f78cc688d7daf5b20169fa9c81f82f99368b56c4a3e011d6"
+      },
+      {
+        "path": "features/dbx/hooks/rollback.sh",
+        "size": 2213,
+        "sha256": "5548f1aaf293cdf2915f425f6a75b98d2ea9917309d37f294772eb0adc4b33ef"
+      },
+      {
+        "path": "features/dbx/hooks/update.sh",
+        "size": 422,
+        "sha256": "ba77d755015a6488d32aed733264c4da99be3e1f8501664836cbd85ea1b92576"
+      },
+      {
+        "path": "features/dbx/manifest.yaml",
+        "size": 3429,
+        "sha256": "2e91747ca1a0bd7b9c29c0c116b000fdf04e51cc1682f729e9e9d527bb17a94b"
+      },
+      {
+        "path": "features/docker-prerequisite/hooks/backup.sh",
+        "size": 702,
+        "sha256": "5ef224a81e4ed4b4bd1b2bb42b50ee42dace7b8b0baff0942a1457e6f10ff8fe"
+      },
+      {
+        "path": "features/docker-prerequisite/hooks/health-check.sh",
+        "size": 1093,
+        "sha256": "3476235d88ace0aea548326eb98bfebe3841f5b360b2055dee764e080e32e44f"
+      },
+      {
+        "path": "features/docker-prerequisite/hooks/install.sh",
+        "size": 6952,
+        "sha256": "719bb5d999e30c03b0e90b0d87aa03faec6b74ef2b50e123045c5ba3b31992a2"
+      },
+      {
+        "path": "features/docker-prerequisite/hooks/rollback.sh",
+        "size": 455,
+        "sha256": "ad58b4f3ab253eb922c48d362f8c19e59e3475fff522b938bf60b8fa078fcac6"
+      },
+      {
+        "path": "features/docker-prerequisite/hooks/update.sh",
+        "size": 368,
+        "sha256": "b798f7c0562be1a9707ca003f430f0463243e2f09e49ec0ae4c8110cf192d79b"
+      },
+      {
+        "path": "features/docker-prerequisite/manifest.yaml",
+        "size": 3497,
+        "sha256": "7052b1e3f93e686ddb87ccb901e26482f9898f29dd63968e5bfcc2404229aff8"
+      },
+      {
+        "path": "features/hedgedoc/hooks/backup.sh",
+        "size": 1207,
+        "sha256": "186d7fa1fcfaf11988b4f8237343e1185c1dce98a8e02d405b430d1731a168c3"
+      },
+      {
+        "path": "features/hedgedoc/hooks/health-check.sh",
+        "size": 1416,
+        "sha256": "30f406cef264cf61af7f51f157961da53ee992a4e92959a71f86a25537fe5173"
+      },
+      {
+        "path": "features/hedgedoc/hooks/install.sh",
+        "size": 6054,
+        "sha256": "f0059232aad52b0ce42c9cba7a911a27ba1ceea2affefb428b773d8983ab0bad"
+      },
+      {
+        "path": "features/hedgedoc/hooks/rollback.sh",
+        "size": 2223,
+        "sha256": "bb39195d72b35bfadf510f14335453887ccac96adb6a7e6a749dab4743ffbc16"
+      },
+      {
+        "path": "features/hedgedoc/hooks/update.sh",
+        "size": 432,
+        "sha256": "a1ce84db33a01f6186bc2b72f006fd346f024917948790a0fb65af72f383c321"
+      },
+      {
+        "path": "features/hedgedoc/manifest.yaml",
+        "size": 3688,
+        "sha256": "5a3f6bb8f3b6e1e01c713082ed1c7138a44a5342a243e4ad3ca7aa024c26ad68"
+      },
+      {
+        "path": "features/lobehub/hooks/backup.sh",
+        "size": 1205,
+        "sha256": "68bd60d5f96f3ed9479aa34b1f3a856547caebb0b49d21ba24ae00261d0df582"
+      },
+      {
+        "path": "features/lobehub/hooks/health-check.sh",
+        "size": 1414,
+        "sha256": "97be28b4e51e8898e145b21789e46b7142cc686b39474523eddab16f8e3fe709"
+      },
+      {
+        "path": "features/lobehub/hooks/install.sh",
+        "size": 6006,
+        "sha256": "45ea1cf85a6e76ed1c661fdb0a822a4d91645e2df11453c5d354432e237c7658"
+      },
+      {
+        "path": "features/lobehub/hooks/rollback.sh",
+        "size": 2221,
+        "sha256": "9fd1ee1c907c733cb573c3c79723d3350d43b508f79b6895da9f010bbef049b1"
+      },
+      {
+        "path": "features/lobehub/hooks/update.sh",
+        "size": 430,
+        "sha256": "f27124e7848ca4a6db4e3f205ae44cfdc22ae2efed5aad8889df96bfc8dbcc7c"
+      },
+      {
+        "path": "features/lobehub/manifest.yaml",
+        "size": 3922,
+        "sha256": "3b4fc23df0474f9149e4dc17f405a4e5e65559bc64230f607e4610adcc91891f"
+      },
+      {
+        "path": "features/memos/hooks/backup.sh",
+        "size": 1201,
+        "sha256": "95ec827e53f13902f19685b655e5221cfe515c1d811447da446dbbcdf0bd349f"
+      },
+      {
+        "path": "features/memos/hooks/health-check.sh",
+        "size": 1410,
+        "sha256": "1b6809527cf184e739d6932eb0e866a4825f0b9fe07426be03bf3ef141053582"
+      },
+      {
+        "path": "features/memos/hooks/install.sh",
+        "size": 5956,
+        "sha256": "06dcd04d268edbf42827ce3b07e4a4586fac3feb50fb6c594c18c177a8837f3f"
+      },
+      {
+        "path": "features/memos/hooks/rollback.sh",
+        "size": 2217,
+        "sha256": "99bfac82f4b0b21bfd643f41d6d8d4026bd7b464639d0a70d0b3e26b9f36401a"
+      },
+      {
+        "path": "features/memos/hooks/update.sh",
+        "size": 426,
+        "sha256": "4196dd20a044d5186b4c9c613c5369f3a2211cb5014794924d3f81aa54d75f5b"
+      },
+      {
+        "path": "features/memos/manifest.yaml",
+        "size": 3525,
+        "sha256": "077c4f60add74da4bb903ef9a343f6eef25a75425be512174c0efda170301a79"
+      },
+      {
+        "path": "features/oss-internal-endpoint/hooks/backup.sh",
+        "size": 708,
+        "sha256": "1f4bb182aba4628002e22c5ab63253bae634247f252bd228e619dc1298149388"
+      },
+      {
+        "path": "features/oss-internal-endpoint/hooks/health-check.sh",
+        "size": 1413,
+        "sha256": "a2031fcd4417cf1b7779e68b4b8d7ff52bb5e5fe37ff068030c42fdf6dad6509"
+      },
+      {
+        "path": "features/oss-internal-endpoint/hooks/install.sh",
+        "size": 4953,
+        "sha256": "a9a24184cdf08a82e75f5e61a0b985ba6da9ae155f6bfb829204f978b3e893dc"
+      },
+      {
+        "path": "features/oss-internal-endpoint/hooks/rollback.sh",
+        "size": 461,
+        "sha256": "51875ca10dd006029575573706255333136157b2548defb6aece9d5abd4e8b58"
+      },
+      {
+        "path": "features/oss-internal-endpoint/hooks/update.sh",
+        "size": 368,
+        "sha256": "bca045eb532feda0b25ed141ea78443441fb6dc10451dc89a3f92a55c7218acb"
+      },
+      {
+        "path": "features/oss-internal-endpoint/manifest.yaml",
+        "size": 3322,
+        "sha256": "d690cd4928613fee87d1c07f16d3b6c7db1644c037208cf1a40ec52d0d6e380d"
+      },
+      {
+        "path": "features/servercli-node-agent/hooks/backup.sh",
+        "size": 705,
+        "sha256": "ae7436690f95b34efb183f6110f98427780a1ce9df32aff22fc1e26f675e445f"
+      },
+      {
+        "path": "features/servercli-node-agent/hooks/health-check.sh",
+        "size": 1115,
+        "sha256": "eba56a4e5f23ae68760e48ee2674f9090ca80e3be7695e6b53ea50b8f33b97c5"
+      },
+      {
+        "path": "features/servercli-node-agent/hooks/install.sh",
+        "size": 5942,
+        "sha256": "1ad86f5883b7ee4552ade562fc920c08dd5e72d9f88bc600d8c6b75e0f34eadf"
+      },
+      {
+        "path": "features/servercli-node-agent/hooks/rollback.sh",
+        "size": 458,
+        "sha256": "3652b91a32600e22637803234084c1101379fad238de354e1b4a674d1119c2ab"
+      },
+      {
+        "path": "features/servercli-node-agent/hooks/update.sh",
+        "size": 378,
+        "sha256": "0d1ae4abbc07572e2e5f029a0b8f34f6cf689dc08688719bf0529c01c9251e75"
+      },
+      {
+        "path": "features/servercli-node-agent/manifest.yaml",
+        "size": 3666,
+        "sha256": "97662f7281ea9561c305a12b09e4751b88d86ff2122289bf997bb7e00d3319fb"
+      },
+      {
+        "path": "features/xray-bootstrap/hooks/backup.sh",
+        "size": 687,
+        "sha256": "5e4385646325636c20091ed0c98974d09cbf3b9813ad87cf0161fec3f1cd409d"
+      },
+      {
+        "path": "features/xray-bootstrap/hooks/health-check.sh",
+        "size": 1286,
+        "sha256": "54ce925e24a3571b7c7060aace0f7660aa20907682853753728cc8f6a3e76d97"
+      },
+      {
+        "path": "features/xray-bootstrap/hooks/install.sh",
+        "size": 7339,
+        "sha256": "4e6360347ccc107ad1d5e3d55bc352c1355e91a8d9cfcfd64fc7e2f2df546b91"
+      },
+      {
+        "path": "features/xray-bootstrap/hooks/rollback.sh",
+        "size": 1442,
+        "sha256": "b1aa62837264072d3b1343bee78218546baff2f5b2ab9fcbfcaf44feef5b29ca"
+      },
+      {
+        "path": "features/xray-bootstrap/hooks/update.sh",
+        "size": 374,
+        "sha256": "a90dc0290ae05c2616ab174836eab321df6cf784bcd4a1eb7973e76d4858678d"
+      },
+      {
+        "path": "features/xray-bootstrap/manifest.yaml",
+        "size": 3794,
+        "sha256": "afb826e92955edc72cfe7b7d2a860cb1f48336c76d014dd96ff93a09be83354e"
+      },
+      {
+        "path": "releases/aihub/0.1.0/9e87487230b524bc76d5774531dec731b14b6133e445010b8e5b34807c4b6205/bundle.sig",
+        "size": 284,
+        "sha256": "5e21f0c5693a00707f92f3e39d1e26cee8fd9dcedffb406439c98985f32c3edf"
+      },
+      {
+        "path": "releases/aihub/0.1.0/9e87487230b524bc76d5774531dec731b14b6133e445010b8e5b34807c4b6205/bundle.tar.gz",
+        "size": 5380,
+        "sha256": "9e87487230b524bc76d5774531dec731b14b6133e445010b8e5b34807c4b6205"
+      },
+      {
+        "path": "releases/aihub/0.1.0/9e87487230b524bc76d5774531dec731b14b6133e445010b8e5b34807c4b6205/manifest.json",
+        "size": 1641,
+        "sha256": "57108f030ddcf5dbe3da7e7cd3780f0be1edb8830261ad8b38879f8c177ed78f"
+      },
+      {
+        "path": "releases/caddy/0.1.0/27a1390b03d0ee69c54a19d58228e7271d2176b9a40e134875c13cca96fce75d/bundle.sig",
+        "size": 284,
+        "sha256": "69bd2fc3ecedb05bfe4cea80714b2d66cc5c2a5fed541b9bc228679f7db06adc"
+      },
+      {
+        "path": "releases/caddy/0.1.0/27a1390b03d0ee69c54a19d58228e7271d2176b9a40e134875c13cca96fce75d/bundle.tar.gz",
+        "size": 5390,
+        "sha256": "27a1390b03d0ee69c54a19d58228e7271d2176b9a40e134875c13cca96fce75d"
+      },
+      {
+        "path": "releases/caddy/0.1.0/27a1390b03d0ee69c54a19d58228e7271d2176b9a40e134875c13cca96fce75d/manifest.json",
+        "size": 1641,
+        "sha256": "44531b0ba30509e85b85d0c080424d2a0c87fad9bcd2274cba3e648c895d20a1"
+      },
+      {
+        "path": "releases/data-dashboard/0.1.0/011dbff49a00470a78617ee145671c7bcd2d264fc74ed0a65b01c035a377fd78/bundle.sig",
+        "size": 284,
+        "sha256": "ce387e2880c78410db57b875b3f7a0911739c2911fd8ec88a2e6b79033ac71b3"
+      },
+      {
+        "path": "releases/data-dashboard/0.1.0/011dbff49a00470a78617ee145671c7bcd2d264fc74ed0a65b01c035a377fd78/bundle.tar.gz",
+        "size": 5242,
+        "sha256": "011dbff49a00470a78617ee145671c7bcd2d264fc74ed0a65b01c035a377fd78"
+      },
+      {
+        "path": "releases/data-dashboard/0.1.0/011dbff49a00470a78617ee145671c7bcd2d264fc74ed0a65b01c035a377fd78/manifest.json",
+        "size": 1667,
+        "sha256": "b293a58974597ab73e1b8ad20d65db4e2e535f5162fe987ead9e476f9adf08bc"
+      },
+      {
+        "path": "releases/dbx/0.1.0/4f6515e1fcc63b05b3255f02beddf62e7d6b76e44ec7c637474d47d9188eb644/bundle.sig",
+        "size": 284,
+        "sha256": "2be423ac4f18a09611a2f4d7cb25c71fae31c4f8d94e0f8dd408aeefa512732b"
+      },
+      {
+        "path": "releases/dbx/0.1.0/4f6515e1fcc63b05b3255f02beddf62e7d6b76e44ec7c637474d47d9188eb644/bundle.tar.gz",
+        "size": 5278,
+        "sha256": "4f6515e1fcc63b05b3255f02beddf62e7d6b76e44ec7c637474d47d9188eb644"
+      },
+      {
+        "path": "releases/dbx/0.1.0/4f6515e1fcc63b05b3255f02beddf62e7d6b76e44ec7c637474d47d9188eb644/manifest.json",
+        "size": 1635,
+        "sha256": "1b59c7659ca1d2d011c616432895af735a0862e95dd2cb34566ad373a4cc323a"
+      },
+      {
+        "path": "releases/docker-prerequisite/0.1.0/3bfb0e02f301af3e58548d256ce8d0e6dfabdf78cfcb8ac3bacbdf7ecccc174b/bundle.sig",
+        "size": 284,
+        "sha256": "493811435e3606f94412570d7883bbd0bccf8c54e098f1fbca28e1023fa581f4"
+      },
+      {
+        "path": "releases/docker-prerequisite/0.1.0/3bfb0e02f301af3e58548d256ce8d0e6dfabdf78cfcb8ac3bacbdf7ecccc174b/bundle.tar.gz",
+        "size": 4945,
+        "sha256": "3bfb0e02f301af3e58548d256ce8d0e6dfabdf78cfcb8ac3bacbdf7ecccc174b"
+      },
+      {
+        "path": "releases/docker-prerequisite/0.1.0/3bfb0e02f301af3e58548d256ce8d0e6dfabdf78cfcb8ac3bacbdf7ecccc174b/manifest.json",
+        "size": 1681,
+        "sha256": "76b6d9e84931c392be08a923a2c8b36e791c932f92bd6f4585d8daa20829d16d"
+      },
+      {
+        "path": "releases/hedgedoc/0.1.0/1f7f2ed0a91b5d6f1fdeb6f42d33103ac76335c0d1fd7bc493b8bf4910605747/bundle.sig",
+        "size": 284,
+        "sha256": "8c642f04a703b6be333dd505394c9058350ad0adc2c0d34119fda7f035612742"
+      },
+      {
+        "path": "releases/hedgedoc/0.1.0/1f7f2ed0a91b5d6f1fdeb6f42d33103ac76335c0d1fd7bc493b8bf4910605747/bundle.tar.gz",
+        "size": 5319,
+        "sha256": "1f7f2ed0a91b5d6f1fdeb6f42d33103ac76335c0d1fd7bc493b8bf4910605747"
+      },
+      {
+        "path": "releases/hedgedoc/0.1.0/1f7f2ed0a91b5d6f1fdeb6f42d33103ac76335c0d1fd7bc493b8bf4910605747/manifest.json",
+        "size": 1650,
+        "sha256": "2f4d06ab184797b942c0491315d8c290bcfc528f8183f922a3f47547fbf6ead1"
+      },
+      {
+        "path": "releases/lobehub/0.1.0/a23f98d9d26894510eaca22a962be6b635132b4b86c172c2160765749d51d558/bundle.sig",
+        "size": 284,
+        "sha256": "6687359b8aaa07ff32401757e3c631cc5a9af72da3b8fb692c376ebfa663e719"
+      },
+      {
+        "path": "releases/lobehub/0.1.0/a23f98d9d26894510eaca22a962be6b635132b4b86c172c2160765749d51d558/bundle.tar.gz",
+        "size": 5363,
+        "sha256": "a23f98d9d26894510eaca22a962be6b635132b4b86c172c2160765749d51d558"
+      },
+      {
+        "path": "releases/lobehub/0.1.0/a23f98d9d26894510eaca22a962be6b635132b4b86c172c2160765749d51d558/manifest.json",
+        "size": 1647,
+        "sha256": "739237821cd4f44aa75992687c0dd8e453b251f83c964ddaaa8a032d3b43978b"
+      },
+      {
+        "path": "releases/memos/0.1.0/33534b34a01212f862a703fff6cb246c95028653c872c1109af802045bd73387/bundle.sig",
+        "size": 284,
+        "sha256": "a8ef2766db7372acfe9b4dcc41c3236d426d19e877f3bcce4a138dedc4fc062d"
+      },
+      {
+        "path": "releases/memos/0.1.0/33534b34a01212f862a703fff6cb246c95028653c872c1109af802045bd73387/bundle.tar.gz",
+        "size": 5318,
+        "sha256": "33534b34a01212f862a703fff6cb246c95028653c872c1109af802045bd73387"
+      },
+      {
+        "path": "releases/memos/0.1.0/33534b34a01212f862a703fff6cb246c95028653c872c1109af802045bd73387/manifest.json",
+        "size": 1641,
+        "sha256": "b606be857f2aa0259a915d9a510619ddb14b0e98463e90cb0b4da29ab59cc1a5"
+      },
+      {
+        "path": "releases/oss-internal-endpoint/0.1.0/2beed94f0daa04b86a20f3f719c961e7bcb38a71a5d6dfcd3720fda341280cab/bundle.sig",
+        "size": 284,
+        "sha256": "b0a43fd2e1b2a797344102226071364913eaba075c165890adf72be904a06c56"
+      },
+      {
+        "path": "releases/oss-internal-endpoint/0.1.0/2beed94f0daa04b86a20f3f719c961e7bcb38a71a5d6dfcd3720fda341280cab/bundle.tar.gz",
+        "size": 4312,
+        "sha256": "2beed94f0daa04b86a20f3f719c961e7bcb38a71a5d6dfcd3720fda341280cab"
+      },
+      {
+        "path": "releases/oss-internal-endpoint/0.1.0/2beed94f0daa04b86a20f3f719c961e7bcb38a71a5d6dfcd3720fda341280cab/manifest.json",
+        "size": 1687,
+        "sha256": "27bb11927dd8da173e42f658469945e6f81f164d311165c499d2b730aaec9b7d"
+      },
+      {
+        "path": "releases/servercli-node-agent/0.1.0/8e8da82c8ebd10773d1513b604da2d38e8a9305d2e9a7f8c59e78289baba6f24/bundle.sig",
+        "size": 284,
+        "sha256": "e79e4a13223f20d79b3703b1e521322fa3086b84b147e07251b9bfa26a3ce548"
+      },
+      {
+        "path": "releases/servercli-node-agent/0.1.0/8e8da82c8ebd10773d1513b604da2d38e8a9305d2e9a7f8c59e78289baba6f24/bundle.tar.gz",
+        "size": 4765,
+        "sha256": "8e8da82c8ebd10773d1513b604da2d38e8a9305d2e9a7f8c59e78289baba6f24"
+      },
+      {
+        "path": "releases/servercli-node-agent/0.1.0/8e8da82c8ebd10773d1513b604da2d38e8a9305d2e9a7f8c59e78289baba6f24/manifest.json",
+        "size": 1684,
+        "sha256": "97468b03678910299cfbcc5d27b1bfc4418e2aeb7a446cc281f6e07d97ca9892"
+      },
+      {
+        "path": "releases/xray-bootstrap/0.1.0/becbe7ed23f0550620cd4487bcf59ea382e1065fc3311ce2e0c1f632e1eaf980/bundle.sig",
+        "size": 284,
+        "sha256": "72266511c088e0185f7ac08d78166dc29b8232412bd3012c851dc86b1e13e19d"
+      },
+      {
+        "path": "releases/xray-bootstrap/0.1.0/becbe7ed23f0550620cd4487bcf59ea382e1065fc3311ce2e0c1f632e1eaf980/bundle.tar.gz",
+        "size": 5534,
+        "sha256": "becbe7ed23f0550620cd4487bcf59ea382e1065fc3311ce2e0c1f632e1eaf980"
+      },
+      {
+        "path": "releases/xray-bootstrap/0.1.0/becbe7ed23f0550620cd4487bcf59ea382e1065fc3311ce2e0c1f632e1eaf980/manifest.json",
+        "size": 1667,
+        "sha256": "e08b126d3811066e227e1a5bd006cbe2e6b420840effb2855f183bf7f7394ef5"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/aihub.secrets.yaml.example",
+        "size": 695,
+        "sha256": "9a20fed4bce8f088c045997c2dc1d54ff1992eb96f9490049b2e6c7498f80e6f"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/caddy.secrets.yaml.example",
+        "size": 609,
+        "sha256": "00171928f98a8ffd622b1013636fb63f726d616c18419a52201033eed44379be"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/data-dashboard.secrets.yaml.example",
+        "size": 642,
+        "sha256": "928c7127b2b7f4408ac0a6fef1453633baa506cb1b8a14026687628a89eeddce"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/dbx.secrets.yaml.example",
+        "size": 598,
+        "sha256": "c11f38f46374d387985c6e85646ab0a432f2d7a8d677faec28e4be196c1537ca"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/docker-prerequisite.secrets.yaml.example",
+        "size": 658,
+        "sha256": "b13b28a812ca0939fef6a86ad328774b3bc4009f77025ec75a183c923a2fc798"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/hedgedoc.secrets.yaml.example",
+        "size": 620,
+        "sha256": "c9ebe60c0590acc4da44123918dffc36778d8a4e95ffb252d50373f68924e8b8"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/lobehub.secrets.yaml.example",
+        "size": 752,
+        "sha256": "a9fd8eb17c195a9b30bb08ea561633cbded94edba5f3b9c7fa74c5c84d21765d"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/memos.secrets.yaml.example",
+        "size": 608,
+        "sha256": "da0af47db1e7e710fd13d2ccfc7666e6266fb688c6489a4b24627fb4c6f765b3"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/oss-internal-endpoint.secrets.yaml.example",
+        "size": 654,
+        "sha256": "b946792570c6b78b4e0970193fe89d7e444e24f0466d224cd5b7aef67e3dc986"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/servercli-node-agent.secrets.yaml.example",
+        "size": 668,
+        "sha256": "72554a3b0d419d97ea7df1c2bec025170ecbd20b491f85a2f9eccce038d66c0c"
+      },
+      {
+        "path": "secrets/nodes/aliyun-node-001/xray-bootstrap.secrets.yaml.example",
+        "size": 635,
+        "sha256": "b82631e594d96db8e1b7b95a5b13dcecdf119a3b2d2023dacf0696bb1af9cff1"
+      },
+      {
+        "path": "secrets/shared/aihub-shared.secrets.yaml.example",
+        "size": 673,
+        "sha256": "2b87ea2beffaae5f2b29cdd2d7c68b57b0ace626652de387ead30b45beca443f"
+      },
+      {
+        "path": "secrets/shared/caddy-shared.secrets.yaml.example",
+        "size": 587,
+        "sha256": "3cf1a5a9818936111fc6c890596584984facf47174922099b2ca45620b3c9b7f"
+      },
+      {
+        "path": "secrets/shared/data-dashboard-shared.secrets.yaml.example",
+        "size": 629,
+        "sha256": "4319ad024c7761b35db568aa61a184ac86a9e2b4b1d686f58778b8e6fd537c16"
+      },
+      {
+        "path": "secrets/shared/dbx-shared.secrets.yaml.example",
+        "size": 574,
+        "sha256": "61d42dbc16234dd4e8e8fd1ac71452a955fddf7d89e95cc44866227dd644085b"
+      },
+      {
+        "path": "secrets/shared/docker-prerequisite-shared.secrets.yaml.example",
+        "size": 650,
+        "sha256": "7817ee657bc274b8d70f56a861a8ca948000a6f132df7dd893f25295480f372b"
+      },
+      {
+        "path": "secrets/shared/hedgedoc-shared.secrets.yaml.example",
+        "size": 601,
+        "sha256": "541c5b74bb82fbfdecc44011565c4ad03e1b0b9a1aa361bca66d7c12040440ad"
+      },
+      {
+        "path": "secrets/shared/lobehub-shared.secrets.yaml.example",
+        "size": 732,
+        "sha256": "bc08cae859f926e4a3c29180542f0f00d7f68fa374405d311520f832aba7f523"
+      },
+      {
+        "path": "secrets/shared/memos-shared.secrets.yaml.example",
+        "size": 586,
+        "sha256": "ad7a0765335804150c2b04a16dbe48e8a5c76cfde5b38b8082d377c51d9dded4"
+      },
+      {
+        "path": "secrets/shared/oss-internal-endpoint-shared.secrets.yaml.example",
+        "size": 648,
+        "sha256": "7771c558f130a83596bebbcb625e0e2e4dce05f823540ce83e7d52445e480631"
+      },
+      {
+        "path": "secrets/shared/servercli-node-agent-shared.secrets.yaml.example",
+        "size": 661,
+        "sha256": "168fb2bff81326a80e53c31786f8bb0c64c89212b7dbc13c12cee97e25ab356c"
+      },
+      {
+        "path": "secrets/shared/xray-bootstrap-shared.secrets.yaml.example",
+        "size": 622,
+        "sha256": "062c7a4af5e966c7fa9098835ed83c94851595c7822ca9db256db11ede354395"
+      }
+    ]
+  }
+}

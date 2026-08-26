@@ -1,0 +1,24 @@
+# =============================================================================
+# 共享配置示例 — ServerCLI Node Agent (servercli-node-agent)
+# 控制面合并顺序：shared < node < operation（operation 优先级最高）
+# 本文件仅为示例模板，不含任何真实 Secret；真实节点配置由控制面生成。
+# =============================================================================
+profile: servercli-node-agent-shared
+feature_key: servercli-node-agent
+release_version: "0.1.0"
+environment_id: production
+deployment_root_dir: /opt/servercli-deployment
+data_dir: /opt/servercli-deployment/data/servercli-node-agent
+config_dir: /opt/servercli-deployment/configs/servercli-node-agent
+rendered_dir: /opt/servercli-deployment/rendered/servercli-node-agent
+image_tag: servercli 0.2.0
+# image_digest: sha256:xxxx  # 生产建议锁定 digest（优先级高于 image_tag）
+restart_policy: unless-stopped
+# Agent 固定版本
+agent_version: 0.2.0
+# Agent 制品下载地址（占位，GitHub Release）
+agent_release_url: xxx-placeholder-xxx
+# Agent 二进制 sha256（生产必填）
+agent_sha256: xxx-placeholder-xxx
+# 主控地址（直接访问，不走代理）
+control_plane_url: xxx-placeholder-xxx

@@ -59,7 +59,7 @@ func NewAgent(cfg *config.Config, log *slog.Logger) *Agent {
 		cfg:      cfg,
 		log:      log,
 		client:   client,
-		executor: NewExecutor(client, log),
+		executor: newExecutorWithDeployment(cfg, client, log),
 		// Resolve config paths to absolute values so SSH forced-command and
 		// authorized_keys entries work no matter the process working directory.
 		keys:      NewLeaseKeyManager(absConfigPath(cfg.AuthorizedKeysFile), absConfigPath(cfg.LeaseShellBin), log),

@@ -1,0 +1,58 @@
+{
+  "apiVersion": "servercli/v1",
+  "kind": "FeatureRelease",
+  "metadata": {
+    "feature_key": "hedgedoc",
+    "name": "HedgeDoc",
+    "version": "0.1.0"
+  },
+  "spec": {
+    "feature_key": "hedgedoc",
+    "version": "0.1.0",
+    "os": "linux",
+    "arch": "amd64",
+    "bundle": {
+      "file": "bundle.tar.gz",
+      "sha256": "1f7f2ed0a91b5d6f1fdeb6f42d33103ac76335c0d1fd7bc493b8bf4910605747",
+      "size": 5319,
+      "content_type": "application/gzip"
+    },
+    "files": [
+      {
+        "path": "manifest.yaml",
+        "size": 3688,
+        "sha256": "5a3f6bb8f3b6e1e01c713082ed1c7138a44a5342a243e4ad3ca7aa024c26ad68"
+      },
+      {
+        "path": "hooks/backup.sh",
+        "size": 1207,
+        "sha256": "186d7fa1fcfaf11988b4f8237343e1185c1dce98a8e02d405b430d1731a168c3"
+      },
+      {
+        "path": "hooks/health-check.sh",
+        "size": 1416,
+        "sha256": "30f406cef264cf61af7f51f157961da53ee992a4e92959a71f86a25537fe5173"
+      },
+      {
+        "path": "hooks/install.sh",
+        "size": 6054,
+        "sha256": "f0059232aad52b0ce42c9cba7a911a27ba1ceea2affefb428b773d8983ab0bad"
+      },
+      {
+        "path": "hooks/rollback.sh",
+        "size": 2223,
+        "sha256": "bb39195d72b35bfadf510f14335453887ccac96adb6a7e6a749dab4743ffbc16"
+      },
+      {
+        "path": "hooks/update.sh",
+        "size": 432,
+        "sha256": "a1ce84db33a01f6186bc2b72f006fd346f024917948790a0fb65af72f383c321"
+      }
+    ],
+    "signature": {
+      "file": "bundle.sig",
+      "algorithm": "HMAC-SHA256",
+      "note": "占位签名：真实签名由控制面签发（HMAC-SHA256(secret, bundle.tar.gz sha256)）"
+    }
+  }
+}
