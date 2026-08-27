@@ -18,6 +18,7 @@ import {
   createTarget,
   updateTarget,
   deleteTarget,
+  getSecretValue,
   overwriteSecret,
   createOperation,
   cancelOperation,
@@ -1480,6 +1481,8 @@ function SecretsTab({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [viewBusy, setViewBusy] = useState(false);
+  const [viewError, setViewError] = useState<string | null>(null);
 
   // 新建 Secret Reference（仅元数据；正文通过覆盖写入）
   const [createForm, setCreateForm] = useState<SecretReferenceCreate>({
@@ -1517,6 +1520,24 @@ function SecretsTab({
       setCreateError(err instanceof ApiError ? err.message : '创建失败，请重试');
     } finally {
       setCreateBusy(false);
+    }
+  };
+
+  // 查看/编辑：读取当前明文到编辑框（策略放宽：仅 admin；响应 no-store；不缓存）
+  const loadValue = async (id: string) => {
+    setSecretId(id);
+    setError(null);
+    setDone(null);
+    setViewError(null);
+    setValue('');
+    setViewBusy(true);
+    try {
+      const r = await getSecretValue(id);
+      setValue(r.value ?? '');
+    } catch (err) {
+      setViewError(err instanceof ApiError ? err.message : '读取 Secret 失败，请重试');
+    } finally {
+      setViewBusy(false);
     }
   };
 
@@ -1581,6 +1602,7 @@ function SecretsTab({
                   <th>内容 Hash</th>
                   <th>大小</th>
                   <th>更新时间</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1601,6 +1623,11 @@ function SecretsTab({
                     <td className="num">{formatBytes(s.size)}</td>
                     <td>
                       <TimeCell value={s.updated_at} />
+                    </td>
+                    <td>
+                      <button className="btn btn-ghost btn-sm" onClick={() => loadValue(s.id)} disabled={viewBusy}>
+                        {viewBusy && secretId === s.id ? '加载中…' : '查看/编辑'}
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -1672,15 +1699,15 @@ function SecretsTab({
         </form>
       </Card>
 
-      <Card title="覆盖写入（Overwrite）">
+      <Card title="查看 / 编辑（Overwrite）">
         <div className="alert alert-warn" role="alert" style={{ marginBottom: 12 }}>
-          ⚠️ <strong>V1 将敏感配置以明文文件写入私有 OSS</strong>。此处只允许输入新值覆盖（生成新 version），
-          不提供读取/回显；提交后输入框立即清空。
+          ⚠️ <strong>V1 将敏感配置以明文文件写入私有 OSS</strong>。此处可读取当前值并编辑（策略已放宽，
+          读取仅管理员、响应不缓存、每次查看落审计）；提交后输入框立即清空，不缓存、不入 localStorage/URL。
         </div>
         <form onSubmit={submit}>
           <div className="grid grid-2">
             <Field label="Secret 引用" required>
-              <Select value={secretId} onChange={(e) => { setSecretId(e.target.value); setError(null); setDone(null); }}>
+              <Select value={secretId} onChange={(e) => { setSecretId(e.target.value); setError(null); setDone(null); setViewError(null); setValue(''); }}>
                 <option value="">请选择</option>
                 {secrets.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -1689,11 +1716,19 @@ function SecretsTab({
                 ))}
               </Select>
             </Field>
+            <Field label="操作" hint="读取当前明文到编辑框后再修改">
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button type="button" className="btn btn-ghost" onClick={() => secretId && loadValue(secretId)} disabled={viewBusy || !secretId}>
+                  {viewBusy ? '加载中…' : '加载当前值'}
+                </button>
+                {viewError && <span style={{ color: 'var(--danger, #d64545)', fontSize: 12 }}>{viewError}</span>}
+              </div>
+            </Field>
             <Field label={needReason ? '原因（正式环境必填）' : '原因'} required={needReason} hint="将写入审计日志">
               <TextInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder={needReason ? '请填写覆盖原因' : '可选'} />
             </Field>
           </div>
-          <Field label="新值（Secret 正文）" required hint="提交后立即清空，不缓存、不入 localStorage/URL">
+          <Field label="Secret 内容（可查看/编辑）" required hint="可先点「加载当前值」再修改；提交后立即清空，不缓存、不入 localStorage/URL">
             <textarea
               className="input mono"
               rows={8}

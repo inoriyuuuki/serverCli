@@ -108,6 +108,7 @@ func (s *Server) registerDeploymentRoutes(mux *http.ServeMux) {
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/deployments/secrets/references", Group: group, Auth: AuthAdminOrToken, Summary: "Secret 引用列表（无正文）", Params: []RouteParam{{Name: "feature_id", In: "query", Type: "string"}, {Name: "scope_type", In: "query", Type: "string"}, {Name: "scope_id", In: "query", Type: "string"}}, Debug: true}, s.adminOrToken(service.ResourceDeploymentSecrets, service.ActionManage, "/api/v1/deployments/secrets/references")(s.handleListSecretReferences))
 	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/deployments/secrets/references", Group: group, Auth: AuthAdmin, Summary: "创建 Secret 引用（元数据，无正文）", Body: `{"name":"db","feature_id":"...","scope_type":"shared"}`, Errors: []string{"400", "404", "409"}, Debug: true}, s.requireAdmin(s.handleCreateSecretReference))
 	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/deployments/secrets/{id}/overwrite", Group: group, Auth: AuthAdmin, Summary: "覆盖 Secret（只写不读）", Body: `{"value":"...","reason":"..."}`, Errors: []string{"400", "404"}, Debug: true}, s.requireAdmin(s.handleOverwriteSecret))
+	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/deployments/secrets/{id}/value", Group: group, Auth: AuthAdmin, Summary: "读取 Secret 明文（策略放宽：仅 admin；no-store；落审计不含内容）", Errors: []string{"400", "404"}, Debug: true}, s.requireAdmin(s.handleGetSecretValue))
 
 	// Operations.
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/deployments/operations", Group: group, Auth: AuthAdminOrToken, Summary: "部署操作列表", Params: []RouteParam{{Name: "limit", In: "query", Type: "integer"}}, Debug: true}, s.adminOrToken(service.ResourceDeployments, service.ActionRead, "/api/v1/deployments/operations")(s.handleListOperations))
@@ -394,6 +395,17 @@ func (s *Server) handleCreateSecretReference(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"secret": ref})
+}
+
+func (s *Server) handleGetSecretValue(w http.ResponseWriter, r *http.Request) {
+	value, err := s.deployments.GetSecretValue(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	// 明文响应绝不缓存（防浏览器/代理落盘）
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"secret_id": r.PathValue("id"), "value": value})
 }
 
 func (s *Server) handleOverwriteSecret(w http.ResponseWriter, r *http.Request) {

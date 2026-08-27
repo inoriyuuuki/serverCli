@@ -616,3 +616,9 @@ export interface BootstrapSessionCreateResponse {
   command: string;
   token: string;
 }
+
+/** GET /deployments/secrets/{id}/value 响应（策略放宽：明文，仅 admin，no-store） */
+export interface SecretValueResponse {
+  secret_id: string;
+  value: string;
+}

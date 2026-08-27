@@ -9,6 +9,8 @@ package service
 //   - DeploymentAuditDetails 白名单丢弃 secret 字段 + Auditor 落库不泄密
 
 import (
+	"os"
+	"path/filepath"
 	"context"
 	"encoding/json"
 	"io"
@@ -16,6 +18,7 @@ import (
 	"testing"
 
 	"servercli/internal/db"
+	"servercli/internal/deployment/repo"
 	"servercli/internal/logger"
 	"servercli/internal/model"
 	"servercli/internal/secret"
@@ -264,5 +267,54 @@ func TestAuditEventStorageNoSecret(t *testing.T) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(events[0].DetailsJSON), &m); err != nil {
 		t.Fatalf("details not valid json: %v", err)
+	}
+}
+
+// TestGetSecretValueReturnsLocalMirror verifies the policy-relaxed read-back:
+// the value is served from the control-plane local mirror, hash-checked
+// against the DB reference, and a stale mirror is rejected.
+func TestGetSecretValueReturnsLocalMirror(t *testing.T) {
+	ctx, st, _, _, _, svc := newSecretLeakHarness(t)
+	root := t.TempDir()
+	svc.cfg.DeploymentRootDir = root
+	seedDeployFeature(t, ctx, st, "f-sec", "db", "none", "none")
+
+	content := "db_dsn: postgres://u:p@h:9017/memos?sslmode=disable"
+	ref := &model.DeploymentSecretReference{
+		ID:            model.NewUUID(),
+		Name:          "db",
+		FeatureID:     "f-sec",
+		ScopeType:     model.SecretScopeShared,
+		ObjectKey:     "deployment-repository/secrets/shared/db.secrets.yaml",
+		Version:       1,
+		ContentHash:   sha256Hex([]byte(content)),
+		EncryptionMode: "none",
+		Size:          int64(len(content)),
+	}
+	if err := st.CreateDeploymentSecretReference(ctx, ref); err != nil {
+		t.Fatalf("create ref: %v", err)
+	}
+	local := filepath.Join(root, repo.RepoDirRepository, "secrets", "shared", "db.secrets.yaml")
+	if err := os.MkdirAll(filepath.Dir(local), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(local, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.GetSecretValue(ctx, ref.ID)
+	if err != nil {
+		t.Fatalf("get secret value: %v", err)
+	}
+	if got != content {
+		t.Fatalf("value mismatch: got %q want %q", got, content)
+	}
+
+	// Stale mirror (hash mismatch) must be rejected.
+	if err := os.WriteFile(local, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetSecretValue(ctx, ref.ID); err == nil {
+		t.Fatal("expected error for stale mirror, got nil")
 	}
 }
