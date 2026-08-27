@@ -1,0 +1,56 @@
+apiVersion: servercli/v1
+kind: Command
+metadata:
+  id: deployment.restore
+  version: 1.0.0
+  category: deployment
+  title: 部署恢复
+  description: 从已校验备份恢复到目标数据目录（仅接受控制面下发的精确备份 object key；数据已存在时需显式 force_delete）
+spec:
+  executable: ./deployment/deployment-runner
+  permissionProfile: root
+  timeoutSeconds: 900
+  maxOutputBytes: 1048576
+  concurrency: 1
+  parameters:
+    type: object
+    additionalProperties: false
+    required: [operation_id, target_id, node_id]
+    properties:
+      operation_id:
+        type: string
+      target_id:
+        type: string
+      node_id:
+        type: string
+      feature_key:
+        type: string
+      backup_id:
+        type: string
+      backup_object_key:
+        type: string
+      backup_sha256:
+        type: string
+      backup_size:
+        type: integer
+      force_delete:
+        type: boolean
+      config_hash:
+        type: string
+      secret_refs:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [ref_id, object_key, version, content_hash, encryption_mode]
+          properties:
+            ref_id:
+              type: string
+            object_key:
+              type: string
+            version:
+              type: string
+            content_hash:
+              type: string
+            encryption_mode:
+              type: string

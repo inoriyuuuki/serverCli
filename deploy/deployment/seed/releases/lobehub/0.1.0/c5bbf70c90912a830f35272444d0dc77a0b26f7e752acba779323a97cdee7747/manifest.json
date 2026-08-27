@@ -13,8 +13,8 @@
     "arch": "amd64",
     "bundle": {
       "file": "bundle.tar.gz",
-      "sha256": "a23f98d9d26894510eaca22a962be6b635132b4b86c172c2160765749d51d558",
-      "size": 5363,
+      "sha256": "c5bbf70c90912a830f35272444d0dc77a0b26f7e752acba779323a97cdee7747",
+      "size": 6035,
       "content_type": "application/gzip"
     },
     "files": [

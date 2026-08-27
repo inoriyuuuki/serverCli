@@ -749,18 +749,21 @@ func (s *Store) DeleteDeploymentTargetSecretsByTarget(ctx context.Context, targe
 // ---- deployment_operation ----
 
 const deploymentOperationColumns = `id, action, feature_id, release_id, strategy, status, requested_by, reason,
-	environment_id, frozen_config_hash, created_at, started_at, finished_at`
+	environment_id, frozen_config_hash, backup_id, force_delete, created_at, started_at, finished_at`
 
 func scanDeploymentOperation(row interface{ Scan(...any) error }) (*model.DeploymentOperation, error) {
 	var o model.DeploymentOperation
-	var releaseID, reason, frozenCfg, created, started, finished sql.NullString
+	var releaseID, reason, frozenCfg, backupID, created, started, finished sql.NullString
+	var forceDelete int
 	if err := row.Scan(&o.ID, &o.Action, &o.FeatureID, &releaseID, &o.Strategy, &o.Status, &o.RequestedBy, &reason,
-		&o.EnvironmentID, &frozenCfg, &created, &started, &finished); err != nil {
+		&o.EnvironmentID, &frozenCfg, &backupID, &forceDelete, &created, &started, &finished); err != nil {
 		return nil, err
 	}
 	o.ReleaseID = releaseID.String
 	o.Reason = reason.String
 	o.FrozenConfigHash = frozenCfg.String
+	o.BackupID = backupID.String
+	o.ForceDelete = forceDelete != 0
 	var err error
 	if o.CreatedAt, err = parseTimeVal(created); err != nil {
 		return nil, err
@@ -786,10 +789,10 @@ func (s *Store) CreateDeploymentOperation(ctx context.Context, o *model.Deployme
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO deployment_operation
 		(id, action, feature_id, release_id, strategy, status, requested_by, reason,
-		 environment_id, frozen_config_hash, created_at, started_at, finished_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		 environment_id, frozen_config_hash, backup_id, force_delete, created_at, started_at, finished_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		o.ID, o.Action, o.FeatureID, nullString(o.ReleaseID), o.Strategy, o.Status, o.RequestedBy, nullString(o.Reason),
-		o.EnvironmentID, nullString(o.FrozenConfigHash), ts(o.CreatedAt), nullTime(o.StartedAt), nullTime(o.FinishedAt))
+		o.EnvironmentID, nullString(o.FrozenConfigHash), nullString(o.BackupID), boolInt(o.ForceDelete), ts(o.CreatedAt), nullTime(o.StartedAt), nullTime(o.FinishedAt))
 	return conflict(err)
 }
 
@@ -809,10 +812,10 @@ func (s *Store) CreateDeploymentOperationBundle(ctx context.Context, op *model.D
 		}
 		if _, err := tsx.exec(ctx, `INSERT INTO deployment_operation
 			(id, action, feature_id, release_id, strategy, status, requested_by, reason,
-			 environment_id, frozen_config_hash, created_at, started_at, finished_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+			 environment_id, frozen_config_hash, backup_id, force_delete, created_at, started_at, finished_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 			op.ID, op.Action, op.FeatureID, nullString(op.ReleaseID), op.Strategy, op.Status, op.RequestedBy, nullString(op.Reason),
-			op.EnvironmentID, nullString(op.FrozenConfigHash), ts(op.CreatedAt), nullTime(op.StartedAt), nullTime(op.FinishedAt)); err != nil {
+			op.EnvironmentID, nullString(op.FrozenConfigHash), nullString(op.BackupID), boolInt(op.ForceDelete), ts(op.CreatedAt), nullTime(op.StartedAt), nullTime(op.FinishedAt)); err != nil {
 			return conflict(err)
 		}
 		createdAt := ts(now())
@@ -883,10 +886,10 @@ func (s *Store) ListDeploymentOperations(ctx context.Context, limit int) ([]*mod
 func (s *Store) UpdateDeploymentOperation(ctx context.Context, o *model.DeploymentOperation) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE deployment_operation SET
 		action=$1, release_id=$2, strategy=$3, status=$4, requested_by=$5, reason=$6,
-		environment_id=$7, frozen_config_hash=$8, started_at=$9, finished_at=$10
-		WHERE id=$11`,
+		environment_id=$7, frozen_config_hash=$8, backup_id=$9, force_delete=$10, started_at=$11, finished_at=$12
+		WHERE id=$13`,
 		o.Action, nullString(o.ReleaseID), o.Strategy, o.Status, o.RequestedBy, nullString(o.Reason),
-		o.EnvironmentID, nullString(o.FrozenConfigHash), nullTime(o.StartedAt), nullTime(o.FinishedAt), o.ID)
+		o.EnvironmentID, nullString(o.FrozenConfigHash), nullString(o.BackupID), boolInt(o.ForceDelete), nullTime(o.StartedAt), nullTime(o.FinishedAt), o.ID)
 	return err
 }
 

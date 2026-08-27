@@ -110,3 +110,4 @@ spec:
     backup: hooks/backup.sh
     health-check: hooks/health-check.sh
     rollback: hooks/rollback.sh
+    restore: hooks/restore.sh

@@ -519,6 +519,7 @@ const (
 	DeploymentActionBackup      = "backup"
 	DeploymentActionRollback    = "rollback"
 	DeploymentActionHealthCheck = "health_check"
+	DeploymentActionRestore     = "restore"
 )
 
 // Deployment operation statuses.
@@ -534,6 +535,7 @@ const (
 	DeploymentStatusCancelled            = "cancelled"
 	DeploymentStatusRolledBack           = "rolled_back"
 	DeploymentStatusRollbackFailed       = "rollback_failed"
+	DeploymentStatusSkipped              = "skipped"
 )
 
 // Bootstrap session statuses: repository/agent bootstrap pipeline states and
@@ -718,6 +720,8 @@ type DeploymentOperation struct {
 	Reason           string     `json:"reason,omitempty"`
 	EnvironmentID    string     `json:"environment_id"`
 	FrozenConfigHash string     `json:"frozen_config_hash,omitempty"`
+	BackupID         string     `json:"backup_id,omitempty"`
+	ForceDelete      bool       `json:"force_delete,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	StartedAt        *time.Time `json:"started_at"`
 	FinishedAt       *time.Time `json:"finished_at"`

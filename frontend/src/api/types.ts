@@ -622,3 +622,8 @@ export interface SecretValueResponse {
   secret_id: string;
   value: string;
 }
+
+/** POST /deployments/backups/run 响应（按服务器/Feature 触发备份） */
+export interface RunBackupsResponse {
+  operations: DeploymentOperation[];
+}

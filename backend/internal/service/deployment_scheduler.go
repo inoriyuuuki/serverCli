@@ -256,6 +256,23 @@ func (s *DeploymentScheduler) audit(ctx context.Context, op *model.DeploymentOpe
 // auditor returns the auditor owned by the DeploymentService.
 func (s *DeploymentScheduler) auditor() *Auditor { return s.svc.auditor }
 
+// skipTarget marks a target as skipped (already at desired release etc.) with
+// an informational step, counting it as a success so the operation can finish.
+func (s *DeploymentScheduler) skipTarget(ctx context.Context, op *model.DeploymentOperation, feature *model.DeploymentFeature, t *model.DeploymentOperationTarget, msg string) targetResult {
+	if step, err := s.createStep(ctx, op.ID, t.ID, t.NodeID, "skip", ""); err == nil {
+		_ = s.markStepOK(ctx, step, msg)
+	}
+	now := time.Now().UTC()
+	t.Status = model.DeploymentStatusSkipped
+	t.FinishedAt = &now
+	_ = s.store.UpdateDeploymentOperationTarget(ctx, t)
+	s.audit(ctx, op, "deployment.operation.target", t, map[string]any{
+		"operation_id": op.ID, "target_id": t.ID, "node_id": t.NodeID,
+		"feature_key": feature.FeatureKey, "action": op.Action, "result": "skipped",
+	})
+	return targetResult{succeeded: true}
+}
+
 func (s *DeploymentScheduler) executeTarget(ctx context.Context, op *model.DeploymentOperation, feature *model.DeploymentFeature, release *model.DeploymentRelease, t *model.DeploymentOperationTarget) (targetResult, error) {
 	s.markPreflightDone(ctx, op.ID, t.ID)
 
@@ -274,6 +291,29 @@ func (s *DeploymentScheduler) executeTarget(ctx context.Context, op *model.Deplo
 		}
 	}
 
+	// 批量跳过：install/update/rollback 若目标已是期望版本（或已是 last healthy）
+	// 则跳过该节点，避免"非最新才操作"的重复执行。
+	if op.Action == model.DeploymentActionInstall || op.Action == model.DeploymentActionUpdate ||
+		op.Action == model.DeploymentActionRollback {
+		if tg, err := s.store.DeploymentTargetByID(ctx, t.TargetID); err == nil && tg != nil {
+			skip, reason := false, ""
+			switch op.Action {
+			case model.DeploymentActionInstall:
+				skip = tg.CurrentReleaseID != "" && tg.CurrentReleaseID == tg.DesiredReleaseID
+				reason = "target already at desired release"
+			case model.DeploymentActionUpdate:
+				skip = op.ReleaseID != "" && tg.CurrentReleaseID == op.ReleaseID
+				reason = "target already at release " + op.ReleaseID
+			case model.DeploymentActionRollback:
+				skip = tg.LastHealthyReleaseID != "" && tg.CurrentReleaseID == tg.LastHealthyReleaseID
+				reason = "current release is already the last healthy release"
+			}
+			if skip {
+				return s.skipTarget(ctx, op, feature, t, reason), nil
+			}
+		}
+	}
+
 	// Plan task-backed steps lazily so a failure never leaves dangling steps.
 	plan := []string{op.Action}
 	if op.Action == model.DeploymentActionUpdate && feature.BackupMode != "" && feature.BackupMode != "none" {
@@ -281,7 +321,8 @@ func (s *DeploymentScheduler) executeTarget(ctx context.Context, op *model.Deplo
 	}
 	healthAction := op.Action == model.DeploymentActionInstall ||
 		op.Action == model.DeploymentActionUpdate ||
-		op.Action == model.DeploymentActionRollback
+		op.Action == model.DeploymentActionRollback ||
+		op.Action == model.DeploymentActionRestore
 
 	for _, stepType := range plan {
 		// Command IDs come from the fixed action→command mapping; the
@@ -384,6 +425,8 @@ func commandForAction(action string) string {
 		return "deployment.rollback"
 	case model.DeploymentActionHealthCheck, "health-check":
 		return "deployment.health-check"
+	case model.DeploymentActionRestore:
+		return "deployment.restore"
 	}
 	return ""
 }
@@ -458,6 +501,17 @@ func (s *DeploymentScheduler) taskArguments(ctx context.Context, op *model.Deplo
 	}
 	if release != nil {
 		args["release_version"] = release.Version
+	}
+	if op.Action == model.DeploymentActionRestore {
+		if op.BackupID != "" {
+			if b, err := s.store.DeploymentBackupByID(ctx, op.BackupID); err == nil {
+				args["backup_id"] = b.ID
+				args["backup_object_key"] = b.ObjectKey
+				args["backup_sha256"] = b.SHA256
+				args["backup_size"] = b.Size
+			}
+		}
+		args["force_delete"] = op.ForceDelete
 	}
 	refs := s.secretRefs(ctx, op.FeatureID, t.NodeID)
 	refsHash := canonicalSecretRefsHash(refs)

@@ -246,8 +246,10 @@ func TestCreateOperationValidation(t *testing.T) {
 	}
 
 	// production requires a non-empty reason
+	noReason := base
+	noReason.Reason = ""
 	cfg.AppEnv = "production"
-	if _, err := svc.CreateOperation(ctx, "admin-1", withTargets(base)); !errors.Is(err, ErrBadRequest) {
+	if _, err := svc.CreateOperation(ctx, "admin-1", noReason); !errors.Is(err, ErrBadRequest) {
 		t.Fatalf("production without reason: got %v, want ErrBadRequest", err)
 	}
 	cfg.AppEnv = "test"
@@ -261,8 +263,10 @@ func TestCreateOperationValidation(t *testing.T) {
 	if _, err := svc.CreateOperation(ctx, "admin-1", withTargets(base, "t-missing")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing target: got %v, want ErrNotFound", err)
 	}
-	if _, err := svc.CreateOperation(ctx, "admin-1", withTargets(base)); !errors.Is(err, ErrBadRequest) {
-		t.Fatalf("empty targets: got %v, want ErrBadRequest", err)
+	// 空 target_ids = 全部已启用 Target（"全部"语义）；feature 无启用 Target 时报错
+	seedDeployFeature(t, ctx, st, "f-empty", "empty", "none", "none")
+	if _, err := svc.CreateOperation(ctx, "admin-1", withFeature(withTargets(base), "f-empty")); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("no enabled targets: got %v, want ErrBadRequest", err)
 	}
 
 	if _, err := svc.CreateOperation(ctx, "admin-1", base); err != nil {

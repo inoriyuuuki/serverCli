@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"servercli/internal/model"
@@ -18,7 +19,13 @@ type CreateOperationInput struct {
 	FeatureID string   `json:"feature_id"`
 	ReleaseID string   `json:"release_id"`
 	TargetIDs []string `json:"target_ids"`
-	Reason    string   `json:"reason"`
+	// 批量筛选：target_ids 为空时使用"该 Feature 下全部已启用的 Target"
+	// （可再用 NodeID 收窄到某台服务器）。
+	NodeID string `json:"node_id,omitempty"`
+	// restore 专用：使用的备份记录；force_delete=true 时允许先删除目标已有数据。
+	BackupID    string `json:"backup_id,omitempty"`
+	ForceDelete bool   `json:"force_delete,omitempty"`
+	Reason      string `json:"reason"`
 }
 
 // OperationDetail is the full view of an operation: its targets and steps.
@@ -32,7 +39,7 @@ type OperationDetail struct {
 // final state and must not be re-processed by the scheduler.
 func isOperationTargetTerminal(status string) bool {
 	switch status {
-	case model.DeploymentStatusSucceeded, model.DeploymentStatusFailed,
+	case model.DeploymentStatusSucceeded, model.DeploymentStatusFailed, model.DeploymentStatusSkipped,
 		model.DeploymentStatusCancelled, model.DeploymentStatusRolledBack,
 		model.DeploymentStatusRollbackFailed:
 		return true
@@ -48,7 +55,7 @@ func (s *DeploymentService) CreateOperation(ctx context.Context, actorID string,
 	switch in.Action {
 	case model.DeploymentActionInstall, model.DeploymentActionUpdate,
 		model.DeploymentActionBackup, model.DeploymentActionRollback,
-		model.DeploymentActionHealthCheck:
+		model.DeploymentActionHealthCheck, model.DeploymentActionRestore:
 	default:
 		return nil, ErrBadRequest
 	}
@@ -63,8 +70,8 @@ func (s *DeploymentService) CreateOperation(ctx context.Context, actorID string,
 	if requiresRelease && in.ReleaseID == "" {
 		return nil, ErrBadRequest
 	}
-	if len(in.TargetIDs) == 0 {
-		return nil, ErrBadRequest
+	if in.Action == model.DeploymentActionRestore && in.BackupID == "" {
+		return nil, fmt.Errorf("%w: backup_id is required for restore", ErrBadRequest)
 	}
 	// Reasons are redacted before they reach the database or audit trail.
 	reason := secret.NewRedactor().RedactString(in.Reason)
@@ -93,18 +100,60 @@ func (s *DeploymentService) CreateOperation(ctx context.Context, actorID string,
 		}
 	}
 
-	// Deduplicate target IDs while preserving order.
-	seen := map[string]bool{}
+	// 目标解析：显式 target_ids 优先；为空时 = 该 Feature 下全部已启用 Target
+	// （"全部"= 已关联到服务器的 Target；可用 NodeID 收窄到单台服务器）。
 	targetIDs := make([]string, 0, len(in.TargetIDs))
-	for _, tid := range in.TargetIDs {
-		if tid == "" || seen[tid] {
-			continue
+	if len(in.TargetIDs) == 0 {
+		tgs, err := s.store.DeploymentTargetsByFeature(ctx, in.FeatureID)
+		if err != nil {
+			return nil, err
 		}
-		seen[tid] = true
-		targetIDs = append(targetIDs, tid)
+		for _, tg := range tgs {
+			if !tg.Enabled {
+				continue
+			}
+			if in.NodeID != "" && tg.NodeID != in.NodeID {
+				continue
+			}
+			targetIDs = append(targetIDs, tg.ID)
+		}
+		if len(targetIDs) == 0 {
+			return nil, ErrBadRequest
+		}
+	} else {
+		seen := map[string]bool{}
+		for _, tid := range in.TargetIDs {
+			if tid == "" || seen[tid] {
+				continue
+			}
+			seen[tid] = true
+			targetIDs = append(targetIDs, tid)
+		}
 	}
 	if len(targetIDs) == 0 {
 		return nil, ErrBadRequest
+	}
+
+	// Restore 专用校验：备份必须存在、属于该 feature、状态成功且非 none 模式。
+	var restoreBackup *model.DeploymentBackup
+	if in.Action == model.DeploymentActionRestore {
+		b, err := s.store.DeploymentBackupByID(ctx, in.BackupID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, ErrNotFound
+			}
+			return nil, err
+		}
+		if b.FeatureID != in.FeatureID {
+			return nil, ErrBadRequest
+		}
+		if b.Status != model.DeploymentStatusSucceeded {
+			return nil, fmt.Errorf("%w: backup is not in a restorable state (status=%s)", ErrBadRequest, b.Status)
+		}
+		if b.BackupMode == "none" {
+			return nil, fmt.Errorf("%w: feature does not support restore (backup_mode=none)", ErrBadRequest)
+		}
+		restoreBackup = b
 	}
 
 	// Feature-level serialization: at most one active operation per feature.
@@ -132,6 +181,9 @@ func (s *DeploymentService) CreateOperation(ctx context.Context, actorID string,
 		}
 		if !tg.Enabled {
 			return nil, ErrBadRequest
+		}
+		if restoreBackup != nil && restoreBackup.NodeID != tg.NodeID {
+			return nil, fmt.Errorf("%w: backup does not belong to this target's node", ErrBadRequest)
 		}
 		node, err := s.store.NodeByID(ctx, tg.NodeID)
 		if err != nil {
@@ -184,7 +236,9 @@ func (s *DeploymentService) CreateOperation(ctx context.Context, actorID string,
 	// Production installs/updates require explicit confirmation before they
 	// may be claimed by the scheduler.
 	status := model.DeploymentStatusQueued
-	if s.cfg.AppEnv == "production" && (in.Action == model.DeploymentActionInstall || in.Action == model.DeploymentActionUpdate) {
+	if s.cfg.AppEnv == "production" && (in.Action == model.DeploymentActionInstall ||
+		in.Action == model.DeploymentActionUpdate ||
+		in.Action == model.DeploymentActionRestore) {
 		status = model.DeploymentStatusAwaitingConfirmation
 	}
 	op := &model.DeploymentOperation{
@@ -198,6 +252,8 @@ func (s *DeploymentService) CreateOperation(ctx context.Context, actorID string,
 		Reason:           reason,
 		EnvironmentID:    envID,
 		FrozenConfigHash: opFrozenConfigHash,
+		BackupID:         in.BackupID,
+		ForceDelete:      in.ForceDelete,
 		CreatedAt:        now,
 	}
 	steps := make([]*model.DeploymentStep, 0, len(opTargets))
@@ -272,6 +328,54 @@ func (s *DeploymentService) frozenSecretHash(ctx context.Context, featureID, nod
 		}
 	}
 	return canonicalSecretRefsHash(refs), nil
+}
+
+// RunBackupsForNode creates one backup operation per feature that has at
+// least one enabled target on nodeID (or across all nodes when nodeID is
+// empty). It is the per-server backup entry point for external schedulers.
+// Returns the created operations (already queued).
+func (s *DeploymentService) RunBackupsForNode(ctx context.Context, actorID, nodeID, featureID string) ([]*model.DeploymentOperation, error) {
+	var targets []*model.DeploymentTarget
+	var err error
+	if featureID != "" {
+		targets, err = s.store.DeploymentTargetsByFeature(ctx, featureID)
+	} else {
+		targets, err = s.store.ListDeploymentTargets(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	byFeature := map[string][]string{}
+	order := []string{}
+	for _, tg := range targets {
+		if !tg.Enabled {
+			continue
+		}
+		if nodeID != "" && tg.NodeID != nodeID {
+			continue
+		}
+		if _, ok := byFeature[tg.FeatureID]; !ok {
+			order = append(order, tg.FeatureID)
+		}
+		byFeature[tg.FeatureID] = append(byFeature[tg.FeatureID], tg.ID)
+	}
+	if len(order) == 0 {
+		return nil, ErrNotFound
+	}
+	var created []*model.DeploymentOperation
+	for _, fid := range order {
+		op, err := s.CreateOperation(ctx, actorID, CreateOperationInput{
+			Action:    model.DeploymentActionBackup,
+			FeatureID: fid,
+			TargetIDs: byFeature[fid],
+			Reason:    "scheduled/per-server backup",
+		})
+		if err != nil {
+			return created, err
+		}
+		created = append(created, op)
+	}
+	return created, nil
 }
 
 // ListOperations returns operations newest first; limit<=0 defaults to 100.
