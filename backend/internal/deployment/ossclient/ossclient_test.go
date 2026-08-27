@@ -3,6 +3,9 @@ package ossclient
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -709,3 +712,75 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+
+// TestListObjectsSignatureMatchesSpecReference independently rebuilds the OSS
+// V1 StringToSign for the exact ListObjects call used by the OSS Profile
+// connection test (bucket + prefix + delimiter="/", list-type=2) and compares
+// the Authorization header produced by the client against the spec reference.
+// It deliberately avoids reusing the client's own helpers so a regression in
+// canonicalizedQuery/canonicalizedResource cannot hide.
+func TestListObjectsSignatureMatchesSpecReference(t *testing.T) {
+	var got *http.Request
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r.Clone(r.Context())
+		return &http.Response{
+			StatusCode: 200,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`)),
+		}, nil
+	})
+	const (
+		ak = "LTAI-test-access-key-00000000"
+		sk = "test-access-key-secret-0000000000000000"
+	)
+	c, err := New("https://oss-cn-hangzhou.aliyuncs.com", Credentials{AccessKeyID: ak, AccessKeySecret: sk},
+		WithHTTPClient(&http.Client{Transport: rt}))
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	if _, err := c.ListObjects(context.Background(), "my-bucket", "deployment-repository/", "/"); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if got == nil {
+		t.Fatal("no request captured")
+	}
+	if got.Host != "my-bucket.oss-cn-hangzhou.aliyuncs.com" {
+		t.Fatalf("host = %q, want virtual-hosted", got.Host)
+	}
+
+	// 独立参考实现：按 OSS V1 规范重建 StringToSign。
+	// canonicalized resource = /bucket/?子资源（按名排序，值不 URL 编码）
+	q := got.URL.Query() // Go 已解码
+	keys := []string{"delimiter", "list-type", "max-keys", "prefix"}
+	var canon strings.Builder
+	canon.WriteString("/my-bucket/")
+	canon.WriteByte('?') // 子资源前必须有 ?
+	first := true
+	for _, k := range keys {
+		if !q.Has(k) {
+			continue
+		}
+		if !first {
+			canon.WriteByte('&')
+		}
+		first = false
+		canon.WriteString(k)
+		canon.WriteByte('=')
+		canon.WriteString(q.Get(k)) // 原始（未编码）值
+	}
+	sts := got.Method + "\n" +
+		got.Header.Get("Content-MD5") + "\n" +
+		got.Header.Get("Content-Type") + "\n" +
+		got.Header.Get("Date") + "\n" +
+		"" + // 无 x-oss-* 头
+		canon.String()
+
+	mac := hmac.New(sha1.New, []byte(sk))
+	mac.Write([]byte(sts))
+	wantSig := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	wantAuth := "OSS " + ak + ":" + wantSig
+
+	if got.Header.Get("Authorization") != wantAuth {
+		t.Errorf("Authorization mismatch\n got: %s\nwant: %s\nStringToSign:\n%q", got.Header.Get("Authorization"), wantAuth, sts)
+	}
+}
