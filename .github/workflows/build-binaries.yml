@@ -201,6 +201,9 @@ jobs:
           cp -R commands "${ROOT}/commands"
           cp -R scripts "${ROOT}/scripts"
           cp -R deploy/environments deploy/systemd "${ROOT}/deploy/"
+          # 部署管理种子目录（Feature/Release/配置模板），控制面 RepositorySync 用它
+          # 填充 OSS 部署仓库；漏打包会导致主控本地 seed 为空、features/releases 无法上传。
+          cp -R deploy/deployment "${ROOT}/deploy/deployment"
           cp deploy/servercli-lease-shell.sh "${ROOT}/deploy/"
           cp start.sh check.sh README.md "${ROOT}/"
           printf '%s\n' "${VERSION}" > "${ROOT}/VERSION"
