@@ -130,16 +130,20 @@ backups/<environment>/<feature>/<node_id>/<yyyy>/<mm>/<dd>/<operation_id>/
 created
   → repository_syncing
   → repository_verified
-  → xray_installing
-  → proxy_checking
-  → proxy_ready
-  → agent_downloading
+  → agent_downloading        # Agent 从公开 OSS 桶 inori-image 下载（不经过 xray）
   → agent_verifying
   → agent_installing
+  → (xray_installing → proxy_checking → proxy_ready)   # 业务服务需访问 GitHub 时启用
   → enrollment_pending
   → node_online
   → completed
 ```
+> 说明：V1 首次引导的 **ServerCLI Agent 制品不再经 xray 访问 GitHub 获取**。GitHub
+> Actions 构建完成后将制品上传到公开读的 OSS 桶 `inori-image`（对象
+> `servercli/<tag>/servercli-<tag>-linux-<arch>.tar.gz` + `sha256sums.txt`），
+> 节点在控制面模式下从该桶经 HTTPS 下载并做 SHA-256 校验后安装到
+> `/usr/local/bin/servercli-node-agent`。xray 安装/探活仅保留给**业务服务**访问
+> GitHub 等外网资源时使用（可选阶段）。
 
 失败终态（不可自动恢复，需人工处理）：
 

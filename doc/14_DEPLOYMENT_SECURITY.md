@@ -74,6 +74,12 @@
 2. 仓库级 Manifest（`manifests/repository-manifest.json`）逐对象记录 sha256 + 签名；节点同步后必须按 Manifest 校验，任何对象不匹配即整体失败（`signature_failed`）。
 3. 校验在**执行前**完成（`download` → `verify` → `unpack` 步骤顺序固定）；校验失败禁止进入 install/update。
 4. 签名验证密钥来自独立信任根，不得与同步凭证同源。
+5. **Node Agent 首装制品的获取与校验**：Agent 制品由 GitHub Actions 构建后上传到
+   公开读 OSS 桶 `inori-image`（`servercli/<tag>/servercli-<tag>-linux-<arch>.tar.gz`
+   + `sha256sums.txt`），节点在首次引导时经 HTTPS 从该桶下载，并按同桶
+   `sha256sums.txt` 做 SHA-256 校验后安装（与 GitHub Release 流程的校验强度一致；
+   Agent 制品的独立签名随 CI 签名体系一并纳入，V1 与 Release 流程对齐，见
+   doc/16「V1 签名与凭证债务」）。**该流程不经过 xray，不访问 GitHub**。
 
 ## 8. 解压安全检查（强制）
 
