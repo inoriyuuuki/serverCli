@@ -183,20 +183,20 @@ func (r *DeploymentRunner) Run(ctx context.Context, task *TaskPayload) (*Result,
 // is accepted (scheduler compatibility, used for release location and the
 // rendered runtime-config); secret body/credentials are never accepted.
 var deploymentArgFields = map[string]bool{
-	"operation_id":       true,
-	"target_id":          true,
-	"node_id":            true,
-	"feature_key":        true,
-	"release_id":         true,
-	"config_hash":        true,
-	"secret_refs":        true,
-	"release_version":    true,
-	"environment_id":     true,
-	"backup_id":          true,
-	"backup_object_key":  true,
-	"backup_sha256":      true,
-	"backup_size":        true,
-	"force_delete":       true,
+	"operation_id":      true,
+	"target_id":         true,
+	"node_id":           true,
+	"feature_key":       true,
+	"release_id":        true,
+	"config_hash":       true,
+	"secret_refs":       true,
+	"release_version":   true,
+	"environment_id":    true,
+	"backup_id":         true,
+	"backup_object_key": true,
+	"backup_sha256":     true,
+	"backup_size":       true,
+	"force_delete":      true,
 }
 
 type deploymentSecretRef struct {
@@ -1211,7 +1211,12 @@ func (r *DeploymentRunner) runHealthCheck(ctx context.Context, args *deploymentA
 		"--feature-key", args.FeatureKey,
 		"--node-id", args.NodeID,
 		"--rendered-dir", renderedDir,
-		"--port", "",
+	}
+	// 仅当渲染配置声明 service_port 时传 --port：无端口的基础 feature
+	// （如 docker-prerequisite）hook 不接受 --port，缺省省略即可。
+	// 有端口的 feature 由控制面二次 HTTP 探活兜底，节点侧同时做真实探测。
+	if port := readConfigString(filepath.Join(renderedDir, "runtime-config.yaml"), "service_port"); port != "" && port != "0" {
+		argv = append(argv, "--port", port)
 	}
 	exitCode, stdout, stderr, err := r.runHook(ctx, hookRel, renderedDir, argv)
 	if err != nil {
@@ -1427,11 +1432,11 @@ func (r *DeploymentRunner) runRestore(ctx context.Context, args *deploymentArgs)
 		return deployFailure("STAGING_CREATE_FAILED", err.Error()), nil
 	}
 	extErr := repo.ExtractTarGzip(ctx, bf, extracted, repo.Limits{
-		MaxFiles:          5000,
-		MaxTotalBytes:     2 << 30,
+		MaxFiles:           5000,
+		MaxTotalBytes:      2 << 30,
 		MaxSingleFileBytes: 1 << 30,
-		MaxPathLen:        1024,
-		AllowedRoot:       extracted,
+		MaxPathLen:         1024,
+		AllowedRoot:        extracted,
 	})
 	bf.Close()
 	if extErr != nil {
