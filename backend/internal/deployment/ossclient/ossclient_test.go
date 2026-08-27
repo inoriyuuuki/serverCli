@@ -81,16 +81,13 @@ func canonicalizedResourceFromRequest(r *http.Request) string {
 	if idx >= 0 {
 		bucket, rest = trimmed[:idx], trimmed[idx+1:]
 	}
-	if rest == "" {
-		cr := "/" + bucket + "/"
-		if len(r.URL.Query()) > 0 {
-			cr += "?" + canonicalizedQuery(r.URL.Query())
-		}
-		return cr
+	cr := "/" + bucket + "/"
+	if rest != "" {
+		cr += rest
 	}
-	cr := "/" + bucket + "/" + rest
-	if len(r.URL.Query()) > 0 {
-		cr += "?" + canonicalizedQuery(r.URL.Query())
+	// OSS V1 签名：仅签名子资源参与；列表参数（prefix/delimiter/...）不参与
+	if sub := signedSubResourceQuery(r.URL.Query()); sub != "" {
+		cr += "?" + sub
 	}
 	return cr
 }
@@ -749,31 +746,21 @@ func TestListObjectsSignatureMatchesSpecReference(t *testing.T) {
 	}
 
 	// 独立参考实现：按 OSS V1 规范重建 StringToSign。
-	// canonicalized resource = /bucket/?子资源（按名排序，值不 URL 编码）
-	q := got.URL.Query() // Go 已解码
-	keys := []string{"delimiter", "list-type", "max-keys", "prefix"}
-	var canon strings.Builder
-	canon.WriteString("/my-bucket/")
-	canon.WriteByte('?') // 子资源前必须有 ?
-	first := true
-	for _, k := range keys {
-		if !q.Has(k) {
-			continue
-		}
-		if !first {
-			canon.WriteByte('&')
-		}
-		first = false
-		canon.WriteString(k)
-		canon.WriteByte('=')
-		canon.WriteString(q.Get(k)) // 原始（未编码）值
+	// canonicalized resource = /bucket/[object][?签名子资源]。列表类查询参数
+	// （prefix/delimiter/marker/max-keys/list-type/continuation-token 等）不是
+	// OSS 签名子资源，**不参与签名**（实测：OSS 返回的期望 StringToSign 只含
+	// "/inori-tools/"）。本请求无签名子资源，故 canonicalized resource 恒为
+	// /my-bucket/。
+	canon := "/my-bucket/"
+	if sub := signedSubResourceQuery(got.URL.Query()); sub != "" {
+		canon += "?" + sub
 	}
 	sts := got.Method + "\n" +
 		got.Header.Get("Content-MD5") + "\n" +
 		got.Header.Get("Content-Type") + "\n" +
 		got.Header.Get("Date") + "\n" +
 		"" + // 无 x-oss-* 头
-		canon.String()
+		canon
 
 	mac := hmac.New(sha1.New, []byte(sk))
 	mac.Write([]byte(sts))
