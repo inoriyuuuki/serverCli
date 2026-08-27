@@ -13,8 +13,9 @@
 #   5) （控制面模式）上报引导状态；经 materialize 获取 HMAC-SHA256 签名密钥，
 #      校验 repository-manifest.json 的签名；密钥落
 #      .servercli-local/credentials/deploy-signing.key（0600，目录 0700）
-#   6) （控制面模式）从公开 OSS 桶 inori-image 下载 ServerCLI Agent 制品
-#      （GitHub Actions 构建后上传，节点直连桶、不经 xray 访问 GitHub），
+#   6) （控制面模式）从公开 OSS 桶 inori-image 下载最新 ServerCLI Agent 制品
+#      （对象固定名 servercli/latest/servercli-latest-linux-<arch>.tar.gz，
+#      GitHub Actions 构建后上传，节点直连桶、不经 xray 访问 GitHub），
 #      SHA-256 校验后安装到 /usr/local/bin/servercli-node-agent
 #   7) 仅输出 Bucket/Prefix/对象数/下载状态/hash，绝不打印凭证与 Secret 正文
 #
@@ -37,7 +38,7 @@
 #         --control-plane-url https://<master>:9043 \
 #         [--agent-bucket inori-image] \
 #         [--oss-public-endpoint oss-cn-hangzhou.aliyuncs.com] \
-#         [--agent-version <固定版本，默认取主控 /version>] \
+#         [--agent-version <信息性：记录安装版本，默认取主控 /version；下载始终用 latest>] \
 #         [--region cn-hangzhou] \
 #         [--endpoint https://oss-cn-hangzhou-internal.aliyuncs.com] \
 #         [--repo-dir /opt/servercli-deployment/repository]
@@ -69,7 +70,9 @@ CONTROL_PLANE_URL=""
 SESSION_ID=""
 SESSION_TOKEN=""
 # Agent 制品获取：公开 OSS 桶（GitHub Actions 构建后上传，节点直连桶下载，
-# 不再经 xray 访问 GitHub）。版本默认取主控 /version，可 --agent-version 固定。
+# 不再经 xray 访问 GitHub）。对象名固定为 servercli/latest/servercli-latest-
+# linux-<arch>.tar.gz（不区分版本号），始终下载最新；--agent-version 仅作
+# 信息性记录（默认取主控 /version）。
 AGENT_BUCKET="inori-image"
 OSS_PUBLIC_ENDPOINT="oss-cn-hangzhou.aliyuncs.com"
 AGENT_VERSION=""
@@ -402,16 +405,11 @@ if [[ "$CP_MODE" -eq 1 ]]; then
     exit 1
   fi
 
-  # 版本：--agent-version 优先，否则查询主控 /version
+  # 版本（信息性）：--agent-version 优先，否则查询主控 /version 仅用于日志/状态
   if [[ -z "$AGENT_VERSION" ]]; then
-    VER_JSON="$(curl -fsS --max-time 15 "$CONTROL_PLANE_URL/version" 2>/dev/null)" || {
-      report_state "agent_download_failed" "查询主控版本失败"
-      echo "[bootstrap] FAIL: 无法从主控 /version 获取版本（可改用 --agent-version 固定）" >&2
-      exit 1
-    }
-    AGENT_VERSION="$(printf '%s' "$VER_JSON" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    AGENT_VERSION="$(curl -fsS --max-time 15 "$CONTROL_PLANE_URL/version" 2>/dev/null | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
   fi
-  [[ -n "$AGENT_VERSION" ]] || { report_state "agent_download_failed" "Agent 版本为空"; echo "[bootstrap] FAIL: Agent 版本为空" >&2; exit 1; }
+  [[ -n "$AGENT_VERSION" ]] || AGENT_VERSION="latest"
 
   # 架构（V1 支持 linux amd64/arm64）
   case "$(uname -m)" in
@@ -420,10 +418,11 @@ if [[ "$CP_MODE" -eq 1 ]]; then
     *) report_state "agent_download_failed" "不支持的架构 $(uname -m)"; echo "[bootstrap] FAIL: 不支持架构 $(uname -m)（V1 仅 amd64/arm64）" >&2; exit 1 ;;
   esac
 
-  AGENT_BASE="https://${AGENT_BUCKET}.${PUB_HOST}/servercli/${AGENT_VERSION}"
-  AGENT_TGZ="${AGENT_BASE}/servercli-${AGENT_VERSION}-linux-${AGENT_ARCH}.tar.gz"
+  # 固定 latest 命名（不区分版本号）：始终下载 servercli/latest/ 下最新制品
+  AGENT_BASE="https://${AGENT_BUCKET}.${PUB_HOST}/servercli/latest"
+  AGENT_TGZ="${AGENT_BASE}/servercli-latest-linux-${AGENT_ARCH}.tar.gz"
   AGENT_SHA_URL="${AGENT_BASE}/sha256sums.txt"
-  echo "[bootstrap] 下载 Agent: ${AGENT_TGZ}"
+  echo "[bootstrap] 下载 Agent（latest）: ${AGENT_TGZ}（版本 ${AGENT_VERSION}）"
 
   if ! curl -fsSL --retry 3 --retry-delay 3 --max-time 300 -o "$TMPDIR_SEC/agent.tar.gz" "$AGENT_TGZ"; then
     report_state "agent_download_failed" "Agent 制品下载失败"
@@ -437,9 +436,9 @@ if [[ "$CP_MODE" -eq 1 ]]; then
   fi
 
   report_state "agent_verifying" "校验 Agent 制品 SHA-256"
-  # 直接比对哈希（与本地下载文件名解耦：sha256sums.txt 中的条目按原始制品名
-  # 记录，而本地下载文件名为 agent.tar.gz）
-  EXPECTED_SHA="$(awk -v f="servercli-${AGENT_VERSION}-linux-${AGENT_ARCH}.tar.gz" '$2==f || $2=="*"f {print $1}' "$TMPDIR_SEC/sha256sums.txt" | head -1)"
+  # 直接比对哈希（与本地下载文件名解耦：sha256sums.txt 中的条目按制品名
+  # servercli-latest-linux-<arch>.tar.gz 记录，而本地下载文件名为 agent.tar.gz）
+  EXPECTED_SHA="$(awk -v f="servercli-latest-linux-${AGENT_ARCH}.tar.gz" '$2==f || $2=="*"f {print $1}' "$TMPDIR_SEC/sha256sums.txt" | head -1)"
   ACTUAL_SHA="$(sha256sum "$TMPDIR_SEC/agent.tar.gz" | awk '{print $1}')"
   if [[ -z "$EXPECTED_SHA" || "$EXPECTED_SHA" != "$ACTUAL_SHA" ]]; then
     report_state "agent_verify_failed" "Agent 制品 SHA-256 校验失败"

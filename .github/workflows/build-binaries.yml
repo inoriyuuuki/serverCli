@@ -332,9 +332,16 @@ jobs:
           ossutil --version
           ossutil config -e "$OSS_ENDPOINT" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" -c /tmp/ossutil.conf
           cd dist
-          prefix="oss://${OSS_BUCKET}/servercli/${TAG}/"
-          for f in *.tar.gz sha256sums.txt; do
+          # 固定 latest 命名（不区分版本号）：servercli-latest-linux-<arch>.tar.gz
+          for f in servercli-*-linux-*.tar.gz; do
+            [ -e "$f" ] || continue
+            arch="${f##*-linux-}"; arch="${arch%.tar.gz}"
+            mv -f "$f" "servercli-latest-linux-${arch}.tar.gz"
+          done
+          sha256sum servercli-latest-*.tar.gz > sha256sums.txt
+          prefix="oss://${OSS_BUCKET}/servercli/latest/"
+          for f in servercli-latest-*.tar.gz sha256sums.txt; do
             echo "upload: ${prefix}${f}"
             ossutil cp -c /tmp/ossutil.conf -f "${f}" "${prefix}${f}"
           done
-          echo "已上传: ${prefix}（公开读，供首次引导下载 Agent）"
+          echo "已上传: ${prefix}（公开读，供首次引导下载最新 Agent，不区分版本号）"

@@ -139,11 +139,11 @@ created
   → completed
 ```
 > 说明：V1 首次引导的 **ServerCLI Agent 制品不再经 xray 访问 GitHub 获取**。GitHub
-> Actions 构建完成后将制品上传到公开读的 OSS 桶 `inori-image`（对象
-> `servercli/<tag>/servercli-<tag>-linux-<arch>.tar.gz` + `sha256sums.txt`），
-> 节点在控制面模式下从该桶经 HTTPS 下载并做 SHA-256 校验后安装到
-> `/usr/local/bin/servercli-node-agent`。xray 安装/探活仅保留给**业务服务**访问
-> GitHub 等外网资源时使用（可选阶段）。
+> Actions 构建完成后将制品上传到公开读的 OSS 桶 `inori-image`，对象名**固定为
+> `servercli/latest/servercli-latest-linux-<arch>.tar.gz` + `sha256sums.txt`
+> （不区分版本号，始终指向最新构建）**；节点在控制面模式下从该桶经 HTTPS
+> 下载并做 SHA-256 校验后安装到 `/usr/local/bin/servercli-node-agent`。
+> xray 安装/探活仅保留给**业务服务**访问 GitHub 等外网资源时使用（可选阶段）。
 
 失败终态（不可自动恢复，需人工处理）：
 
