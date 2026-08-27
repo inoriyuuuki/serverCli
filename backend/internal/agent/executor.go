@@ -445,6 +445,15 @@ func minimalEnv() []string {
 	if path == "" {
 		path = "/usr/bin:/bin:/usr/local/bin"
 	}
+	// 父进程可能经 sudo -u 启动（secure_path 常为
+	// /sbin:/bin:/usr/sbin:/usr/bin，不含 /usr/local/bin），而部署 hook
+	// 依赖 /usr/local/bin 下的 docker/compose 等工具。这里无条件补齐
+	// 常用本地二进制目录，避免 command -v docker 误判未安装。
+	for _, extra := range []string{"/usr/local/bin", "/usr/local/sbin", "/usr/sbin"} {
+		if !strings.Contains(path, extra) {
+			path = extra + ":" + path
+		}
+	}
 	return []string{"PATH=" + path, "LANG=C.UTF-8", "TMPDIR=" + os.TempDir()}
 }
 

@@ -16,7 +16,8 @@ image_tag: docker 28.0.0
 restart_policy: unless-stopped
 # docker 静态包版本
 docker_version: 28.0.0
-# docker 静态包下载基址（占位）
-download_base_url: xxx-placeholder-xxx
-# 下载代理（如 http://127.0.0.1:10809）
-download_proxy: 
+# docker 静态包下载基址（公开 OSS 桶 inori-image；对象名固定为
+# docker-<version>.tgz 与 docker-compose-linux-x86_64，上传后即可供新节点安装）
+download_base_url: https://inori-image.oss-cn-hangzhou.aliyuncs.com
+# 下载代理（如 http://127.0.0.1:10809；留空表示直连公开桶，无需代理）
+download_proxy: ""

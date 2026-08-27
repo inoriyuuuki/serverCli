@@ -100,7 +100,9 @@ while [ $# -gt 0 ]; do
             val="$1"
             shift
           fi
-          if ! printf '%s' "$val" | grep -Eq "$VALUE_RE"; then
+          # printf '%s\n'（带换行）让空值成为空行，从而匹配 VALUE_RE 的 *；
+          # 若用 '%s' 空值无换行，grep 读 0 行会误判不匹配。
+          if ! printf '%s\n' "$val" | grep -Eq "$VALUE_RE"; then
             deny "invalid value for $key (allowed: [A-Za-z0-9._:/+=-])"
           fi
           if [ "$key" = "--rendered-dir" ]; then
@@ -111,7 +113,8 @@ while [ $# -gt 0 ]; do
             esac
             RENDERED_DIR="$val"
           fi
-          RUN_ARGS+=("$key=$val")
+          # 以空格对形式传给 hook（seed hooks 用 `--key) shift 2` 解析）
+          RUN_ARGS+=("$key" "$val")
           ;;
         *)
           deny "unknown option: $arg"
@@ -128,10 +131,13 @@ done
 #    回滚使用 --previous-release-dir（hook 位于上一 release 目录）
 if [ -z "$RENDERED_DIR" ]; then
   _prev=""
-  for _a in "${RUN_ARGS[@]}"; do
-    case "$_a" in
-      --previous-release-dir=*) _prev="${_a#*=}" ;;
-    esac
+  _i=0
+  while [ "$_i" -lt "${#RUN_ARGS[@]}" ]; do
+    if [ "${RUN_ARGS[$_i]}" = "--previous-release-dir" ]; then
+      _prev="${RUN_ARGS[$((_i+1))]:-}"
+      break
+    fi
+    _i=$((_i+2))
   done
   [ -n "$_prev" ] || deny "missing required --rendered-dir (or --previous-release-dir for rollback)"
   RENDERED_DIR="$_prev"
