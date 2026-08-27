@@ -1442,6 +1442,54 @@ func (s *DeploymentService) DeleteSecretReference(ctx context.Context, actorID, 
 // local 0600 file (atomic temp+rename), uploads the object to the primary OSS
 // profile, and bumps the reference metadata. The request body value never
 // enters logs, audit events or error messages.
+// GetSecretValue returns the current plaintext secret content for a reference.
+//
+// 策略说明（操作员决定放宽）：需求 V1 原文要求"Secret 内容不得通过 API GET 返回前端、
+// UI 只允许覆盖、旧值不回显"。应操作员要求放宽为"可回显可编辑"，本方法仍保留安全底线：
+//   - 仅 admin 会话可调用（requireAdmin）；
+//   - 响应设置 Cache-Control: no-store，不写日志；
+//   - 每次查看落审计 deployment.secret.view（不含内容）；
+//   - 只读取控制面本地镜像（DeploymentRootDir/repository/secrets/...），按 ref hash 校验，
+//     镜像与 OSS 不一致时报错要求先同步。
+func (s *DeploymentService) GetSecretValue(ctx context.Context, id string) (string, error) {
+	ref, err := s.store.DeploymentSecretReferenceByID(ctx, id)
+	if err != nil {
+		return "", mapStoreErr(err)
+	}
+	featureKey := ""
+	if ref.ScopeType == model.SecretScopeNode {
+		feature, ferr := s.store.DeploymentFeatureByID(ctx, ref.FeatureID)
+		if ferr != nil {
+			return "", mapStoreErr(ferr)
+		}
+		featureKey = feature.FeatureKey
+	}
+	objectKey, err := secretObjectKey(ref, featureKey)
+	if err != nil {
+		return "", err
+	}
+	rel := strings.TrimPrefix(objectKey, deploymentRepositoryPrefix)
+	if err := repo.ValidateRelPath(rel); err != nil {
+		return "", fmt.Errorf("%w: secret object key invalid", ErrBadRequest)
+	}
+	localPath := filepath.Join(s.cfg.DeploymentRootDir, repo.RepoDirRepository, filepath.FromSlash(rel))
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		return "", fmt.Errorf("deployment: secret mirror not available locally (%v); run repository sync or overwrite the secret", err)
+	}
+	if len(data) > 1<<20 {
+		return "", fmt.Errorf("deployment: secret file exceeds the 1MiB limit")
+	}
+	actualHash := sha256Hex(data)
+	if ref.ContentHash != "" && !strings.EqualFold(actualHash, ref.ContentHash) {
+		return "", fmt.Errorf("deployment: secret mirror hash mismatch with DB reference; run repository sync or overwrite the secret")
+	}
+	s.auditDeployment(ctx, model.ActorAdmin, "", "deployment.secret.view", ResultSuccess, map[string]any{
+		"secret_reference_id": ref.ID, "feature_key": featureKey, "action": "deployment.secret.view", "result": ResultSuccess,
+	})
+	return string(data), nil
+}
+
 func (s *DeploymentService) OverwriteSecret(ctx context.Context, actorID, id string, in OverwriteSecretInput) (*model.DeploymentSecretReference, error) {
 	ref, err := s.store.DeploymentSecretReferenceByID(ctx, id)
 	if err != nil {

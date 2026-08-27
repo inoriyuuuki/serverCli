@@ -29,6 +29,7 @@ import type {
   OSSTestResponse,
   RepositorySyncResponse,
   SecretReferenceCreate,
+  SecretValueResponse,
 } from './types';
 
 /** 统一的 apiFetch 封装（等价于 client.ts 导出的 request，保持契约写法一致）。 */
@@ -212,6 +213,14 @@ export function deleteTarget(id: string): Promise<unknown> {
 
 export function listSecretReferences(): Promise<DeploymentSecretReferenceListResponse> {
   return apiFetch('/deployments/secrets/references');
+}
+
+/**
+ * 读取 Secret 明文（策略放宽：仅 admin 会话；响应 no-store；每次查看落审计，不含内容）。
+ * 用于「查看/编辑」场景；前端不缓存该值。
+ */
+export function getSecretValue(id: string): Promise<SecretValueResponse> {
+  return apiFetch(`/deployments/secrets/${encodeURIComponent(id)}/value`, { method: 'GET' });
 }
 
 export function overwriteSecret(id: string, body: OverwriteSecretBody): Promise<DeploymentSecretResponse> {
