@@ -326,7 +326,9 @@ jobs:
           fi
           curl -fsSL -o /tmp/ossutil.zip https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip
           unzip -o /tmp/ossutil.zip -d /tmp/ossutil-bin
-          sudo install -m 0755 /tmp/ossutil-bin/ossutil64 /usr/local/bin/ossutil
+          OSSUTIL_BIN="$(find /tmp/ossutil-bin -type f -name ossutil64 | head -1)"
+          [ -n "$OSSUTIL_BIN" ] || { echo "::error::ossutil64 not found in archive"; exit 1; }
+          sudo install -m 0755 "$OSSUTIL_BIN" /usr/local/bin/ossutil
           ossutil --version
           ossutil config -e "$OSS_ENDPOINT" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" -c /tmp/ossutil.conf
           cd dist
