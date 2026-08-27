@@ -670,3 +670,42 @@ func TestMethodsValidateBeforeRequest(t *testing.T) {
 		t.Errorf("server was called %d times, want 0", calls.Load())
 	}
 }
+
+// TestVirtualHostedAddressing verifies that domain endpoints use virtual-hosted
+// (third-level domain) addressing <bucket>.<endpoint>/<key> as required by OSS
+// (path-style addressing returns SecondLevelDomainForbidden), while loopback
+// (IP) endpoints keep path-style so httptest-based tests still work.
+func TestVirtualHostedAddressing(t *testing.T) {
+	var gotReq *http.Request
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotReq = r.Clone(r.Context())
+		return &http.Response{
+			StatusCode: 200,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`)),
+		}, nil
+	})
+	c, err := New("https://oss-cn-hangzhou.aliyuncs.com", Credentials{AccessKeyID: testAK, AccessKeySecret: testSK}, WithHTTPClient(&http.Client{Transport: rt}))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if _, err := c.ListObjects(context.Background(), "my-bucket", "servercli/", ""); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if gotReq == nil {
+		t.Fatal("no request captured")
+	}
+	// 虚拟主机式：Host=bucket.endpoint，路径不含 bucket
+	if gotReq.Host != "my-bucket.oss-cn-hangzhou.aliyuncs.com" {
+		t.Errorf("Host = %q, want my-bucket.oss-cn-hangzhou.aliyuncs.com", gotReq.Host)
+	}
+	if gotReq.URL.Path != "/" {
+		t.Errorf("URL path = %q, want /", gotReq.URL.Path)
+	}
+}
+
+// roundTripFunc adapts a func to http.RoundTripper.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
