@@ -71,7 +71,20 @@ cfg_image_tag="$(read_cfg image_tag)"
 cfg_digest="$(read_cfg image_digest)"
 [[ -n "$cfg_digest" ]] && IMAGE_TAG="$cfg_digest"
 PORT="${PORT:-$(read_cfg service_port)}"
-PORT="${PORT:-5230}"
+PORT="${PORT:-9018}"   # 默认 9018:5230（旧 init 配置宿主机端口）；共享配置可覆盖
+
+# 数据存储类型：sqlite（默认）或 postgres（外部 PG，DSN 由控制面 Secret 注入）
+DB_TYPE="$(read_cfg db_type)"
+DB_TYPE="${DB_TYPE:-sqlite}"
+# db_dsn 读取顺序：1) rendered/secrets/*.yaml（Runner 物化的 V1 明文 Secret）
+#                  2) config（若控制面选择放普通配置）
+DB_DSN=""
+for _sf in "$RENDERED_DIR"/secrets/*.yaml; do
+  [[ -f "$_sf" ]] || continue
+  _v="$(sed -n "s/^[[:space:]]*db_dsn:[[:space:]]*[\"']\?\([^\"'[:space:]]*\).*/\1/p" "$_sf" | head -n1)"
+  [[ -n "$_v" ]] && DB_DSN="$_v" && break
+done
+[[ -n "$DB_DSN" ]] || DB_DSN="$(read_cfg db_dsn)"
 
 command -v docker >/dev/null 2>&1 || { echo "[install] 缺少 docker，请先安装 docker-prerequisite feature" >&2; exit 1; }
 
@@ -113,26 +126,36 @@ mkdir -p "$RENDERED_DIR"
 
 mkdir -p "$DATA_DIR" "$CONFIG_DIR"
 
-# 渲染 compose.yaml（固定变量模板，无用户任意输入）
+# 渲染 compose.yaml（固定变量模板，无用户任意输入；env 由同目录 .env 注入）
 cat > "$RENDERED_DIR/compose.yaml" <<COMPOSE_EOF
 services:
   memos:
-    image: neosmemo/memos:0.22.5
+    image: ${IMAGE_TAG}
     container_name: sc-memos-${NODE_ID}
     restart: unless-stopped
     ports:
-      - "5230:5230"
+      - "${PORT}:5230"
+    environment:
+      MEMOS_DRIVER: "\${MEMOS_DRIVER}"
+      MEMOS_DSN: "\${MEMOS_DSN}"
     volumes:
       - ${DATA_DIR}:/var/opt/memos
 
 COMPOSE_EOF
 
-# 渲染 .env：config-dir 已放置 .env 则复用；否则生成占位（真实 Secret 由控制面注入）
-if [[ -f "$CONFIG_DIR/.env" ]]; then
+# 渲染 .env：
+#   - postgres：MEMOS_DRIVER=postgres + MEMOS_DSN（Secret/配置注入的真实 DSN）
+#   - sqlite：默认 driver，memos 落库到自身数据目录
+if [[ "$DB_TYPE" == "postgres" && -n "$DB_DSN" ]]; then
+  cat > "$RENDERED_DIR/.env" <<ENV_EOF
+MEMOS_DRIVER=postgres
+MEMOS_DSN=${DB_DSN}
+ENV_EOF
+elif [[ -f "$CONFIG_DIR/.env" ]]; then
   cp -f "$CONFIG_DIR/.env" "$RENDERED_DIR/.env"
 else
   cat > "$RENDERED_DIR/.env" <<'ENV_EOF'
-# 占位 .env（memos）：真实 Secret 由控制面注入
+# 占位 .env（memos）：SQLite 默认存储；真实 Secret 由控制面注入
 # V1 明文存私有 OSS，禁止提交真实值；.example 文件仅含占位键名
 ENV_EOF
 fi
