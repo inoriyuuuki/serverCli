@@ -525,22 +525,44 @@ func (c *Client) buildRequest(ctx context.Context, method, bucket, objectKey, co
 		}
 	}
 
-	u := c.endpoint + "/" + bucket
+	// OSS 要求虚拟主机式（三级域名）寻址 <bucket>.<endpoint>/<key>；路径式
+	// <endpoint>/<bucket>/<key>（二级域名）会被拒绝（SecondLevelDomainForbidden）。
+	// 真实域名 endpoint 一律用虚拟主机式；仅测试/回环（IP/localhost）保留路径式。
+	u, err := url.Parse(c.endpoint)
+	if err != nil {
+		return nil, err
+	}
+	host := u.Hostname()
+	virtualHosted := net.ParseIP(host) == nil && !strings.HasPrefix(strings.ToLower(host), "localhost")
+	if virtualHosted {
+		if p := u.Port(); p != "" {
+			u.Host = bucket + "." + u.Hostname() + ":" + p
+		} else {
+			u.Host = bucket + "." + u.Hostname()
+		}
+	}
 	if objectKey != "" {
-		u += "/" + escapeObjectPath(objectKey)
+		if virtualHosted {
+			u.Path = "/" + escapeObjectPath(objectKey)
+		} else {
+			u.Path = "/" + bucket + "/" + escapeObjectPath(objectKey)
+		}
 	} else {
 		// Bucket-level operation (ListObjects): keep the trailing slash so the
 		// URL path matches the canonicalized resource.
-		u += "/"
+		if virtualHosted {
+			u.Path = "/"
+		} else {
+			u.Path = "/" + bucket + "/"
+		}
 	}
-	if len(query) > 0 {
-		u += "?" + query.Encode()
-	}
+	u.RawQuery = query.Encode()
+	u2 := u.String()
 
 	// Build the request without a body so net/http never sniffs a
 	// Content-Type; the body is attached afterwards so the signature's
 	// Content-Type line stays exactly under our control.
-	req, err := http.NewRequestWithContext(ctx, method, u, nil)
+	req, err := http.NewRequestWithContext(ctx, method, u2, nil)
 	if err != nil {
 		return nil, err
 	}
