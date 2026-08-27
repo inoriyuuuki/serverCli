@@ -580,12 +580,19 @@ func (c *Client) buildRequest(ctx context.Context, method, bucket, objectKey, co
 		req.Header.Set(k, v)
 	}
 
+	// OSS V1 签名：canonicalized resource 只包含真正的"子资源"（sub-resource）
+	// 查询参数（如 ?acl、?uploads、?uploadId、?response-content-* 等）。普通
+	// 列表参数（prefix/delimiter/marker/max-keys/list-type/continuation-token/
+	// encoding-type/fetch-owner/start-after 等）不参与签名——把它们加进去会
+	// 导致 SignatureDoesNotMatch。本客户端当前操作不使用任何签名子资源，
+	// 因此 canonicalized resource 恒为 /bucket/object；仍保留子资源过滤逻辑
+	// 以便未来扩展 multipart 等操作。
 	canonicalizedResource := "/" + bucket + "/" + objectKey
 	if objectKey == "" {
 		canonicalizedResource = "/" + bucket + "/"
 	}
-	if len(query) > 0 {
-		canonicalizedResource += "?" + canonicalizedQuery(query)
+	if sub := signedSubResourceQuery(query); sub != "" {
+		canonicalizedResource += "?" + sub
 	}
 	canonicalizedHeaders := canonicalizedOSSHeaders(req.Header)
 	stringToSign := buildStringToSign(
@@ -639,6 +646,58 @@ func canonicalizedOSSHeaders(h http.Header) string {
 // canonicalizedQuery serializes query parameters as "k1=v1&k2=v2" sorted by
 // key with raw (URL-decoded) values, matching how OSS includes sub-resources
 // in the canonicalized resource.
+// signedSubResourceQuery returns the canonicalized query string for ONLY the
+// query parameters that OSS treats as signed sub-resources. All other query
+// parameters (list/prefix/delimiter/marker/max-keys/list-type/continuation-token
+// and friends) are deliberately excluded from the OSS V1 signature; including
+// them yields SignatureDoesNotMatch. Returns "" when no signed sub-resource is
+// present.
+func signedSubResourceQuery(q url.Values) string {
+	if len(q) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(q))
+	for k := range q {
+		if isSignedSubResource(k) {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			sb.WriteByte('&')
+		}
+		sb.WriteString(k)
+		if v := q.Get(k); v != "" {
+			sb.WriteByte('=')
+			sb.WriteString(v)
+		}
+	}
+	return sb.String()
+}
+
+// isSignedSubResource reports whether k is an OSS sub-resource whose query
+// value is included in the V1 signature (see Alibaba Cloud OSS docs).
+func isSignedSubResource(k string) bool {
+	switch k {
+	case "acl", "append", "callback", "callback-var", "cors", "delete",
+		"encryption", "lifecycle", "location", "logging", "metadata",
+		"notification", "partNumber", "policy", "progress", "qos", "referer",
+		"replication", "requestPayment", "restore", "response-cache-control",
+		"response-content-disposition", "response-content-encoding",
+		"response-content-language", "response-content-type", "response-expires",
+		"sequence", "symlink", "tagging", "torrent", "uploadId", "uploads",
+		"versionId", "versioning", "versions", "website":
+		return true
+	default:
+		return false
+	}
+}
+
 func canonicalizedQuery(q url.Values) string {
 	keys := make([]string, 0, len(q))
 	for k := range q {
