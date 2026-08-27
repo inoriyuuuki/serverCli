@@ -621,6 +621,7 @@ type DeploymentRelease struct {
 	BackupHook                string    `json:"backup_hook,omitempty"`
 	HealthHook                string    `json:"health_hook,omitempty"`
 	RollbackHook              string    `json:"rollback_hook,omitempty"`
+	RestoreHook               string    `json:"restore_hook,omitempty"`
 	BackupMode                string    `json:"backup_mode"`
 	DataMigrationMetadataJSON string    `json:"data_migration_metadata_json,omitempty"`
 	ManifestHash              string    `json:"manifest_hash,omitempty"`

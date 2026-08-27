@@ -28,8 +28,8 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	ver := d.SchemaVersion(ctx)
-	if ver != 11 {
-		t.Fatalf("expected schema version 11, got %d", ver)
+	if ver != 12 {
+		t.Fatalf("expected schema version 12, got %d", ver)
 	}
 	// Required tables exist.
 	expected := []string{
@@ -61,7 +61,7 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer d2.Close()
-	if v := d2.SchemaVersion(ctx); v != 11 {
+	if v := d2.SchemaVersion(ctx); v != 12 {
 		t.Fatalf("reopen version mismatch: %d", v)
 	}
 }
@@ -73,7 +73,7 @@ func TestMigrateInMemory(t *testing.T) {
 		t.Fatalf("open in-memory: %v", err)
 	}
 	defer d.Close()
-	if d.SchemaVersion(context.Background()) != 11 {
+	if d.SchemaVersion(context.Background()) != 12 {
 		t.Fatal("in-memory migration failed")
 	}
 }
@@ -165,8 +165,8 @@ func TestMigrate0006RewritesCanonicalWildcards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply 0006: %v", err)
 	}
-	if ver != 11 {
-		t.Fatalf("expected schema version 11 after applying remaining migrations, got %d", ver)
+	if ver != 12 {
+		t.Fatalf("expected schema version 12 after applying remaining migrations, got %d", ver)
 	}
 
 	rows, err := d.QueryContext(ctx, `SELECT id, permissions_json FROM api_access_token ORDER BY id`)
@@ -463,8 +463,8 @@ func TestMigrate0011RestoreColumns(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer d.Close()
-	if v := d.SchemaVersion(ctx); v != 11 {
-		t.Fatalf("schema version = %d, want 11", v)
+	if v := d.SchemaVersion(ctx); v != 12 {
+		t.Fatalf("schema version = %d, want 12", v)
 	}
 	cols := map[string]bool{}
 	rows, err := d.QueryContext(ctx, `PRAGMA table_info(deployment_operation)`)
@@ -487,5 +487,37 @@ func TestMigrate0011RestoreColumns(t *testing.T) {
 	}
 	if !cols["force_delete"] {
 		t.Fatal("deployment_operation missing force_delete column")
+	}
+}
+
+// TestMigrate0012ReleaseRestoreHook verifies migration 0012 adds restore_hook
+// to deployment_release.
+func TestMigrate0012ReleaseRestoreHook(t *testing.T) {
+	dir := t.TempDir()
+	log := logger.New(io.Discard, "error")
+	ctx := context.Background()
+	d, err := Open(ctx, "sqlite", filepath.Join(dir, "t.db"), log)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	cols := map[string]bool{}
+	rows, err := d.QueryContext(ctx, `PRAGMA table_info(deployment_release)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatal(err)
+		}
+		cols[name] = true
+	}
+	rows.Close()
+	if !cols["restore_hook"] {
+		t.Fatal("deployment_release missing restore_hook column")
 	}
 }
