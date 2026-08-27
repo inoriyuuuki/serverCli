@@ -170,6 +170,8 @@ func (r *DeploymentRunner) Run(ctx context.Context, task *TaskPayload) (*Result,
 		return r.runHealthCheck(ctx, args)
 	case "deployment.rollback":
 		return r.runRollback(ctx, args)
+	case "deployment.restore":
+		return r.runRestore(ctx, args)
 	default:
 		return deployFailure("UNKNOWN_COMMAND", fmt.Sprintf("unknown deployment command %q", task.CommandID)), nil
 	}
@@ -181,15 +183,20 @@ func (r *DeploymentRunner) Run(ctx context.Context, task *TaskPayload) (*Result,
 // is accepted (scheduler compatibility, used for release location and the
 // rendered runtime-config); secret body/credentials are never accepted.
 var deploymentArgFields = map[string]bool{
-	"operation_id":    true,
-	"target_id":       true,
-	"node_id":         true,
-	"feature_key":     true,
-	"release_id":      true,
-	"config_hash":     true,
-	"secret_refs":     true,
-	"release_version": true,
-	"environment_id":  true,
+	"operation_id":       true,
+	"target_id":          true,
+	"node_id":            true,
+	"feature_key":        true,
+	"release_id":         true,
+	"config_hash":        true,
+	"secret_refs":        true,
+	"release_version":    true,
+	"environment_id":     true,
+	"backup_id":          true,
+	"backup_object_key":  true,
+	"backup_sha256":      true,
+	"backup_size":        true,
+	"force_delete":       true,
 }
 
 type deploymentSecretRef struct {
@@ -209,7 +216,12 @@ type deploymentArgs struct {
 	ConfigHash     string
 	ReleaseVersion string
 	EnvironmentID  string
-	SecretRefs     []deploymentSecretRef
+	// restore 专用（仅引用/元数据，不含凭证）
+	BackupObjectKey string
+	BackupSHA256    string
+	BackupSize      int64
+	ForceDelete     bool
+	SecretRefs      []deploymentSecretRef
 }
 
 func parseDeploymentArgs(raw json.RawMessage) (*deploymentArgs, error) {
@@ -232,14 +244,20 @@ func parseDeploymentArgs(raw json.RawMessage) (*deploymentArgs, error) {
 		}
 	}
 	args := &deploymentArgs{
-		OperationID:    m["operation_id"].(string),
-		TargetID:       m["target_id"].(string),
-		NodeID:         m["node_id"].(string),
-		FeatureKey:     strField(m["feature_key"]),
-		ReleaseID:      strField(m["release_id"]),
-		ConfigHash:     strField(m["config_hash"]),
-		ReleaseVersion: strField(m["release_version"]),
-		EnvironmentID:  strField(m["environment_id"]),
+		OperationID:     m["operation_id"].(string),
+		TargetID:        m["target_id"].(string),
+		NodeID:          m["node_id"].(string),
+		FeatureKey:      strField(m["feature_key"]),
+		ReleaseID:       strField(m["release_id"]),
+		ConfigHash:      strField(m["config_hash"]),
+		ReleaseVersion:  strField(m["release_version"]),
+		EnvironmentID:   strField(m["environment_id"]),
+		BackupObjectKey: strField(m["backup_object_key"]),
+		BackupSHA256:    strField(m["backup_sha256"]),
+		ForceDelete:     boolField(m["force_delete"]),
+	}
+	if n, ok := m["backup_size"].(float64); ok && n > 0 {
+		args.BackupSize = int64(n)
 	}
 	refs, err := parseSecretRefs(m["secret_refs"])
 	if err != nil {
@@ -254,6 +272,11 @@ func strField(v any) string {
 		return s
 	}
 	return ""
+}
+
+func boolField(v any) bool {
+	b, _ := v.(bool)
+	return b
 }
 
 var secretRefFields = map[string]bool{
@@ -1326,6 +1349,184 @@ func (r *DeploymentRunner) runBackup(ctx context.Context, args *deploymentArgs) 
 	res := deploySuccess(stdout, stderr)
 	res.SummaryJSON = string(summary)
 	return res, nil
+}
+
+// ---- restore ----
+
+func (r *DeploymentRunner) runRestore(ctx context.Context, args *deploymentArgs) (*Result, error) {
+	if args.FeatureKey == "" || args.NodeID == "" || args.OperationID == "" {
+		return deployFailure("MISSING_PARAMETER", "feature_key, node_id and operation_id are required for deployment.restore"), nil
+	}
+	if args.BackupObjectKey == "" {
+		return deployFailure("MISSING_PARAMETER", "backup_object_key is required for deployment.restore"), nil
+	}
+	if err := validateToken("feature_key", args.FeatureKey); err != nil {
+		return deployFailure("INVALID_FEATURE_KEY", err.Error()), nil
+	}
+	if err := ossclient.ValidateObjectKey(args.BackupObjectKey); err != nil {
+		return deployFailure("BACKUP_KEY_INVALID", err.Error()), nil
+	}
+	if !strings.HasPrefix(args.BackupObjectKey, "backups/") {
+		return deployFailure("BACKUP_KEY_INVALID", "restore only accepts object keys under the backups/ prefix"), nil
+	}
+	lay, err := r.preflight(ctx)
+	if err != nil {
+		return deployFailure("PREFLIGHT_FAILED", err.Error()), nil
+	}
+
+	// 1) 下载备份并校验 size/sha256（仅接受控制面下发的精确 object key）
+	profile, err := r.loadOSSProfile()
+	if err != nil {
+		return deployFailure("OSS_CREDENTIALS_MISSING", err.Error()), nil
+	}
+	client, err := r.newOSS(ctx, *profile)
+	if err != nil {
+		return deployFailure("OSS_CLIENT_FAILED", err.Error()), nil
+	}
+	stagingDir := filepath.Join(lay.LocalDir(), repo.DirStaging, "restore-"+args.OperationID)
+	if err := os.RemoveAll(stagingDir); err != nil {
+		return deployFailure("STAGING_CLEAN_FAILED", err.Error()), nil
+	}
+	if err := os.MkdirAll(stagingDir, 0o700); err != nil {
+		return deployFailure("STAGING_CREATE_FAILED", err.Error()), nil
+	}
+	tmp := filepath.Join(stagingDir, "backup.tar.gz")
+	f, err := os.Create(tmp)
+	if err != nil {
+		return deployFailure("BACKUP_OPEN_FAILED", err.Error()), nil
+	}
+	_, gerr := client.GetObject(ctx, profile.Bucket, args.BackupObjectKey, f)
+	cerr := f.Close()
+	if gerr != nil {
+		return deployFailure("BACKUP_DOWNLOAD_FAILED", gerr.Error()), nil
+	}
+	if cerr != nil {
+		return deployFailure("BACKUP_DOWNLOAD_FAILED", cerr.Error()), nil
+	}
+	sha, err := sha256File(tmp)
+	if err != nil {
+		return deployFailure("BACKUP_HASH_FAILED", err.Error()), nil
+	}
+	if args.BackupSHA256 != "" && !strings.EqualFold(sha, args.BackupSHA256) {
+		return deployFailure("BACKUP_VERIFY_FAILED", "backup sha256 mismatch"), nil
+	}
+	if args.BackupSize > 0 {
+		if fi, serr := os.Stat(tmp); serr != nil || fi.Size() != args.BackupSize {
+			return deployFailure("BACKUP_VERIFY_FAILED", "backup size mismatch"), nil
+		}
+	}
+
+	// 2) 安全解压到 staging/content
+	bf, err := os.Open(tmp)
+	if err != nil {
+		return deployFailure("BACKUP_OPEN_FAILED", err.Error()), nil
+	}
+	extracted := filepath.Join(stagingDir, "content")
+	if err := os.MkdirAll(extracted, 0o700); err != nil {
+		bf.Close()
+		return deployFailure("STAGING_CREATE_FAILED", err.Error()), nil
+	}
+	extErr := repo.ExtractTarGzip(ctx, bf, extracted, repo.Limits{
+		MaxFiles:          5000,
+		MaxTotalBytes:     2 << 30,
+		MaxSingleFileBytes: 1 << 30,
+		MaxPathLen:        1024,
+		AllowedRoot:       extracted,
+	})
+	bf.Close()
+	if extErr != nil {
+		return deployFailure("BACKUP_EXTRACT_FAILED", extErr.Error()), nil
+	}
+
+	// 3) 定位当前 release 目录（含 rendered/ 与 hooks/restore.sh）
+	currentDir, err := currentReleaseDir(r.cfg.DeploymentRootDir, args.FeatureKey)
+	if err != nil {
+		return deployFailure("CURRENT_RELEASE_UNKNOWN", err.Error()), nil
+	}
+	hookRel := "hooks/restore.sh"
+	if err := validateHookPath(hookRel); err != nil {
+		return deployFailure("INVALID_HOOK_PATH", err.Error()), nil
+	}
+	if !isRegularWithin(filepath.Join(currentDir, hookRel), currentDir) {
+		return deployFailure("HOOK_NOT_FOUND", fmt.Sprintf("restore hook %q missing in current release", hookRel)), nil
+	}
+	dataDir := readConfigString(filepath.Join(currentDir, "rendered", "runtime-config.yaml"), "data_dir")
+	if dataDir == "" {
+		dataDir = readConfigString(filepath.Join(currentDir, "rendered", "runtime-config.yaml"), "data_directory")
+	}
+	if dataDir == "" {
+		dataDir = filepath.Join(r.cfg.DeploymentRootDir, "data", args.FeatureKey)
+	}
+	force := 0
+	if args.ForceDelete {
+		force = 1
+	}
+	argv := []string{
+		"--feature-key", args.FeatureKey,
+		"--node-id", args.NodeID,
+		"--operation-id", args.OperationID,
+		"--deployment-root-dir", r.cfg.DeploymentRootDir,
+		"--data-dir", dataDir,
+		"--restore-dir", extracted,
+		"--force-delete", fmt.Sprintf("%d", force),
+		"--rendered-dir", currentDir,
+	}
+	exitCode, stdout, stderr, err := r.runHook(ctx, hookRel, currentDir, argv)
+	if err != nil {
+		if res := ctxFailure(ctx); res != nil {
+			return res, nil
+		}
+		return deployFailureOutput("HOOK_EXEC_FAILED", err.Error(), stdout, stderr), nil
+	}
+	if exitCode != 0 {
+		return deployFailureExit("RESTORE_HOOK_FAILED", fmt.Sprintf("restore hook exited with code %d", exitCode), stdout, stderr, exitCode), nil
+	}
+
+	// 4) 本地健康检查（restore 后服务应可用）
+	hcHook := "hooks/health-check.sh"
+	if isRegularWithin(filepath.Join(currentDir, hcHook), currentDir) {
+		hcArgs := []string{"--feature-key", args.FeatureKey, "--node-id", args.NodeID, "--rendered-dir", currentDir, "--port", ""}
+		hcCode, hcOut, hcErr, herr := r.runHook(ctx, hcHook, currentDir, hcArgs)
+		if herr != nil {
+			return deployFailureOutput("HOOK_EXEC_FAILED", herr.Error(), hcOut, hcErr), nil
+		}
+		if hcCode != 0 {
+			return deployFailureExit("RESTORE_HEALTH_FAILED", fmt.Sprintf("health check after restore exited with code %d", hcCode), hcOut, hcErr, hcCode), nil
+		}
+	}
+
+	summary, _ := json.Marshal(map[string]any{"restored_from_backup": args.BackupObjectKey})
+	res := deploySuccess(stdout, stderr)
+	res.SummaryJSON = string(summary)
+	return res, nil
+}
+
+// currentReleaseDir resolves the currently installed release directory via the
+// releases/<feature>/current symlink created by the install hook.
+func currentReleaseDir(root, featureKey string) (string, error) {
+	p := filepath.Join(root, "releases", featureKey, "current")
+	cur, err := os.Readlink(p)
+	if err != nil {
+		return "", fmt.Errorf("no current release for %s (install it first)", featureKey)
+	}
+	if !filepath.IsAbs(cur) {
+		cur = filepath.Join(filepath.Dir(p), cur)
+	}
+	return filepath.Clean(cur), nil
+}
+
+// readConfigString reads a top-level string key from a rendered YAML config.
+func readConfigString(path, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var m map[string]any
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return ""
+	}
+	v, _ := m[key].(string)
+	return v
 }
 
 func backupObjectKey(env, featureKey, nodeID, operationID string) string {

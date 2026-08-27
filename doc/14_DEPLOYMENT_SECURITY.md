@@ -82,6 +82,15 @@
    Agent 制品的独立签名随 CI 签名体系一并纳入，V1 与 Release 流程对齐，见
    doc/16「V1 签名与凭证债务」）。**该流程不经过 xray，不访问 GitHub**。
 
+## 7.5 Restore（从备份恢复，安全约束）
+
+- 仅允许从 **deployment_backup 记录**恢复（object key 由控制面下发，不接受任意 key）；
+  备份必须 status=succeeded、backup_mode != none、且属于目标 feature+node。
+- **数据守卫**：目标数据目录已存在且非空时，restore 默认失败（提示先删除原数据）；
+  仅当显式 `force_delete=true` 时才允许先迁移/删除原数据再恢复（正式环境需 reason + 二次确认）。
+- 备份下载后必须校验 sha256/size，经统一安全解压到 staging 后再写数据目录；恢复后执行
+  本地健康检查（hook）+ 控制面二次探活。
+
 ## 8. 解压安全检查（强制）
 
 统一安全解压实现必须在解压 `bundle.tar.zst` 时逐项检查：

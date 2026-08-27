@@ -28,8 +28,8 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	ver := d.SchemaVersion(ctx)
-	if ver != 10 {
-		t.Fatalf("expected schema version 10, got %d", ver)
+	if ver != 11 {
+		t.Fatalf("expected schema version 11, got %d", ver)
 	}
 	// Required tables exist.
 	expected := []string{
@@ -61,7 +61,7 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer d2.Close()
-	if v := d2.SchemaVersion(ctx); v != 10 {
+	if v := d2.SchemaVersion(ctx); v != 11 {
 		t.Fatalf("reopen version mismatch: %d", v)
 	}
 }
@@ -73,7 +73,7 @@ func TestMigrateInMemory(t *testing.T) {
 		t.Fatalf("open in-memory: %v", err)
 	}
 	defer d.Close()
-	if d.SchemaVersion(context.Background()) != 10 {
+	if d.SchemaVersion(context.Background()) != 11 {
 		t.Fatal("in-memory migration failed")
 	}
 }
@@ -165,8 +165,8 @@ func TestMigrate0006RewritesCanonicalWildcards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply 0006: %v", err)
 	}
-	if ver != 10 {
-		t.Fatalf("expected schema version 10 after applying remaining migrations, got %d", ver)
+	if ver != 11 {
+		t.Fatalf("expected schema version 11 after applying remaining migrations, got %d", ver)
 	}
 
 	rows, err := d.QueryContext(ctx, `SELECT id, permissions_json FROM api_access_token ORDER BY id`)
@@ -451,3 +451,41 @@ func TestMigrate0010NodeSerialIndex(t *testing.T) {
 }
 
 var _ = os.Getenv
+
+// TestMigrate0011RestoreColumns verifies migration 0011 adds backup_id and
+// force_delete to deployment_operation (restore support).
+func TestMigrate0011RestoreColumns(t *testing.T) {
+	dir := t.TempDir()
+	log := logger.New(io.Discard, "error")
+	ctx := context.Background()
+	d, err := Open(ctx, "sqlite", filepath.Join(dir, "t.db"), log)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if v := d.SchemaVersion(ctx); v != 11 {
+		t.Fatalf("schema version = %d, want 11", v)
+	}
+	cols := map[string]bool{}
+	rows, err := d.QueryContext(ctx, `PRAGMA table_info(deployment_operation)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatal(err)
+		}
+		cols[name] = true
+	}
+	rows.Close()
+	if !cols["backup_id"] {
+		t.Fatal("deployment_operation missing backup_id column")
+	}
+	if !cols["force_delete"] {
+		t.Fatal("deployment_operation missing force_delete column")
+	}
+}

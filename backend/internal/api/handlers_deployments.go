@@ -120,6 +120,7 @@ func (s *Server) registerDeploymentRoutes(mux *http.ServeMux) {
 	// Backups.
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/deployments/backups", Group: group, Auth: AuthAdminOrToken, Summary: "备份列表", Params: []RouteParam{{Name: "feature_id", In: "query", Type: "string"}, {Name: "node_id", In: "query", Type: "string"}, {Name: "limit", In: "query", Type: "integer"}}, Debug: true}, s.adminOrToken(service.ResourceDeployments, service.ActionRead, "/api/v1/deployments/backups")(s.handleListBackups))
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/deployments/backups/{id}", Group: group, Auth: AuthAdminOrToken, Summary: "备份详情", Debug: true}, s.adminOrToken(service.ResourceDeployments, service.ActionRead, "/api/v1/deployments/backups/{id}")(s.handleGetBackup))
+	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/deployments/backups/run", Group: group, Auth: AuthAdmin, Summary: "按服务器/Feature 触发备份（供外部定时逻辑调用）", Body: `{"node_id":"...","feature_id":"..."}`, Errors: []string{"400", "404"}, Debug: true}, s.requireAdmin(s.handleRunBackupsForNode))
 
 	// Bootstrap sessions.
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/deployments/bootstrap-sessions", Group: group, Auth: AuthAdminOrToken, Summary: "节点引导会话列表", Debug: true}, s.adminOrToken(service.ResourceBootstrapSessions, service.ActionRead, "/api/v1/deployments/bootstrap-sessions")(s.handleListBootstrapSessions))
@@ -494,6 +495,22 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"backups": backups})
+}
+
+func (s *Server) handleRunBackupsForNode(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		NodeID    string `json:"node_id"`
+		FeatureID string `json:"feature_id"`
+	}
+	if !decodeJSON(w, r, s.log, &in) {
+		return
+	}
+	ops, err := s.deployments.RunBackupsForNode(r.Context(), s.deploymentActorID(r), in.NodeID, in.FeatureID)
+	if err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"operations": ops})
 }
 
 func (s *Server) handleGetBackup(w http.ResponseWriter, r *http.Request) {

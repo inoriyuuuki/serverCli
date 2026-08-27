@@ -27,6 +27,7 @@ import type {
   OSSProfileListResponse,
   OSSProfileResponse,
   OSSTestResponse,
+  RunBackupsResponse,
   RepositorySyncResponse,
   SecretReferenceCreate,
   SecretValueResponse,
@@ -108,14 +109,26 @@ export interface OverwriteSecretBody {
   reason?: string;
 }
 
-export type OperationAction = 'install' | 'update' | 'backup' | 'rollback' | 'health_check';
+export type OperationAction = 'install' | 'update' | 'backup' | 'rollback' | 'health_check' | 'restore';
 
 export interface CreateOperationBody {
   action: OperationAction;
   feature_id: string;
   release_id?: string;
+  /** 空数组 = 该 Feature 下全部已启用 Target（"全部"= 已关联到服务器的 Target） */
   target_ids: string[];
+  /** 批量筛选：仅处理该服务器（节点）上的 Target */
+  node_id?: string;
+  /** restore 专用：使用的备份记录 */
+  backup_id?: string;
+  /** restore 专用：true 时允许先删除目标已有数据 */
+  force_delete?: boolean;
   reason?: string;
+}
+
+export interface RunBackupsBody {
+  node_id?: string;
+  feature_id?: string;
 }
 
 export interface CancelOperationBody {
@@ -236,6 +249,13 @@ export function createSecretReference(body: SecretReferenceCreate): Promise<Depl
 
 export function listOperations(): Promise<DeploymentOperationListResponse> {
   return apiFetch('/deployments/operations');
+}
+
+/**
+ * 按服务器/Feature 触发备份（供外部定时逻辑调用；node_id 为空 = 全部已关联 Target）。
+ */
+export function runBackupsForNode(body: RunBackupsBody = {}): Promise<RunBackupsResponse> {
+  return apiFetch('/deployments/backups/run', { method: 'POST', body });
 }
 
 export function createOperation(body: CreateOperationBody): Promise<DeploymentOperationResponse> {

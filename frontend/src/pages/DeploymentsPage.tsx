@@ -20,6 +20,7 @@ import {
   deleteTarget,
   getSecretValue,
   overwriteSecret,
+  runBackupsForNode,
   createOperation,
   cancelOperation,
   continueOperation,
@@ -87,6 +88,7 @@ const DEPLOY_STATUS: Record<string, { label: string; tone: Tone }> = {
   cancelled: { label: '已取消', tone: 'gray' },
   rolled_back: { label: '已回滚', tone: 'teal' },
   rollback_failed: { label: '回滚失败', tone: 'red' },
+  skipped: { label: '已跳过（无需操作）', tone: 'gray' },
   // bootstrap session
   created: { label: '已创建', tone: 'gray' },
   repository_syncing: { label: '仓库同步中', tone: 'blue' },
@@ -125,6 +127,7 @@ const ACTION_LABEL: Record<string, string> = {
   backup: '备份',
   rollback: '回滚',
   health_check: '健康检查',
+  restore: '恢复',
 };
 
 const SCOPE_LABEL: Record<string, string> = {
@@ -1772,7 +1775,9 @@ function OperationsTab({
   targets: DeploymentTarget[];
   isProd: boolean;
 }) {
+  const confirm = useConfirm();
   const [createOpen, setCreateOpen] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
 
   return (
@@ -1784,6 +1789,29 @@ function OperationsTab({
             <button className="btn btn-ghost btn-sm" onClick={opsState.reload}>刷新</button>
             <button className="btn btn-primary btn-sm" onClick={() => setCreateOpen(true)} disabled={features.length === 0 || targets.length === 0}>
               新建操作
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              disabled={targets.length === 0 || backupBusy}
+              onClick={async () => {
+                if (isProd) {
+                  const r = await confirm({ title: '全部备份', message: '将为所有已关联 Target 创建备份操作（每个 Feature 一个）。', confirmLabel: '确认备份', production: true });
+                  if (!r.ok) return;
+                }
+                setBackupBusy(true);
+                try {
+                  await runBackupsForNode({});
+                  opsState.reload();
+                  backupsState.reload();
+                  window.alert('全部备份已触发（后台串行执行）。');
+                } catch (err) {
+                  window.alert(err instanceof ApiError ? err.message : '触发备份失败');
+                } finally {
+                  setBackupBusy(false);
+                }
+              }}
+            >
+              {backupBusy ? '触发中…' : '全部备份'}
             </button>
           </>
         }
@@ -1861,6 +1889,7 @@ function OperationsTab({
                   <th>SHA256</th>
                   <th>状态</th>
                   <th>创建时间</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1880,6 +1909,40 @@ function OperationsTab({
                     <td>
                       <TimeCell value={b.created_at} />
                     </td>
+                    <td>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        disabled={b.status !== 'succeeded' || b.backup_mode === 'none'}
+                        title={b.status !== 'succeeded' ? '仅成功备份可恢复' : undefined}
+                        onClick={async () => {
+                          if (isProd) {
+                            const r = await confirm({
+                              title: '恢复备份',
+                              message: `将从备份恢复 Feature「${b.feature_key}」的数据到该节点（数据已存在时需在新建操作里勾选 force_delete）。`,
+                              confirmLabel: '确认恢复',
+                              danger: true,
+                              production: true,
+                            });
+                            if (!r.ok) return;
+                          }
+                          try {
+                            await createOperation({
+                              action: 'restore',
+                              feature_id: b.feature_id ?? '',
+                              backup_id: b.id,
+                              target_ids: b.target_id ? [String(b.target_id)] : [],
+                              reason: '从备份恢复',
+                            });
+                            opsState.reload();
+                            window.alert('恢复操作已创建（后台执行）。');
+                          } catch (err) {
+                            window.alert(err instanceof ApiError ? err.message : '创建恢复操作失败');
+                          }
+                        }}
+                      >
+                        恢复
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1893,6 +1956,7 @@ function OperationsTab({
           features={features}
           releases={releases}
           targets={targets}
+          backups={backups}
           isProd={isProd}
           onClose={() => setCreateOpen(false)}
           onCreated={() => {
@@ -1921,6 +1985,7 @@ function CreateOperationModal({
   features,
   releases,
   targets,
+  backups,
   isProd,
   onClose,
   onCreated,
@@ -1928,6 +1993,7 @@ function CreateOperationModal({
   features: DeploymentFeature[];
   releases: DeploymentRelease[];
   targets: DeploymentTarget[];
+  backups: DeploymentBackup[];
   isProd: boolean;
   onClose: () => void;
   onCreated: () => void;
@@ -1940,11 +2006,13 @@ function CreateOperationModal({
     target_ids: [],
     reason: '',
   });
+  const [allTargets, setAllTargets] = useState(true); // 空 target_ids = 全部已关联 Target
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const action = form.action;
   const needRelease = action === 'install' || action === 'update' || action === 'rollback';
+  const needBackup = action === 'restore';
   const featureTargets = useMemo(
     () => (form.feature_id ? targets.filter((t) => t.feature_id === form.feature_id) : targets),
     [targets, form.feature_id],
@@ -1956,6 +2024,11 @@ function CreateOperationModal({
 
   const set = (key: keyof CreateOperationBody, value: string | string[]) =>
     setForm((p) => ({ ...p, [key]: value } as CreateOperationBody));
+
+  const toggleAll = (on: boolean) => {
+    setAllTargets(on);
+    setForm((p) => ({ ...p, target_ids: on ? [] : Array.from(new Set(featureTargets.map((t) => t.id))) }));
+  };
 
   const toggleTarget = (id: string, on: boolean) => {
     setForm((p) => {
@@ -1970,12 +2043,13 @@ function CreateOperationModal({
     e.preventDefault();
     if (!form.feature_id) return;
     if (needRelease && !form.release_id) return;
-    if (form.target_ids.length === 0) return;
+    if (needBackup && !form.backup_id) return;
     if (isProd && !form.reason?.trim()) return;
     if (isProd) {
+      const targetDesc = allTargets || form.target_ids.length === 0 ? '全部已关联 Target' : `${form.target_ids.length} 个目标`;
       const r = await confirm({
         title: '创建部署操作',
-        message: `将以「${ACTION_LABEL[action] ?? action}」方式对 ${form.target_ids.length} 个目标执行（多节点串行、失败停止）。`,
+        message: `将以「${ACTION_LABEL[action] ?? action}」方式对 ${targetDesc} 执行（多节点串行、失败停止；非最新节点自动跳过）。`,
         confirmLabel: '确认创建',
         production: true,
       });
@@ -1987,10 +2061,13 @@ function CreateOperationModal({
       const body: CreateOperationBody = {
         action: form.action,
         feature_id: form.feature_id,
-        target_ids: form.target_ids,
+        target_ids: allTargets ? [] : form.target_ids,
         reason: form.reason?.trim() || undefined,
       };
       if (form.release_id) body.release_id = form.release_id;
+      if (form.node_id) body.node_id = form.node_id;
+      if (form.backup_id) body.backup_id = form.backup_id;
+      if (form.force_delete) body.force_delete = true;
       await createOperation(body);
       onCreated();
     } catch (err) {
@@ -2025,7 +2102,29 @@ function CreateOperationModal({
               </Select>
             </Field>
           </div>
-          <Field label={needRelease ? 'Release' : 'Release（备份 / 健康检查可选）'}>
+          {needBackup && (
+            <Field label="备份（Restore 数据源）" required hint="仅可恢复 status=succeeded 且非 none 备份">
+              <Select value={form.backup_id ?? ''} onChange={(e) => set('backup_id', e.target.value)} required>
+                <option value="">请选择备份</option>
+                {backups
+                  .filter((b) => b.feature_id === form.feature_id && b.status === 'succeeded' && b.backup_mode !== 'none')
+                  .map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.feature_key} / {(b.node_id ?? '').slice(0, 8)} / {b.created_at ? new Date(b.created_at).toLocaleString() : '—'}
+                    </option>
+                  ))}
+              </Select>
+            </Field>
+          )}
+          {needBackup && (
+            <Field label="force_delete（数据已存在时）" hint="勾选后恢复前先删除/迁移目标已有数据">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={form.force_delete ?? false} onChange={(e) => setForm((p) => ({ ...p, force_delete: e.target.checked }))} />
+                允许覆盖已有数据
+              </label>
+            </Field>
+          )}
+          <Field label={needRelease ? 'Release' : 'Release（备份 / 健康检查 / 恢复可选）'}>
             <Select value={form.release_id ?? ''} onChange={(e) => set('release_id', e.target.value)}>
               <option value="">{needRelease ? '请选择' : '不指定'}</option>
               {featureReleases.map((r) => (
@@ -2035,7 +2134,13 @@ function CreateOperationModal({
               ))}
             </Select>
           </Field>
-          <Field label="目标节点（按 Feature 过滤）" required hint={`已选 ${form.target_ids.length} 个目标`}>
+          <Field label="目标节点（按 Feature 过滤）" required hint={allTargets ? '全部已关联 Target（非最新自动跳过）' : `已选 ${form.target_ids.length} 个目标`}>
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={allTargets} onChange={(e) => toggleAll(e.target.checked)} />
+                全部（该 Feature 已关联到服务器的 Target）
+              </label>
+            </div>
             {featureTargets.length === 0 ? (
               <span className="muted" style={{ fontSize: 13 }}>该 Feature 下暂无部署目标，请先在「部署目标」页签创建。</span>
             ) : (
@@ -2073,7 +2178,7 @@ function CreateOperationModal({
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={busy || !form.feature_id || (needRelease && !form.release_id) || form.target_ids.length === 0 || (isProd && !form.reason?.trim())}
+            disabled={busy || !form.feature_id || (needRelease && !form.release_id) || (needBackup && !form.backup_id) || (isProd && !form.reason?.trim())}
           >
             {busy ? '创建中…' : '创建操作'}
           </button>

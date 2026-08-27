@@ -47,7 +47,7 @@ WRAPPER_NAME="servercli-sudo-deploy-wrapper"
 INTERPRETER="/bin/bash"
 
 # 允许的参数键（严格白名单）
-ALLOWED_KEYS="--operation-id --target-id --node-id --feature-key --release-id --version --release-version --config-hash --data-dir --config-dir --rendered-dir --config-file --release-dir --deployment-root-dir --image-tag --port --previous-release-dir --current-release-dir --env --backup-file"
+ALLOWED_KEYS="--operation-id --target-id --node-id --feature-key --release-id --version --release-version --config-hash --data-dir --config-dir --rendered-dir --config-file --release-dir --deployment-root-dir --image-tag --port --previous-release-dir --current-release-dir --env --backup-file --restore-dir --force-delete"
 # 参数值允许的字符集（无空格/引号/分号/管道/换行/$() 等 shell 元字符）
 VALUE_RE='^[A-Za-z0-9._:/+=-]*$'   # * allows optional empty values (e.g. --image-tag "")
 # hook 相对路径允许的字符集
