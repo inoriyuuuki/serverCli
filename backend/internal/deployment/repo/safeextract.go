@@ -186,9 +186,12 @@ func validateEntryName(name string, maxLen int) error {
 			return fmt.Errorf("entry name %q contains a .. component", name)
 		}
 	}
-	if cleaned := filepath.Clean(name); cleaned == "." || cleaned == ".." {
+	if cleaned := filepath.Clean(name); cleaned == ".." {
 		return fmt.Errorf("entry name %q escapes destination", name)
 	}
+	// "." (the archive root marker produced by `tar -czf .`) is allowed: it
+	// maps to the destination root, which is created anyway. Only ".." is a
+	// genuine escape.
 	return nil
 }
 

@@ -316,3 +316,39 @@ func mustRead(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// TestExtractTarGzipAllowsRootDot verifies a tarball built with `tar -czf .`
+// (whose first entry is "./") extracts successfully: the root marker "." is
+// allowed while ".." remains rejected.
+func TestExtractTarGzipAllowsRootDot(t *testing.T) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	// root marker
+	if err := tw.WriteHeader(&tar.Header{Name: "./", Mode: 0o750, Typeflag: tar.TypeDir}); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("hello")
+	if err := tw.WriteHeader(&tar.Header{Name: "./hooks/install.sh", Mode: 0o640, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := t.TempDir()
+	if err := ExtractTarGzip(context.Background(), &buf, dest, Limits{
+		MaxFiles: 100, MaxTotalBytes: 1 << 20, MaxSingleFileBytes: 1 << 20, MaxPathLen: 1024, AllowedRoot: dest,
+	}); err != nil {
+		t.Fatalf("extract with root dot should succeed: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dest, "hooks", "install.sh")); err != nil || string(got) != "hello" {
+		t.Fatalf("extracted content = %q, err=%v", got, err)
+	}
+}
