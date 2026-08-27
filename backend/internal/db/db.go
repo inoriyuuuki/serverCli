@@ -153,6 +153,12 @@ func Migrate(ctx context.Context, driver string, d *sql.DB) (int, error) {
 		if err := tx.Commit(); err != nil {
 			return 0, err
 		}
+		// Track the version as applied immediately so the PostgreSQL-only
+		// loop below never re-applies/re-inserts a migration that the shared
+		// loop already applied (a migration present in both migrations/ and
+		// migrations_postgres/ with the same number would otherwise
+		// double-insert schema_migrations and fail with a duplicate key).
+		applied[version] = true
 	}
 	// PostgreSQL 专用迁移（SQLite 不适用：如 int4 -> int8 扩容）。
 	if driver == "postgres" {
@@ -193,6 +199,7 @@ func Migrate(ctx context.Context, driver string, d *sql.DB) (int, error) {
 			if err := tx.Commit(); err != nil {
 				return latest, err
 			}
+			applied[version] = true
 		}
 	}
 	return latest, nil
