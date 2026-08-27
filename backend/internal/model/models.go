@@ -510,7 +510,7 @@ type TaskParameterHistory struct {
 }
 
 // ─── 部署管理（Deployment Management）─────────────────────────────────────────────
-// 以下类型对应 backend/internal/db/migrations/0007_deployment.sql 中的表。
+// 以下类型对应 backend/internal/db/migrations/0009_deployment.sql 中的表。
 
 // Deployment operation actions.
 const (
