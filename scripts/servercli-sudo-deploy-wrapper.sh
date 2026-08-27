@@ -159,5 +159,9 @@ case "$HOOK_ABS" in
   *) deny "hook escapes rendered-dir (resolved path outside): $HOOK_ABS" ;;
 esac
 
-# 7) 直接 exec，绝不 eval / source / 拼接 shell 字符串
+# 7) 固定 PATH：sudo 的 secure_path 会剥离 /usr/local/bin（docker/compose
+#    等部署工具所在目录），这里统一补齐后再 exec，保证 hook 行为一致。
+export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/sbin:/bin:/usr/sbin:/usr/bin"
+
+# 8) 直接 exec，绝不 eval / source / 拼接 shell 字符串
 exec /bin/bash "$HOOK_ABS" "${RUN_ARGS[@]+"${RUN_ARGS[@]}"}"

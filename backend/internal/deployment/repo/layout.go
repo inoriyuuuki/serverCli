@@ -182,6 +182,12 @@ func walkChmod(root string, modeFor func(rel string, isDir bool) os.FileMode) er
 	}
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// root 属主的目录（由部署 hook 以 root 创建，如服务数据/渲染目录）
+			// agent 无权遍历/改权限；这类目录属于服务运行时数据，不在
+			// agent 管理范围内，跳过而非让后续任务级联失败。
+			if os.IsPermission(err) {
+				return nil
+			}
 			return fmt.Errorf("walk %s: %w", path, err)
 		}
 		rel, rerr := filepath.Rel(root, path)
@@ -189,6 +195,10 @@ func walkChmod(root string, modeFor func(rel string, isDir bool) os.FileMode) er
 			return fmt.Errorf("rel %s: %w", path, rerr)
 		}
 		if cerr := os.Chmod(path, modeFor(filepath.ToSlash(rel), d.IsDir())); cerr != nil {
+			// 同上：非属主文件（root 创建）chmod 必然 EPERM，跳过。
+			if os.IsPermission(cerr) {
+				return nil
+			}
 			return fmt.Errorf("chmod %s: %w", path, cerr)
 		}
 		return nil
