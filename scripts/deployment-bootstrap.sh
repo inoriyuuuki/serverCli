@@ -13,7 +13,10 @@
 #   5) （控制面模式）上报引导状态；经 materialize 获取 HMAC-SHA256 签名密钥，
 #      校验 repository-manifest.json 的签名；密钥落
 #      .servercli-local/credentials/deploy-signing.key（0600，目录 0700）
-#   6) 仅输出 Bucket/Prefix/对象数/下载状态/hash，绝不打印凭证与 Secret 正文
+#   6) （控制面模式）从公开 OSS 桶 inori-image 下载 ServerCLI Agent 制品
+#      （GitHub Actions 构建后上传，节点直连桶、不经 xray 访问 GitHub），
+#      SHA-256 校验后安装到 /usr/local/bin/servercli-node-agent
+#   7) 仅输出 Bucket/Prefix/对象数/下载状态/hash，绝不打印凭证与 Secret 正文
 #
 # 用法：
 #   纯同步模式（不传控制面三参数，只做 OSS 同步 + 校验 + 权限修正）：
@@ -25,13 +28,16 @@
 #         [--repo-dir /opt/servercli-deployment/repository]
 #
 #   控制面模式（--session-id / --token / --control-plane-url 必须同时提供；
-#   额外上报状态 + 物化签名密钥 + 校验 manifest 签名）：
+#   额外上报状态 + 物化签名密钥 + 校验 manifest 签名 + 从公开 OSS 桶下载 Agent）：
 #     sudo bash scripts/deployment-bootstrap.sh \
 #         --bucket <private-oss-bucket> \
 #         --prefix deployment-repository/ \
 #         --session-id <bootstrap-session-id> \
 #         --token <one-time-session-token> \
 #         --control-plane-url https://<master>:9043 \
+#         [--agent-bucket inori-image] \
+#         [--oss-public-endpoint oss-cn-hangzhou.aliyuncs.com] \
+#         [--agent-version <固定版本，默认取主控 /version>] \
 #         [--region cn-hangzhou] \
 #         [--endpoint https://oss-cn-hangzhou-internal.aliyuncs.com] \
 #         [--repo-dir /opt/servercli-deployment/repository]
@@ -47,6 +53,8 @@
 #     白名单（防 AK/SK 外发）；ossutil 配置只写 host（其默认 HTTPS）
 #   * 签名密钥（deploy-signing.key）绝不写入 OSS、绝不打日志；文件 0600、目录 0700
 #   * 主控地址直接访问，不走 xray 代理；xray 探活失败必须非零退出停止
+#   * Agent 制品从公开 OSS 桶 inori-image 下载（https，SHA-256 校验），
+#     首次安装不再经 xray 访问 GitHub
 #   * 整体幂等，可安全重跑
 # =============================================================================
 set -euo pipefail
@@ -60,6 +68,11 @@ REPO_DIR="/opt/servercli-deployment/repository"
 CONTROL_PLANE_URL=""
 SESSION_ID=""
 SESSION_TOKEN=""
+# Agent 制品获取：公开 OSS 桶（GitHub Actions 构建后上传，节点直连桶下载，
+# 不再经 xray 访问 GitHub）。版本默认取主控 /version，可 --agent-version 固定。
+AGENT_BUCKET="inori-image"
+OSS_PUBLIC_ENDPOINT="oss-cn-hangzhou.aliyuncs.com"
+AGENT_VERSION=""
 STATE_FILE="/opt/servercli-deployment/.bootstrap-state"
 
 usage() {
@@ -77,6 +90,9 @@ while [[ $# -gt 0 ]]; do
     --control-plane-url) CONTROL_PLANE_URL="${2:-}"; shift 2 ;;
     --session-id) SESSION_ID="${2:-}"; shift 2 ;;
     --token) SESSION_TOKEN="${2:-}"; shift 2 ;;
+    --agent-bucket) AGENT_BUCKET="${2:-}"; shift 2 ;;
+    --oss-public-endpoint) OSS_PUBLIC_ENDPOINT="${2:-}"; shift 2 ;;
+    --agent-version) AGENT_VERSION="${2:-}"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "[bootstrap] 未知参数: $1（仅接受固定参数；OSS 凭据禁止走 argv）" >&2; exit 2 ;;
   esac
@@ -368,6 +384,88 @@ if [[ "$CP_MODE" -eq 1 ]]; then
   echo "[bootstrap] manifest 签名校验通过（HMAC-SHA256）"
 fi
 
+# ----------------------------- Agent 下载（公开 OSS 桶，不经过 xray） -----------------------------
+# 首次引导：Agent 制品由 GitHub Actions 构建后上传到公开桶 inori-image
+# （oss://inori-image/servercli/<tag>/...），节点直接经 HTTPS 从桶下载并做
+# SHA-256 校验，不再依赖 xray 代理访问 GitHub。版本默认取主控 /version
+# （与主控同版本），也可用 --agent-version 固定。
+if [[ "$CP_MODE" -eq 1 ]]; then
+  report_state "agent_downloading" "从公开 OSS 桶下载 ServerCLI Agent"
+
+  # 公开 endpoint 校验：host 必须属于 *.aliyuncs.com / *.aliyuncs.com.cn
+  PUB_HOST="${OSS_PUBLIC_ENDPOINT#https://}"
+  PUB_HOST="${PUB_HOST#http://}"
+  PUB_HOST="${PUB_HOST%/}"
+  if ! printf '%s' "$PUB_HOST" | grep -Eq '^[A-Za-z0-9.-]+$'      || { [[ "$PUB_HOST" != "aliyuncs.com" && "$PUB_HOST" != *".aliyuncs.com"             && "$PUB_HOST" != "aliyuncs.com.cn" && "$PUB_HOST" != *".aliyuncs.com.cn" ]]; }; then
+    report_state "agent_download_failed" "公开 endpoint 不在白名单"
+    echo "[bootstrap] FAIL: --oss-public-endpoint 必须为 *.aliyuncs.com / *.aliyuncs.com.cn 白名单" >&2
+    exit 1
+  fi
+
+  # 版本：--agent-version 优先，否则查询主控 /version
+  if [[ -z "$AGENT_VERSION" ]]; then
+    VER_JSON="$(curl -fsS --max-time 15 "$CONTROL_PLANE_URL/version" 2>/dev/null)" || {
+      report_state "agent_download_failed" "查询主控版本失败"
+      echo "[bootstrap] FAIL: 无法从主控 /version 获取版本（可改用 --agent-version 固定）" >&2
+      exit 1
+    }
+    AGENT_VERSION="$(printf '%s' "$VER_JSON" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  fi
+  [[ -n "$AGENT_VERSION" ]] || { report_state "agent_download_failed" "Agent 版本为空"; echo "[bootstrap] FAIL: Agent 版本为空" >&2; exit 1; }
+
+  # 架构（V1 支持 linux amd64/arm64）
+  case "$(uname -m)" in
+    x86_64|amd64) AGENT_ARCH="amd64" ;;
+    aarch64|arm64) AGENT_ARCH="arm64" ;;
+    *) report_state "agent_download_failed" "不支持的架构 $(uname -m)"; echo "[bootstrap] FAIL: 不支持架构 $(uname -m)（V1 仅 amd64/arm64）" >&2; exit 1 ;;
+  esac
+
+  AGENT_BASE="https://${AGENT_BUCKET}.${PUB_HOST}/servercli/${AGENT_VERSION}"
+  AGENT_TGZ="${AGENT_BASE}/servercli-${AGENT_VERSION}-linux-${AGENT_ARCH}.tar.gz"
+  AGENT_SHA_URL="${AGENT_BASE}/sha256sums.txt"
+  echo "[bootstrap] 下载 Agent: ${AGENT_TGZ}"
+
+  if ! curl -fsSL --retry 3 --retry-delay 3 --max-time 300 -o "$TMPDIR_SEC/agent.tar.gz" "$AGENT_TGZ"; then
+    report_state "agent_download_failed" "Agent 制品下载失败"
+    echo "[bootstrap] FAIL: Agent 制品下载失败（$AGENT_TGZ）" >&2
+    exit 1
+  fi
+  if ! curl -fsSL --retry 3 --retry-delay 3 --max-time 60 -o "$TMPDIR_SEC/sha256sums.txt" "$AGENT_SHA_URL"; then
+    report_state "agent_download_failed" "sha256sums 下载失败"
+    echo "[bootstrap] FAIL: sha256sums.txt 下载失败" >&2
+    exit 1
+  fi
+
+  report_state "agent_verifying" "校验 Agent 制品 SHA-256"
+  # 直接比对哈希（与本地下载文件名解耦：sha256sums.txt 中的条目按原始制品名
+  # 记录，而本地下载文件名为 agent.tar.gz）
+  EXPECTED_SHA="$(awk -v f="servercli-${AGENT_VERSION}-linux-${AGENT_ARCH}.tar.gz" '$2==f || $2=="*"f {print $1}' "$TMPDIR_SEC/sha256sums.txt" | head -1)"
+  ACTUAL_SHA="$(sha256sum "$TMPDIR_SEC/agent.tar.gz" | awk '{print $1}')"
+  if [[ -z "$EXPECTED_SHA" || "$EXPECTED_SHA" != "$ACTUAL_SHA" ]]; then
+    report_state "agent_verify_failed" "Agent 制品 SHA-256 校验失败"
+    echo "[bootstrap] FAIL: Agent 制品 SHA-256 校验失败（期望 ${EXPECTED_SHA:-<空>}，实际 ${ACTUAL_SHA:-<空>}）" >&2
+    exit 1
+  fi
+  echo "[bootstrap] Agent 制品 SHA-256 校验通过（${ACTUAL_SHA:0:16}...）"
+
+  # 解压并安装 node-agent 二进制（systemd 单元与 enrollment 为 V1 下一步）
+  mkdir -p "$TMPDIR_SEC/agent"
+  if ! tar -xzf "$TMPDIR_SEC/agent.tar.gz" -C "$TMPDIR_SEC/agent"; then
+    report_state "agent_verify_failed" "Agent 制品解压失败"
+    echo "[bootstrap] FAIL: Agent 制品解压失败" >&2
+    exit 1
+  fi
+  AGENT_BIN="$(find "$TMPDIR_SEC/agent" -type f -name servercli-node-agent | head -1)"
+  if [[ -z "$AGENT_BIN" ]]; then
+    report_state "agent_verify_failed" "制品缺少 servercli-node-agent"
+    echo "[bootstrap] FAIL: 制品中未找到 servercli-node-agent" >&2
+    exit 1
+  fi
+  install -m 0755 "$AGENT_BIN" /usr/local/bin/servercli-node-agent
+  report_state "agent_installing" "Agent 二进制已安装到 /usr/local/bin/servercli-node-agent"
+  echo "[bootstrap] Agent 已安装: /usr/local/bin/servercli-node-agent（版本 ${AGENT_VERSION}）"
+fi
+
 # ----------------------------- 状态文件（非 Secret；不含任何凭证） -----------------------------
 cat > "$STATE_FILE" <<STATEEOF
 # ServerCLI bootstrap 状态（非 Secret；不含任何凭证/签名密钥）
@@ -411,10 +509,13 @@ echo "==================================================================="
 #       report_state "proxy_checking" "代理探活"
 #       curl -x http://127.0.0.1:10809 -fsS -o /dev/null https://github.com
 #       成功 report_state "proxy_ready"；失败 report_state "proxy_failed"
-# 3) 下载 ServerCLI Agent（固定版本 GitHub Release）→ 校验 sha256 + 签名
-#       report_state "agent_downloading" ...  → report_state "agent_verifying" ...
+# 3) （已实现）下载 ServerCLI Agent：从公开 OSS 桶 inori-image 下载
+#    （GitHub Actions 构建后上传；节点直连桶，不再经 xray 访问 GitHub），
+#    SHA-256 校验后安装到 /usr/local/bin/servercli-node-agent
+#       report_state "agent_downloading" / "agent_verifying" / "agent_installing"
 #       失败 report_state "agent_download_failed" / "agent_verify_failed"
-# 4) 安装 systemd 服务（servercli-node-agent）
+# 4) 安装 systemd 服务（servercli-node-agent）：systemd 单元在制品内
+#    deploy/systemd/servercli-node-agent.service.example；V1 下一步实现
 #       report_state "agent_installing" ...；失败 report_state "agent_start_failed"
 # 5) 复用现有 enrollment 注册：调用主控
 #       POST ${CONTROL_PLANE_URL}/api/v1/agent/enrollments

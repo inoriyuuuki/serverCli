@@ -271,3 +271,69 @@ jobs:
               --title "ServerCLI ${TAG}" \
               --generate-notes
           fi
+
+  # ---------------------------------------------------------------------------
+  # 构建产物上传到公开 OSS 桶（inori-image）——首次引导（bootstrap）从此桶下载
+  # ServerCLI Agent，不再经 xray 访问 GitHub。
+  #
+  # 对象命名：oss://inori-image/servercli/<tag>/servercli-<tag>-linux-<arch>.tar.gz
+  #          + sha256sums.txt
+  # 下载 URL：https://inori-image.<public-endpoint>/servercli/<tag>/...
+  #
+  # 依赖仓库 Secrets（需在 GitHub Settings -> Secrets 配置）：
+  #   ALIYUN_OSS_AK_ID / ALIYUN_OSS_AK_SECRET / ALIYUN_OSS_ENDPOINT
+  #   （ENDPOINT 用公网 endpoint，如 oss-cn-hangzhou.aliyuncs.com；
+  #     Bucket 固定为 inori-image。AK 仅需该桶 servercli/ 前缀的写权限。）
+  # 未配置 Secrets 时本任务自动跳过（不影响 GitHub Release 发布）。
+  # ---------------------------------------------------------------------------
+  upload-oss:
+    name: Upload bundles to OSS (inori-image)
+    needs: [prepare, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Stage release assets
+        run: |
+          set -euo pipefail
+          cd dist
+          find . -maxdepth 2 -type f -name '*.tar.gz' -exec mv -f {} . \;
+          find . -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+          sha256sum *.tar.gz > sha256sums.txt
+          ls -la
+
+      - name: Install ossutil
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/ossutil.zip https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip
+          unzip -o /tmp/ossutil.zip -d /tmp/ossutil-bin
+          sudo install -m 0755 /tmp/ossutil-bin/ossutil64 /usr/local/bin/ossutil
+          ossutil --version
+
+      - name: Configure ossutil
+        if: ${{ secrets.ALIYUN_OSS_AK_ID != '' && secrets.ALIYUN_OSS_AK_SECRET != '' }}
+        env:
+          OSS_AK_ID: ${{ secrets.ALIYUN_OSS_AK_ID }}
+          OSS_AK_SECRET: ${{ secrets.ALIYUN_OSS_AK_SECRET }}
+          OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          ossutil config -e "$OSS_ENDPOINT" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" -c /tmp/ossutil.conf
+
+      - name: Upload bundles to oss://inori-image/servercli/<tag>/
+        if: ${{ secrets.ALIYUN_OSS_AK_ID != '' && secrets.ALIYUN_OSS_AK_SECRET != '' }}
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          OSS_BUCKET: inori-image
+        run: |
+          set -euo pipefail
+          cd dist
+          prefix="oss://${OSS_BUCKET}/servercli/${TAG}/"
+          for f in *.tar.gz sha256sums.txt; do
+            echo "upload: ${prefix}${f}"
+            ossutil cp -c /tmp/ossutil.conf -f "${f}" "${prefix}${f}"
+          done
+          echo "已上传: ${prefix}（公开读，供首次引导下载 Agent）"
