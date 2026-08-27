@@ -28,8 +28,8 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	ver := d.SchemaVersion(ctx)
-	if ver != 8 {
-		t.Fatalf("expected schema version 8, got %d", ver)
+	if ver != 10 {
+		t.Fatalf("expected schema version 10, got %d", ver)
 	}
 	// Required tables exist.
 	expected := []string{
@@ -61,7 +61,7 @@ func TestMigrateSQLite(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer d2.Close()
-	if v := d2.SchemaVersion(ctx); v != 8 {
+	if v := d2.SchemaVersion(ctx); v != 10 {
 		t.Fatalf("reopen version mismatch: %d", v)
 	}
 }
@@ -73,7 +73,7 @@ func TestMigrateInMemory(t *testing.T) {
 		t.Fatalf("open in-memory: %v", err)
 	}
 	defer d.Close()
-	if d.SchemaVersion(context.Background()) != 8 {
+	if d.SchemaVersion(context.Background()) != 10 {
 		t.Fatal("in-memory migration failed")
 	}
 }
@@ -160,13 +160,13 @@ func TestMigrate0006RewritesCanonicalWildcards(t *testing.T) {
 	insert("m1", "manual", manualJSON, false)
 	insert("e1", "empty", "", true)
 
-	// Apply the remaining migrations (0006, 0007, 0008) through the standard Migrate path.
+	// Apply the remaining migrations (0006, 0009, 0010) through the standard Migrate path.
 	ver, err := Migrate(ctx, "sqlite", d)
 	if err != nil {
 		t.Fatalf("apply 0006: %v", err)
 	}
-	if ver != 8 {
-		t.Fatalf("expected schema version 8 after applying remaining migrations, got %d", ver)
+	if ver != 10 {
+		t.Fatalf("expected schema version 10 after applying remaining migrations, got %d", ver)
 	}
 
 	rows, err := d.QueryContext(ctx, `SELECT id, permissions_json FROM api_access_token ORDER BY id`)
@@ -203,11 +203,11 @@ func TestMigrate0006RewritesCanonicalWildcards(t *testing.T) {
 	}
 }
 
-// TestMigrate0007DeploymentSchema verifies the deployment-management migration:
+// TestMigrate0009DeploymentSchema verifies the deployment-management migration:
 // deployment_secret_reference stores content_hash + encryption_mode (default
 // 'none') and never a plaintext secret body, and the partial unique index
 // prevents two active operations for the same feature.
-func TestMigrate0007DeploymentSchema(t *testing.T) {
+func TestMigrate0009DeploymentSchema(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
@@ -315,11 +315,11 @@ func TestMigrate0007DeploymentSchema(t *testing.T) {
 	}
 }
 
-// TestMigrate0008NodeSerialIndex verifies migration 0008: the partial unique
+// TestMigrate0010NodeSerialIndex verifies migration 0010: the partial unique
 // index uq_deployment_optarget_active_node exists, is partial, and rejects a
 // second queued/running operation target for the same node while allowing
 // inactive targets on the same node.
-func TestMigrate0008NodeSerialIndex(t *testing.T) {
+func TestMigrate0010NodeSerialIndex(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
@@ -341,7 +341,7 @@ func TestMigrate0008NodeSerialIndex(t *testing.T) {
 		t.Fatalf("uq_deployment_optarget_active_node is not a partial status index: %s", idxSQL)
 	}
 
-	// Migration 0008 also adds created_at to operation targets and steps for
+	// Migration 0010 also adds created_at to operation targets and steps for
 	// stable creation-order listing.
 	for _, table := range []string{"deployment_operation_target", "deployment_step"} {
 		cols := map[string]bool{}
@@ -365,7 +365,7 @@ func TestMigrate0008NodeSerialIndex(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !cols["created_at"] {
-			t.Fatalf("%s missing created_at column from migration 0008", table)
+			t.Fatalf("%s missing created_at column from migration 0010", table)
 		}
 	}
 
