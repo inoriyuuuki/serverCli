@@ -305,31 +305,30 @@ jobs:
           sha256sum *.tar.gz > sha256sums.txt
           ls -la
 
-      - name: Install ossutil
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/ossutil.zip https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip
-          unzip -o /tmp/ossutil.zip -d /tmp/ossutil-bin
-          sudo install -m 0755 /tmp/ossutil-bin/ossutil64 /usr/local/bin/ossutil
-          ossutil --version
-
-      - name: Configure ossutil
-        if: ${{ secrets.ALIYUN_OSS_AK_ID != '' && secrets.ALIYUN_OSS_AK_SECRET != '' }}
+      # 运行时检查 Secrets（不在 if: 中引用 secrets 上下文，避免 workflow 校验问题）：
+      # 未配置 ALIYUN_OSS_AK_ID/ALIYUN_OSS_AK_SECRET 时跳过上传（不影响 GitHub Release）。
+      - name: Upload bundles to OSS
         env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          OSS_BUCKET: inori-image
           OSS_AK_ID: ${{ secrets.ALIYUN_OSS_AK_ID }}
           OSS_AK_SECRET: ${{ secrets.ALIYUN_OSS_AK_SECRET }}
           OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
         run: |
           set -euo pipefail
+          if [ -z "${OSS_AK_ID:-}" ] || [ -z "${OSS_AK_SECRET:-}" ]; then
+            echo "::warning::ALIYUN_OSS_AK_ID / ALIYUN_OSS_AK_SECRET 未配置，跳过 OSS 上传（不影响 GitHub Release 发布）"
+            exit 0
+          fi
+          if [ -z "${OSS_ENDPOINT:-}" ]; then
+            echo "::warning::ALIYUN_OSS_ENDPOINT 未配置，使用默认 oss-cn-hangzhou.aliyuncs.com"
+            OSS_ENDPOINT="oss-cn-hangzhou.aliyuncs.com"
+          fi
+          curl -fsSL -o /tmp/ossutil.zip https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip
+          unzip -o /tmp/ossutil.zip -d /tmp/ossutil-bin
+          sudo install -m 0755 /tmp/ossutil-bin/ossutil64 /usr/local/bin/ossutil
+          ossutil --version
           ossutil config -e "$OSS_ENDPOINT" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" -c /tmp/ossutil.conf
-
-      - name: Upload bundles to oss://inori-image/servercli/<tag>/
-        if: ${{ secrets.ALIYUN_OSS_AK_ID != '' && secrets.ALIYUN_OSS_AK_SECRET != '' }}
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-          OSS_BUCKET: inori-image
-        run: |
-          set -euo pipefail
           cd dist
           prefix="oss://${OSS_BUCKET}/servercli/${TAG}/"
           for f in *.tar.gz sha256sums.txt; do
