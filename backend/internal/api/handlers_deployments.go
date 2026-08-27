@@ -76,6 +76,7 @@ func (s *Server) registerDeploymentRoutes(mux *http.ServeMux) {
 	s.register(mux, RouteSpec{Method: "POST", Path: "/api/v1/deployments/features", Group: group, Auth: AuthAdmin, Summary: "创建/注册部署 Feature", Body: `{"feature_key":"my-app","name":"My App","backup_mode":"none"}`, Errors: []string{"400", "409"}, Debug: true}, s.requireAdmin(s.handleCreateDeploymentFeature))
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/deployments/features/{id}", Group: group, Auth: AuthAdminOrToken, Summary: "部署 Feature 详情", Debug: true}, s.adminOrToken(service.ResourceDeployments, service.ActionRead, "/api/v1/deployments/features/{id}")(s.handleGetDeploymentFeature))
 	s.register(mux, RouteSpec{Method: "DELETE", Path: "/api/v1/deployments/features/{id}", Group: group, Auth: AuthAdmin, Summary: "删除部署 Feature", Errors: []string{"409"}, Debug: true}, s.requireAdmin(s.handleDeleteDeploymentFeature))
+	s.register(mux, RouteSpec{Method: "PATCH", Path: "/api/v1/deployments/features/{id}", Group: group, Auth: AuthAdmin, Summary: "更新部署 Feature（backup_mode 等元数据）", Debug: true}, s.requireAdmin(s.handleUpdateDeploymentFeature))
 
 	// Releases.
 	s.register(mux, RouteSpec{Method: "GET", Path: "/api/v1/deployments/releases", Group: group, Auth: AuthAdminOrToken, Summary: "部署 Release 列表", Params: []RouteParam{{Name: "feature_id", In: "query", Type: "string"}}, Debug: true}, s.adminOrToken(service.ResourceDeployments, service.ActionRead, "/api/v1/deployments/releases")(s.handleListDeploymentReleases))
@@ -159,6 +160,19 @@ func (s *Server) handleCreateDeploymentFeature(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleGetDeploymentFeature(w http.ResponseWriter, r *http.Request) {
 	f, err := s.deployments.GetFeature(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, r, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"feature": f})
+}
+
+func (s *Server) handleUpdateDeploymentFeature(w http.ResponseWriter, r *http.Request) {
+	var in service.CreateFeatureInput
+	if !decodeJSON(w, r, s.log, &in) {
+		return
+	}
+	f, err := s.deployments.UpdateFeature(r.Context(), s.deploymentActorID(r), r.PathValue("id"), in)
 	if err != nil {
 		writeServiceError(w, r, s.log, err)
 		return

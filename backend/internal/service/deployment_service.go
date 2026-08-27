@@ -516,6 +516,54 @@ func (s *DeploymentService) CreateFeature(ctx context.Context, actorID string, i
 }
 
 // ListFeatures returns all deployment features.
+// UpdateFeature updates editable feature metadata (name/description/backup_mode/
+// rollback_capability/minimum_agent_version/config_schema). feature_key and the
+// immutable platform are not changed.
+func (s *DeploymentService) UpdateFeature(ctx context.Context, actorID, id string, in CreateFeatureInput) (*model.DeploymentFeature, error) {
+	f, err := s.store.DeploymentFeatureByID(ctx, id)
+	if err != nil {
+		return nil, mapStoreErr(err)
+	}
+	if in.BackupMode != "" {
+		if !validBackupMode(in.BackupMode) {
+			return nil, fmt.Errorf("%w: invalid backup_mode %q", ErrBadRequest, in.BackupMode)
+		}
+		f.BackupMode = in.BackupMode
+	}
+	if in.Name != "" {
+		f.Name = in.Name
+	}
+	f.Description = in.Description
+	if in.RollbackCapability != "" {
+		f.RollbackCapability = in.RollbackCapability
+	}
+	if in.MinimumAgentVersion != "" {
+		f.MinimumAgentVersion = in.MinimumAgentVersion
+	}
+	if in.ConfigSchemaJSON != "" {
+		if !json.Valid([]byte(in.ConfigSchemaJSON)) {
+			return nil, fmt.Errorf("%w: config_schema_json must be valid JSON", ErrBadRequest)
+		}
+		f.ConfigSchemaJSON = in.ConfigSchemaJSON
+	}
+	f.UpdatedAt = time.Now().UTC()
+	if err := s.store.UpdateDeploymentFeature(ctx, f); err != nil {
+		return nil, mapStoreErr(err)
+	}
+	s.auditDeployment(ctx, model.ActorAdmin, actorID, "deployment.feature.update", ResultSuccess, map[string]any{
+		"feature_key": f.FeatureKey, "action": "deployment.feature.update", "result": ResultSuccess,
+	})
+	return f, nil
+}
+
+func validBackupMode(m string) bool {
+	switch m {
+	case "database_dump", "application_snapshot", "filesystem_quiesced", "cold_backup", "external_snapshot", "none":
+		return true
+	}
+	return false
+}
+
 func (s *DeploymentService) ListFeatures(ctx context.Context) ([]*model.DeploymentFeature, error) {
 	return s.store.ListDeploymentFeatures(ctx)
 }
