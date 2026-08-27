@@ -4,13 +4,14 @@
 # 退出码 0=健康, 1=不健康。
 # =============================================================================
 set -euo pipefail
-FEATURE_KEY=""; NODE_ID=""
+FEATURE_KEY=""; NODE_ID=""; PORT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --feature-key) FEATURE_KEY="${2:-}"; shift 2 ;;
     --node-id) NODE_ID="${2:-}"; shift 2 ;;
     --rendered-dir) shift 2 ;;
-    -h|--help) sed -n '1,24p' "$0"; exit 0 ;;
+    --port) PORT="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '1,26p' "$0"; exit 0 ;;
     *) echo "[health-check] 未知参数: $1（仅接受固定参数）" >&2; exit 2 ;;
   esac
 done
