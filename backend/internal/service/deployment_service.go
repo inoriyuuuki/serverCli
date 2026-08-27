@@ -116,6 +116,7 @@ type CreateReleaseInput struct {
 	BackupHook                string `json:"backup_hook"`
 	HealthHook                string `json:"health_hook"`
 	RollbackHook              string `json:"rollback_hook"`
+	RestoreHook               string `json:"restore_hook,omitempty"`
 	BackupMode                string `json:"backup_mode"`
 	DataMigrationMetadataJSON string `json:"data_migration_metadata_json"`
 }
@@ -638,6 +639,7 @@ func (s *DeploymentService) CreateRelease(ctx context.Context, actorID string, i
 		BackupHook:                in.BackupHook,
 		HealthHook:                in.HealthHook,
 		RollbackHook:              in.RollbackHook,
+		RestoreHook:               in.RestoreHook,
 		BackupMode:                in.BackupMode,
 		DataMigrationMetadataJSON: in.DataMigrationMetadataJSON,
 	}

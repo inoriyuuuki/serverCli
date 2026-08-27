@@ -144,14 +144,14 @@ func (s *Store) DeleteDeploymentFeature(ctx context.Context, id string) error {
 // ---- deployment_release ----
 
 const deploymentReleaseColumns = `id, feature_id, version, source_commit, object_key, size, sha256, signature,
-	install_hook, update_hook, backup_hook, health_hook, rollback_hook, backup_mode,
+	install_hook, update_hook, backup_hook, health_hook, rollback_hook, restore_hook, backup_mode,
 	data_migration_metadata_json, manifest_hash, created_at`
 
 func scanDeploymentRelease(row interface{ Scan(...any) error }) (*model.DeploymentRelease, error) {
 	var r model.DeploymentRelease
 	var srcCommit, signature, dataMig, manifestHash, created sql.NullString
 	if err := row.Scan(&r.ID, &r.FeatureID, &r.Version, &srcCommit, &r.ObjectKey, &r.Size, &r.SHA256, &signature,
-		&r.InstallHook, &r.UpdateHook, &r.BackupHook, &r.HealthHook, &r.RollbackHook, &r.BackupMode,
+		&r.InstallHook, &r.UpdateHook, &r.BackupHook, &r.HealthHook, &r.RollbackHook, &r.RestoreHook, &r.BackupMode,
 		&dataMig, &manifestHash, &created); err != nil {
 		return nil, err
 	}
@@ -177,11 +177,11 @@ func (s *Store) CreateDeploymentRelease(ctx context.Context, r *model.Deployment
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO deployment_release
 		(id, feature_id, version, source_commit, object_key, size, sha256, signature,
-		 install_hook, update_hook, backup_hook, health_hook, rollback_hook, backup_mode,
+		 install_hook, update_hook, backup_hook, health_hook, rollback_hook, restore_hook, backup_mode,
 		 data_migration_metadata_json, manifest_hash, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		r.ID, r.FeatureID, r.Version, nullString(r.SourceCommit), r.ObjectKey, r.Size, r.SHA256, nullString(r.Signature),
-		r.InstallHook, r.UpdateHook, r.BackupHook, r.HealthHook, r.RollbackHook, r.BackupMode,
+		r.InstallHook, r.UpdateHook, r.BackupHook, r.HealthHook, r.RollbackHook, r.RestoreHook, r.BackupMode,
 		nullString(r.DataMigrationMetadataJSON), nullString(r.ManifestHash), ts(r.CreatedAt))
 	return conflict(err)
 }
