@@ -4,16 +4,16 @@
     "metadata": {
         "feature_key": "docker-prerequisite",
         "name": "Docker Prerequisite",
-        "version": "0.1.0"
+        "version": "0.1.1"
     },
     "spec": {
         "feature_key": "docker-prerequisite",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "os": "linux",
         "arch": "amd64",
         "bundle": {
             "file": "bundle.tar.gz",
-            "sha256": "6a66bb674e429d02c56eeb7b8c74f6a0cd1be38f3aa69c977600764ca5531485",
+            "sha256": "cf6fff421d632acf902e925eaf88f3652a1d425531597ce82ee9ba6800366033",
             "size": 4314,
             "content_type": "application/gzip"
         },
